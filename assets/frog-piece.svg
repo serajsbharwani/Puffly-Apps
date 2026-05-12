@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Frog piece">
+  <defs>
+    <linearGradient id="frogSkin" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#9be291"/>
+      <stop offset="1" stop-color="#4ca84f"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="64" cy="76" rx="34" ry="28" fill="url(#frogSkin)" stroke="#2e7d35" stroke-width="6"/>
+  <circle cx="48" cy="44" r="11" fill="#b9f2b0" stroke="#2e7d35" stroke-width="5"/>
+  <circle cx="80" cy="44" r="11" fill="#b9f2b0" stroke="#2e7d35" stroke-width="5"/>
+  <circle cx="48" cy="44" r="4.5" fill="#1f1a17"/>
+  <circle cx="80" cy="44" r="4.5" fill="#1f1a17"/>
+  <ellipse cx="64" cy="74" rx="14" ry="10" fill="#d7f8cc"/>
+  <path d="M54 84c4 5 16 5 20 0" fill="none" stroke="#2f7e3a" stroke-linecap="round" stroke-width="4"/>
+</svg>
