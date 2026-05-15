@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: puffly-checkers-multiplayer
+    env: python
+    plan: free
+    buildCommand: "echo 'No build step required'"
+    startCommand: python3 multiplayer_server.py $PORT

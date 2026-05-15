@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Little Puffly iPhone Checkers</title>
-    <link rel="stylesheet" href="./styles.css?v=34" />
+    <link rel="stylesheet" href="./styles.css?v=47" />
   </head>
   <body>
     <main class="app-shell">
@@ -18,17 +18,29 @@
       </section>
 
       <section class="control-card">
-        <label for="difficulty-select">Difficulty</label>
-        <select id="difficulty-select" aria-label="Computer difficulty">
-          <option value="easy">Easy</option>
-          <option value="medium" selected>Medium</option>
-          <option value="hard">Hard</option>
-        </select>
-        <label for="audio-select">Audio</label>
-        <select id="audio-select" aria-label="Audio feedback">
-          <option value="on" selected>On</option>
-          <option value="off">Off</option>
-        </select>
+        <div id="puffly-controls" class="puffly-controls">
+          <label for="difficulty-select">Difficulty</label>
+          <select id="difficulty-select" aria-label="Computer difficulty">
+            <option value="easy">Easy</option>
+            <option value="medium" selected>Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+          <label for="audio-select">Audio</label>
+          <select id="audio-select" aria-label="Audio feedback">
+            <option value="on" selected>On</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+        <div id="friend-controls" class="friend-controls hidden">
+          <div class="friend-room-actions">
+            <button id="create-room-btn" type="button">Create Room</button>
+            <input id="room-code-input" type="text" maxlength="8" placeholder="Room code" />
+            <button id="join-room-btn" type="button">Join Room</button>
+            <button id="copy-room-btn" type="button">Copy Code</button>
+            <button id="leave-room-btn" class="leave-room-btn" type="button">Leave Room</button>
+          </div>
+          <p id="friend-status" class="friend-status">Choose Create Room or Join Room.</p>
+        </div>
       </section>
 
       <section class="controls">
@@ -40,28 +52,48 @@
       <section id="rules-panel" class="rules-panel hidden" aria-live="polite">
         <h2>Game Rules</h2>
         <ul>
-          <li>Blue Puffly Team is computer controlled.</li>
-          <li>Green Frog Team is your side.</li>
-          <li>Jumps are required when available.</li>
-          <li>Kinging adds a cap or crown accessory.</li>
+          <li id="rule-line-1">Blue Puffly Team is computer controlled.</li>
+          <li id="rule-line-2">Green Frog Team is your side.</li>
+          <li id="rule-line-3">Jumps are required when available.</li>
+          <li id="rule-line-4">Kinging adds a cap or crown accessory.</li>
         </ul>
       </section>
 
-      <section class="board-stage">
-        <div class="board-wrap">
-          <div id="board" class="board" aria-label="Checkers board"></div>
-        </div>
-        <aside id="puffly-panel" class="puffly-panel" aria-live="polite">
-          <p class="puffly-label">Puffly</p>
-          <div class="puffly-face" aria-hidden="true">
-            <span class="puffly-ear left"></span>
-            <span class="puffly-ear right"></span>
-            <span class="puffly-eye left"></span>
-            <span class="puffly-eye right"></span>
-            <span class="puffly-muzzle"></span>
-            <span class="puffly-nose"></span>
+      <section class="gameplay-layout">
+        <section class="board-stage">
+          <div class="board-wrap">
+            <div id="friend-lock-overlay" class="friend-lock-overlay hidden">
+              <p id="friend-lock-text">Waiting for the players...</p>
+            </div>
+            <div id="board" class="board" aria-label="Checkers board"></div>
           </div>
-          <p id="puffly-thought" class="puffly-thought">💭 Waiting...</p>
+          <aside id="puffly-panel" class="puffly-panel" aria-live="polite">
+            <p class="puffly-label">Puffly</p>
+            <div class="puffly-face" aria-hidden="true">
+              <span class="puffly-ear left"></span>
+              <span class="puffly-ear right"></span>
+              <span class="puffly-eye left"></span>
+              <span class="puffly-eye right"></span>
+              <span class="puffly-muzzle"></span>
+              <span class="puffly-nose"></span>
+            </div>
+            <p id="puffly-thought" class="puffly-thought">💭 Waiting...</p>
+          </aside>
+        </section>
+
+        <aside id="friend-chat-panel" class="friend-chat-panel hidden" aria-live="polite">
+          <div class="chat-header-row">
+            <h2>
+              Room Chat
+              <span id="chat-unread-badge" class="chat-unread-badge hidden">0</span>
+            </h2>
+            <button id="chat-mute-btn" type="button">Mute Chat</button>
+          </div>
+          <div id="chat-messages" class="chat-messages"></div>
+          <div class="chat-compose">
+            <input id="chat-input" type="text" maxlength="200" placeholder="Type a message..." />
+            <button id="chat-send-btn" type="button">Send</button>
+          </div>
         </aside>
       </section>
 
@@ -80,6 +112,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/app.js?v=34"></script>
+    <script type="module" src="./src/app.js?v=49"></script>
   </body>
 </html>

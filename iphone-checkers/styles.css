@@ -14,6 +14,10 @@
   box-sizing: border-box;
 }
 
+.hidden {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -80,26 +84,65 @@ body.dragging-touch {
 
 .control-card {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.45rem 0.6rem;
-  align-items: center;
+  gap: 0.45rem;
   background: #fff5dd;
   border: 2px solid #d3b46f;
   border-radius: 12px;
   padding: 0.55rem 0.7rem;
 }
 
-.control-card label {
+.puffly-controls {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem 0.6rem;
+  align-items: center;
+}
+
+.puffly-controls label {
   font-size: 0.9rem;
   font-weight: 700;
 }
 
-.control-card select {
+.puffly-controls select {
   min-height: 36px;
   border-radius: 8px;
   border: 2px solid #9d7a37;
   background: #fffdf8;
   font-size: 0.95rem;
+}
+
+.friend-room-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.friend-room-actions input,
+.friend-room-actions button {
+  min-height: 38px;
+  border-radius: 8px;
+  border: 2px solid #7e6433;
+  font-size: 0.88rem;
+}
+
+.friend-room-actions input {
+  padding: 0.25rem 0.4rem;
+  text-transform: uppercase;
+}
+
+.friend-room-actions button {
+  background: #ffe7ab;
+  font-weight: 700;
+}
+
+.leave-room-btn {
+  grid-column: 1 / -1;
+  background: #ffd3d3 !important;
+}
+
+.friend-status {
+  margin: 0;
+  font-size: 0.8rem;
 }
 
 .board-stage {
@@ -109,11 +152,156 @@ body.dragging-touch {
   align-items: start;
 }
 
+.gameplay-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.friend-chat-panel {
+  background: #fff4de;
+  border: 2px solid #ce9f49;
+  border-radius: 12px;
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.4rem;
+  min-height: 180px;
+}
+
+.friend-chat-panel h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.chat-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.chat-header-row h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.chat-unread-badge {
+  min-width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: #e74747;
+  color: #fff;
+  font-size: 0.72rem;
+  line-height: 1.1rem;
+  text-align: center;
+  padding: 0 0.22rem;
+}
+
+#chat-mute-btn {
+  min-height: 30px;
+  border-radius: 8px;
+  border: 2px solid #75592a;
+  background: #ffe5b4;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.chat-messages {
+  background: #fffdf7;
+  border: 2px solid #d3b67a;
+  border-radius: 10px;
+  min-height: 110px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.82rem;
+}
+
+.chat-row {
+  margin: 0.12rem 0;
+  word-break: break-word;
+}
+
+.chat-label {
+  font-weight: 700;
+}
+
+.chat-label.blue {
+  color: #2e5f9e;
+}
+
+.chat-label.green {
+  color: #2f7e37;
+}
+
+.chat-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+}
+
+.chat-compose input {
+  min-height: 36px;
+  border-radius: 8px;
+  border: 2px solid #94753d;
+  padding: 0.25rem 0.45rem;
+}
+
+.chat-compose button {
+  min-height: 36px;
+  border-radius: 8px;
+  border: 2px solid #6d5325;
+  background: #ffe5ad;
+  font-weight: 700;
+}
+
+body.friend-mode .friend-chat-panel.hidden {
+  display: none !important;
+}
+
+@media (min-width: 900px) {
+  body.friend-mode .gameplay-layout {
+    grid-template-columns: minmax(0, 1fr) 250px;
+  }
+
+  body.friend-mode .chat-messages {
+    min-height: 250px;
+    max-height: 360px;
+  }
+}
+
 .board-wrap {
+  position: relative;
   background: #f7ecd0;
   border: 3px dashed #8c5e3c;
   border-radius: 14px;
   padding: 0.7rem;
+}
+
+.friend-lock-overlay {
+  position: absolute;
+  inset: 0.7rem;
+  z-index: 20;
+  border-radius: 8px;
+  background: rgba(30, 22, 10, 0.36);
+  backdrop-filter: blur(1.5px);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.friend-lock-overlay p {
+  margin: 0;
+  background: rgba(255, 246, 216, 0.94);
+  border: 2px solid #8d6a34;
+  border-radius: 10px;
+  padding: 0.45rem 0.7rem;
+  font-weight: 700;
+  font-size: 0.88rem;
 }
 
 .puffly-panel {

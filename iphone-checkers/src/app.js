@@ -9,15 +9,35 @@ import {
 } from "./engine.js?v=10";
 
 const boardElement = document.getElementById("board");
+const friendLockOverlay = document.getElementById("friend-lock-overlay");
 const restartButton = document.getElementById("restart-btn");
 const undoButton = document.getElementById("undo-btn");
 const rulesButton = document.getElementById("rules-btn");
 const difficultySelect = document.getElementById("difficulty-select");
 const audioSelect = document.getElementById("audio-select");
+const pufflyControls = document.getElementById("puffly-controls");
+const friendControls = document.getElementById("friend-controls");
+const createRoomButton = document.getElementById("create-room-btn");
+const joinRoomButton = document.getElementById("join-room-btn");
+const copyRoomButton = document.getElementById("copy-room-btn");
+const leaveRoomButton = document.getElementById("leave-room-btn");
+const roomCodeInput = document.getElementById("room-code-input");
+const friendStatusLabel = document.getElementById("friend-status");
 const historyList = document.getElementById("history-list");
 const rulesPanel = document.getElementById("rules-panel");
+const ruleLine1 = document.getElementById("rule-line-1");
+const ruleLine2 = document.getElementById("rule-line-2");
+const ruleLine3 = document.getElementById("rule-line-3");
+const ruleLine4 = document.getElementById("rule-line-4");
 const playPufflyButton = document.getElementById("play-puffly-btn");
 const playFriendButton = document.getElementById("play-friend-btn");
+const friendLockText = document.getElementById("friend-lock-text");
+const friendChatPanel = document.getElementById("friend-chat-panel");
+const chatMessagesElement = document.getElementById("chat-messages");
+const chatInput = document.getElementById("chat-input");
+const chatSendButton = document.getElementById("chat-send-btn");
+const chatMuteButton = document.getElementById("chat-mute-btn");
+const chatUnreadBadge = document.getElementById("chat-unread-badge");
 const celebrationOverlay = document.getElementById("celebration-overlay");
 const celebrationFx = document.getElementById("celebration-fx");
 const celebrationTitle = document.getElementById("celebration-title");
@@ -47,6 +67,11 @@ const HUMAN_MOVE_ANIMATION_MS = 450;
 let celebrationTimers = [];
 let pufflyCheerTimer = null;
 let rulesAutoHideTimer = null;
+let remoteSession = null;
+let roomPollTimer = null;
+let roomChatMessages = [];
+let chatNotificationsMuted = false;
+let chatUnreadCount = 0;
 
 function key(row, col) {
   return `${row},${col}`;
@@ -85,6 +110,16 @@ function lockBoardGeometry() {
 
 function squareText(square) {
   return `(${square.row},${square.col})`;
+}
+
+function playerDisplayName(color) {
+  if (color === "dark") {
+    return "Blue";
+  }
+  if (color === "light") {
+    return "Green";
+  }
+  return "Unknown";
 }
 
 function ensureAudioContext() {
@@ -234,13 +269,23 @@ function showCelebration() {
     return;
   }
   winnerAnnounced = state.winner;
-  celebrationTitle.textContent = state.winner === humanPlayer ? "You win!" : "Puffly wins!";
-  celebrationSubtitle.textContent =
-    state.winner === humanPlayer ? "Great strategy and captures." : "Try another round and outsmart Puffly.";
+  if (playMode === "friend") {
+    const winnerLabel = playerDisplayName(state.winner).toUpperCase();
+    celebrationTitle.textContent = `${winnerLabel} wins!`;
+    celebrationSubtitle.textContent = "Try another round and outsmart your friend.";
+  } else {
+    celebrationTitle.textContent = state.winner === humanPlayer ? "You win!" : "Puffly wins!";
+    celebrationSubtitle.textContent =
+      state.winner === humanPlayer ? "Great strategy and captures." : "Try another round and outsmart Puffly.";
+  }
   celebrationOverlay.classList.remove("hidden");
   playWinFx(state.winner === humanPlayer);
   playCelebrationAudio();
-  speakPhrase(state.winner === humanPlayer ? "You win." : "Puffly wins.");
+  if (playMode === "friend") {
+    speakPhrase(`${playerDisplayName(state.winner).toUpperCase()} WINS`);
+  } else {
+    speakPhrase(state.winner === humanPlayer ? "You win." : "Puffly wins.");
+  }
 }
 
 function hideCelebration() {
@@ -333,25 +378,290 @@ function showRulesPanel() {
   }, 30000);
 }
 
+function setFriendStatus(text) {
+  if (friendStatusLabel) {
+    friendStatusLabel.textContent = text;
+  }
+}
+
+function updateChatMuteButton() {
+  if (!chatMuteButton) {
+    return;
+  }
+  chatMuteButton.textContent = chatNotificationsMuted ? "Unmute Chat" : "Mute Chat";
+}
+
+function setChatUnreadCount(count) {
+  chatUnreadCount = Math.max(0, count);
+  if (!chatUnreadBadge) {
+    return;
+  }
+  if (chatUnreadCount === 0) {
+    chatUnreadBadge.classList.add("hidden");
+    chatUnreadBadge.textContent = "0";
+    return;
+  }
+  chatUnreadBadge.classList.remove("hidden");
+  chatUnreadBadge.textContent = String(Math.min(chatUnreadCount, 99));
+}
+
+function isChatActivelyViewed() {
+  if (playMode !== "friend" || !friendChatPanel || friendChatPanel.classList.contains("hidden")) {
+    return false;
+  }
+  if (typeof document !== "undefined" && document.hidden) {
+    return false;
+  }
+  if (!chatMessagesElement) {
+    return false;
+  }
+  return chatMessagesElement.scrollTop + chatMessagesElement.clientHeight >= chatMessagesElement.scrollHeight - 24;
+}
+
+function playChatNotificationAudio() {
+  if (chatNotificationsMuted) {
+    return;
+  }
+  beep(700, 0.05, "triangle", 0.045);
+}
+
+function renderRoomChat(forceScroll = false) {
+  if (!chatMessagesElement) {
+    return;
+  }
+  const wasNearBottom =
+    chatMessagesElement.scrollTop + chatMessagesElement.clientHeight >= chatMessagesElement.scrollHeight - 24;
+  chatMessagesElement.innerHTML = "";
+  if (roomChatMessages.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "chat-row";
+    empty.textContent = "No messages yet.";
+    chatMessagesElement.appendChild(empty);
+  } else {
+    for (const message of roomChatMessages) {
+      const row = document.createElement("p");
+      row.className = "chat-row";
+      const label = document.createElement("span");
+      const colorName = playerDisplayName(message.color).toUpperCase();
+      label.className = `chat-label ${message.color === "dark" ? "blue" : "green"}`;
+      label.textContent = `${colorName}: `;
+      row.appendChild(label);
+      row.append(document.createTextNode(message.text));
+      chatMessagesElement.appendChild(row);
+    }
+  }
+  if (forceScroll || wasNearBottom) {
+    chatMessagesElement.scrollTop = chatMessagesElement.scrollHeight;
+  }
+}
+
+function syncRoomChatFromPayload(data, forceScroll = false) {
+  if (!Array.isArray(data?.messages)) {
+    return;
+  }
+  const previousLastId = roomChatMessages.length > 0 ? Number(roomChatMessages[roomChatMessages.length - 1].id || 0) : 0;
+  roomChatMessages = data.messages;
+  const addedMessages = roomChatMessages.filter((entry) => Number(entry?.id || 0) > previousLastId);
+  const incomingFromFriend = addedMessages.filter(
+    (entry) => remoteSession && entry?.color && entry.color !== remoteSession.color,
+  );
+  if (incomingFromFriend.length > 0) {
+    playChatNotificationAudio();
+    if (!forceScroll && !isChatActivelyViewed()) {
+      setChatUnreadCount(chatUnreadCount + incomingFromFriend.length);
+    }
+  }
+  renderRoomChat(forceScroll || addedMessages.length > 0);
+  if (forceScroll || isChatActivelyViewed()) {
+    setChatUnreadCount(0);
+  }
+}
+
+function updateRulesForMode() {
+  if (!ruleLine1 || !ruleLine2 || !ruleLine3 || !ruleLine4) {
+    return;
+  }
+  if (playMode === "friend") {
+    ruleLine1.classList.add("hidden");
+    const myColor = remoteSession?.color ? playerDisplayName(remoteSession.color).toUpperCase() : "assigned after joining";
+    ruleLine2.textContent =
+      remoteSession?.color
+        ? `You are the ${myColor} team.`
+        : `Your team color will be ${myColor}.`;
+  } else {
+    ruleLine1.classList.remove("hidden");
+    ruleLine1.textContent = "Blue Puffly Team is computer controlled.";
+    ruleLine2.textContent = "Green Frog Team is your side.";
+  }
+  ruleLine3.textContent = "Jumps are required when available.";
+  ruleLine4.textContent = "Kinging adds a cap or crown accessory.";
+}
+
+function getFriendStatusText(session) {
+  if (!session) {
+    return "Choose Create Room or Join Room.";
+  }
+  const count = session.playerCount ?? 1;
+  const base = `Connected players: ${count}/2 · Room ${session.roomCode}`;
+  if (!session.ready) {
+    return `${base}. Waiting for opponent...`;
+  }
+  return `${base}. You are ${playerDisplayName(session.color).toUpperCase()}.`;
+}
+
+function stopRoomPolling() {
+  if (roomPollTimer) {
+    window.clearInterval(roomPollTimer);
+    roomPollTimer = null;
+  }
+}
+
+function resetSessionForModeSwitch() {
+  stopRoomPolling();
+  remoteSession = null;
+  if (roomCodeInput) {
+    roomCodeInput.value = "";
+  }
+}
+
+function resetFriendLocalState(message = "Choose Create Room or Join Room.") {
+  stopRoomPolling();
+  remoteSession = null;
+  roomChatMessages = [];
+  setChatUnreadCount(0);
+  state = createInitialState();
+  moveHistory = [];
+  undoSnapshots = [];
+  winnerAnnounced = null;
+  hideCelebration();
+  if (roomCodeInput) {
+    roomCodeInput.value = "";
+  }
+  setFriendStatus(message);
+  updateRulesForMode();
+  renderRoomChat(true);
+  render("Friend mode: connect to a room.");
+}
+
+async function apiPost(path, payload) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed (${response.status})`);
+  }
+  return data;
+}
+
+async function syncRoomState() {
+  if (!remoteSession) {
+    return;
+  }
+  const oldVersion = remoteSession.version;
+  const oldReady = remoteSession.ready;
+  const oldCount = remoteSession.playerCount;
+  const params = new URLSearchParams({ roomCode: remoteSession.roomCode });
+  const response = await fetch(`/api/rooms/state?${params.toString()}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Unable to read room state.");
+  }
+  if (typeof data.version === "number") {
+    remoteSession.version = data.version;
+  }
+  if (typeof data.playerCount === "number") {
+    remoteSession.playerCount = data.playerCount;
+    remoteSession.ready = data.playerCount >= 2;
+    setFriendStatus(getFriendStatusText(remoteSession));
+  }
+  syncRoomChatFromPayload(data);
+  const didVersionChange = typeof data.version === "number" && data.version !== oldVersion;
+  const didReadyChange =
+    remoteSession.ready !== oldReady || remoteSession.playerCount !== oldCount;
+  if (data.state && (didVersionChange || didReadyChange)) {
+    state = data.state;
+    const message = remoteSession.ready
+      ? didVersionChange
+        ? "Room synchronized."
+        : "Opponent connected."
+      : "Waiting for opponent...";
+    render(message);
+  }
+}
+
+function startRoomPolling() {
+  stopRoomPolling();
+  roomPollTimer = window.setInterval(() => {
+    if (!remoteSession || busy) {
+      return;
+    }
+    syncRoomState().catch(() => {});
+  }, 900);
+}
+
+function hydrateRoomSession(data) {
+  remoteSession = {
+    roomCode: data.roomCode,
+    playerId: data.playerId,
+    color: data.color,
+    version: data.version,
+    playerCount: data.playerCount ?? 1,
+    ready: (data.playerCount ?? 1) >= 2,
+  };
+  state = data.state;
+  moveHistory = [];
+  undoSnapshots = [];
+  winnerAnnounced = null;
+  hideCelebration();
+  if (roomCodeInput) {
+    roomCodeInput.value = data.roomCode;
+  }
+  setFriendStatus(getFriendStatusText(remoteSession));
+  updateRulesForMode();
+  syncRoomChatFromPayload(data, true);
+  setChatUnreadCount(0);
+  const teamName = playerDisplayName(data.color).toUpperCase();
+  speakPhrase(`You are connected. Welcome to the game room. You are the ${teamName} team.`);
+  lastTurnSpoken = "Welcome to the game room.";
+  startRoomPolling();
+  render("Remote room connected.");
+}
+
 function setPlayMode(mode) {
   playMode = mode;
+  document.body.classList.toggle("friend-mode", mode === "friend");
   playPufflyButton?.classList.toggle("active", mode === "puffly");
   playFriendButton?.classList.toggle("active", mode === "friend");
+  pufflyControls?.classList.toggle("hidden", mode !== "puffly");
+  friendControls?.classList.toggle("hidden", mode !== "friend");
+  friendChatPanel?.classList.toggle("hidden", mode !== "friend");
   hideRulesPanel();
+  resetSessionForModeSwitch();
   state = createInitialState();
   winnerAnnounced = null;
   lastSpokenPhrase = "";
   lastTurnSpoken = "";
   hideCelebration();
   if (mode === "friend") {
-    state = { ...state, currentPlayer: "light" };
     moveHistory = [];
     undoSnapshots = [];
-    render("Friend mode ready.");
+    roomChatMessages = [];
+    setChatUnreadCount(0);
+    setFriendStatus("Choose Create Room or Join Room.");
+    updateRulesForMode();
+    renderRoomChat(true);
+    render("Friend mode: connect to a room.");
     return;
   }
   moveHistory = [];
   undoSnapshots = [];
+  roomChatMessages = [];
+  setChatUnreadCount(0);
+  renderRoomChat(true);
+  updateRulesForMode();
   render("New game started. Puffly opens.");
   runComputerTurn();
 }
@@ -471,10 +781,15 @@ function render(statusMessage = "Make your move.") {
   }
 
   renderHistory();
-  undoButton.disabled = busy || undoSnapshots.length === 0;
+  undoButton.disabled = busy || undoSnapshots.length === 0 || playMode === "friend";
   rulesButton.disabled = busy;
   difficultySelect.disabled = busy || playMode !== "puffly";
   audioSelect.disabled = busy;
+  const shouldShowFriendLock = playMode === "friend" && (!remoteSession || !remoteSession.ready);
+  friendLockOverlay?.classList.toggle("hidden", !shouldShowFriendLock);
+  if (friendLockText && shouldShowFriendLock) {
+    friendLockText.textContent = remoteSession ? "Waiting for your friend to join..." : "Waiting for the players...";
+  }
 
   if (state.winner) {
     if (state.winner === humanPlayer) {
@@ -487,14 +802,32 @@ function render(statusMessage = "Make your move.") {
     return;
   }
   hideCelebration();
-  const currentTurnPhrase =
-    state.currentPlayer === humanPlayer ? "Your turn." : playMode === "puffly" ? "Puffly's turn." : "Friend turn.";
+  let currentTurnPhrase;
+  if (playMode === "friend" && remoteSession) {
+    if (!remoteSession.ready) {
+      currentTurnPhrase = "Welcome to the game room.";
+    } else {
+      const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
+      currentTurnPhrase = `${activeColor}'S TURN`;
+    }
+  } else if (playMode === "friend") {
+    currentTurnPhrase = "Welcome to the game room.";
+  } else {
+    currentTurnPhrase =
+      state.currentPlayer === humanPlayer ? "Your turn." : playMode === "puffly" ? "Puffly's turn." : "Friend turn.";
+  }
   if (lastTurnSpoken !== currentTurnPhrase) {
     lastTurnSpoken = currentTurnPhrase;
     speakPhrase(currentTurnPhrase);
   }
   if (playMode === "friend") {
-    setPufflyState("idle", "🤝 Friend mode");
+    if (!remoteSession) {
+      setPufflyState("idle", "🤝 Friend mode");
+    } else if (!remoteSession.ready) {
+      setPufflyState("thinking", "⏳ Waiting...");
+    } else {
+      setPufflyState("idle", "🤝 Friend mode");
+    }
   } else if (state.currentPlayer === computerPlayer) {
     setPufflyState("thinking", "💭 My move...");
   } else {
@@ -619,6 +952,27 @@ function maybeStoreUndoBeforeMove() {
   pushUndoSnapshot();
 }
 
+async function submitRemoteMove(nextState) {
+  if (!remoteSession) {
+    throw new Error("Not connected to a room.");
+  }
+  const payload = {
+    roomCode: remoteSession.roomCode,
+    playerId: remoteSession.playerId,
+    expectedVersion: remoteSession.version,
+    nextState,
+  };
+  const data = await apiPost("/api/rooms/move", payload);
+  remoteSession.version = data.version;
+  if (typeof data.playerCount === "number") {
+    remoteSession.playerCount = data.playerCount;
+    remoteSession.ready = data.playerCount >= 2;
+    setFriendStatus(getFriendStatusText(remoteSession));
+  }
+  syncRoomChatFromPayload(data);
+  state = data.state;
+}
+
 async function commitMove(move) {
   maybeStoreUndoBeforeMove();
   busy = true;
@@ -627,8 +981,18 @@ async function commitMove(move) {
   const result = applyMove(state, move);
   recordMove(mover, move);
   playMoveAudio(mover, move);
-  state = result.nextState;
-  render(result.status);
+  if (playMode === "friend") {
+    try {
+      await submitRemoteMove(result.nextState);
+      render("Move synced with friend.");
+    } catch (error) {
+      await syncRoomState().catch(() => {});
+      render(error?.message || "Move sync failed.");
+    }
+  } else {
+    state = result.nextState;
+    render(result.status);
+  }
   busy = false;
   if (playMode === "puffly") {
     await runComputerTurn();
@@ -691,6 +1055,20 @@ boardElement.addEventListener("click", async (event) => {
     render("Puffly is thinking...");
     return;
   }
+  if (playMode === "friend") {
+    if (!remoteSession) {
+      render("Connect to a room first.");
+      return;
+    }
+    if (!remoteSession.ready) {
+      render("Waiting for opponent to join.");
+      return;
+    }
+    if (state.currentPlayer !== remoteSession.color) {
+      render("Waiting for your friend...");
+      return;
+    }
+  }
 
   const piece = state.board[row][col];
   const selected = state.selectedSquare;
@@ -729,6 +1107,34 @@ restartButton.addEventListener("click", async () => {
     return;
   }
   ensureAudioContext();
+  if (playMode === "friend") {
+    if (!remoteSession) {
+      render("Connect to a room first.");
+      return;
+    }
+    try {
+      const data = await apiPost("/api/rooms/restart", {
+        roomCode: remoteSession.roomCode,
+        playerId: remoteSession.playerId,
+      });
+      state = data.state;
+      remoteSession.version = data.version;
+      if (typeof data.playerCount === "number") {
+        remoteSession.playerCount = data.playerCount;
+        remoteSession.ready = data.playerCount >= 2;
+        setFriendStatus(getFriendStatusText(remoteSession));
+      }
+      syncRoomChatFromPayload(data);
+      moveHistory = [];
+      undoSnapshots = [];
+      winnerAnnounced = null;
+      hideCelebration();
+      render("Room restarted.");
+    } catch (error) {
+      render(error?.message || "Unable to restart room.");
+    }
+    return;
+  }
   state = createInitialState();
   moveHistory = [];
   undoSnapshots = [];
@@ -736,11 +1142,6 @@ restartButton.addEventListener("click", async () => {
   lastSpokenPhrase = "";
   lastTurnSpoken = "";
   hideCelebration();
-  if (playMode === "friend") {
-    state = { ...state, currentPlayer: "light" };
-    render("Friend mode ready.");
-    return;
-  }
   render("New game started. Puffly opens.");
   await runComputerTurn();
 });
@@ -803,6 +1204,131 @@ playFriendButton?.addEventListener("click", () => {
   setPlayMode("friend");
 });
 
+createRoomButton?.addEventListener("click", async () => {
+  if (busy || playMode !== "friend") {
+    return;
+  }
+  if (remoteSession) {
+    setFriendStatus(
+      `Already connected to room ${remoteSession.roomCode} as ${playerDisplayName(remoteSession.color).toUpperCase()}. Use the second device to join.`,
+    );
+    return;
+  }
+  try {
+    const data = await apiPost("/api/rooms/create", {});
+    hydrateRoomSession(data);
+  } catch (error) {
+    setFriendStatus(error?.message || "Could not create room.");
+  }
+});
+
+joinRoomButton?.addEventListener("click", async () => {
+  if (busy || playMode !== "friend") {
+    return;
+  }
+  if (remoteSession) {
+    setFriendStatus(
+      `Already connected to room ${remoteSession.roomCode} as ${playerDisplayName(remoteSession.color).toUpperCase()}. Use the second device to join.`,
+    );
+    return;
+  }
+  const roomCode = roomCodeInput?.value.trim().toUpperCase();
+  if (!roomCode) {
+    setFriendStatus("Enter a room code first.");
+    return;
+  }
+  try {
+    const data = await apiPost("/api/rooms/join", { roomCode });
+    hydrateRoomSession(data);
+  } catch (error) {
+    setFriendStatus(error?.message || "Could not join room.");
+  }
+});
+
+copyRoomButton?.addEventListener("click", async () => {
+  const roomCode = remoteSession?.roomCode || roomCodeInput?.value.trim().toUpperCase();
+  if (!roomCode) {
+    setFriendStatus("No room code to copy.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(roomCode);
+    setFriendStatus(`Room code ${roomCode} copied.`);
+  } catch {
+    setFriendStatus(`Room code: ${roomCode}`);
+  }
+});
+
+async function sendRoomChatMessage() {
+  if (busy || playMode !== "friend" || !remoteSession) {
+    return;
+  }
+  const text = chatInput?.value.trim();
+  if (!text) {
+    return;
+  }
+  try {
+    const data = await apiPost("/api/rooms/chat", {
+      roomCode: remoteSession.roomCode,
+      playerId: remoteSession.playerId,
+      text,
+    });
+    if (chatInput) {
+      chatInput.value = "";
+    }
+    syncRoomChatFromPayload(data, true);
+  } catch (error) {
+    setFriendStatus(error?.message || "Chat send failed.");
+  }
+}
+
+chatSendButton?.addEventListener("click", () => {
+  sendRoomChatMessage();
+});
+
+chatMuteButton?.addEventListener("click", () => {
+  chatNotificationsMuted = !chatNotificationsMuted;
+  updateChatMuteButton();
+  setFriendStatus(chatNotificationsMuted ? "Chat notifications muted." : "Chat notifications enabled.");
+});
+
+chatInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+  event.preventDefault();
+  sendRoomChatMessage();
+});
+
+chatInput?.addEventListener("focus", () => {
+  setChatUnreadCount(0);
+});
+
+chatMessagesElement?.addEventListener("scroll", () => {
+  if (isChatActivelyViewed()) {
+    setChatUnreadCount(0);
+  }
+});
+
+leaveRoomButton?.addEventListener("click", async () => {
+  if (busy || playMode !== "friend") {
+    return;
+  }
+  if (!remoteSession) {
+    setFriendStatus("No active room to leave.");
+    return;
+  }
+  try {
+    await apiPost("/api/rooms/leave", {
+      roomCode: remoteSession.roomCode,
+      playerId: remoteSession.playerId,
+    });
+    resetFriendLocalState("You left the room.");
+  } catch (error) {
+    setFriendStatus(error?.message || "Could not leave room.");
+  }
+});
+
 celebrationClose.addEventListener("click", () => {
   hideCelebration();
 });
@@ -814,5 +1340,7 @@ if (typeof window !== "undefined") {
   });
 }
 
+updateChatMuteButton();
+renderRoomChat(true);
 render("Puffly opens the game.");
 runComputerTurn();
