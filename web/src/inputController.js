@@ -1,8 +1,27 @@
-import { applyMove, getLegalMovesForPiece } from "./rulesEngine.js";
-import { animateMove } from "./moveAnimation.js";
+import {
+  applyMove,
+  getAllLegalMovesForPlayer,
+  getLegalMovesForPiece,
+} from "../../shared/src/rulesEngine.js?v=20260513x";
+import { animateMove } from "./moveAnimation.js?v=20260513x";
 
 function parseSquareFromTarget(target) {
   const square = target.closest(".square");
+  if (!square) {
+    return null;
+  }
+  return {
+    row: Number(square.dataset.row),
+    col: Number(square.dataset.col),
+  };
+}
+
+function parseSquareFromPoint(x, y) {
+  if (typeof document.elementsFromPoint !== "function") {
+    return parseSquareFromTarget(document.elementFromPoint(x, y));
+  }
+  const stack = document.elementsFromPoint(x, y);
+  const square = stack.find((node) => node.classList?.contains("square"));
   if (!square) {
     return null;
   }
@@ -21,6 +40,8 @@ export function attachInputController({
 }) {
   let suppressClickOnce = false;
   let lastWrongMoveAudioAt = 0;
+  const coarsePointer =
+    typeof window !== "undefined" && (window.matchMedia?.("(pointer: coarse)")?.matches ?? false);
 
   function playWrongMoveAudio() {
     if (!isAudioFeedbackEnabled()) {
@@ -73,9 +94,15 @@ export function attachInputController({
   }
 
   boardElement.addEventListener("pointerdown", (event) => {
+    if (coarsePointer) {
+      return;
+    }
     const pieceTarget = event.target.closest(".piece");
     if (!pieceTarget) {
       return;
+    }
+    if (event.cancelable) {
+      event.preventDefault();
     }
 
     const startRow = Number(pieceTarget.dataset.row);
@@ -131,18 +158,33 @@ export function attachInputController({
     sourcePiece.classList.add("drag-source-hidden");
 
     const onMove = (moveEvent) => {
+      if (moveEvent.cancelable) {
+        moveEvent.preventDefault();
+      }
       dragGhost.style.left = `${moveEvent.clientX}px`;
       dragGhost.style.top = `${moveEvent.clientY}px`;
     };
 
-    const onUp = async (upEvent) => {
+    let dragging = true;
+    const cleanupDragListeners = () => {
+      if (!dragging) {
+        return;
+      }
+      dragging = false;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
       dragGhost.remove();
       sourcePiece.classList.remove("drag-source-hidden");
+    };
 
-      const targetElement = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
-      const targetSquare = parseSquareFromTarget(targetElement);
+    const onUp = async (upEvent) => {
+      if (upEvent.cancelable) {
+        upEvent.preventDefault();
+      }
+      cleanupDragListeners();
+
+      const targetSquare = parseSquareFromPoint(upEvent.clientX, upEvent.clientY);
       if (!targetSquare) {
         setState(latestState, "Move cancelled.");
         return;
@@ -161,8 +203,14 @@ export function attachInputController({
       await commitMove(latestState, move);
     };
 
+    const onCancel = () => {
+      cleanupDragListeners();
+      setState(latestState, "Move cancelled.");
+    };
+
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
   });
 
   boardElement.addEventListener("click", async (event) => {
@@ -188,6 +236,35 @@ export function attachInputController({
 
     const piece = state.board[clicked.row][clicked.col];
     const currentSelection = state.selectedSquare;
+    const legalForPlayer = getAllLegalMovesForPlayer(state, state.currentPlayer);
+
+    if (legalForPlayer.hasMandatoryCapture) {
+      const originKey = `${clicked.row},${clicked.col}`;
+      const captureFromOrigin = legalForPlayer.movesByOrigin[originKey] ?? [];
+      if (captureFromOrigin.length > 0) {
+        const nextState = { ...state, selectedSquare: { row: clicked.row, col: clicked.col } };
+        setState(nextState, "Capture required. Choose a highlighted capture square.");
+        return;
+      }
+
+      if (currentSelection) {
+        const selectedCaptures = getLegalMovesForPiece(
+          state,
+          currentSelection.row,
+          currentSelection.col,
+        ).filter((candidate) => candidate.isCapture);
+        const targetCapture = selectedCaptures.find(
+          (candidate) => candidate.to.row === clicked.row && candidate.to.col === clicked.col,
+        );
+        if (targetCapture) {
+          await commitMove(state, targetCapture);
+          return;
+        }
+      }
+
+      setState(state, "Capture required. Select a highlighted capture piece or destination.");
+      return;
+    }
 
     if (piece && piece.player === state.currentPlayer) {
       if (

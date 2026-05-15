@@ -1,4 +1,6 @@
-import { BOARD_SIZE, cloneBoard, isInsideBoard } from "./gameState.js";
+import { BOARD_SIZE, cloneBoard, isDarkSquare, isInsideBoard } from "./gameState.js";
+
+const MANDATORY_CAPTURE_ENABLED = true;
 
 function movementDirections(piece) {
   if (piece.king) {
@@ -104,14 +106,25 @@ export function getAllLegalMovesForPlayer(state, player = state.currentPlayer) {
   const { board } = state;
 
   if (state.forcedPiece) {
-    const forcedCaptures = getPieceCaptures(board, state.forcedPiece.row, state.forcedPiece.col);
-    return {
-      hasMandatoryCapture: forcedCaptures.length > 0,
-      movesByOrigin: {
-        [`${state.forcedPiece.row},${state.forcedPiece.col}`]: forcedCaptures,
-      },
-      allMoves: forcedCaptures,
-    };
+    const { row, col } = state.forcedPiece;
+    if (!isDarkSquare(row, col)) {
+      // Forced captures can only originate from playable dark squares.
+      // Ignore corrupted/stale forced positions so the turn cannot hard-lock.
+    } else {
+    const forcedPiece = isInsideBoard(row, col) ? board[row][col] : null;
+    if (forcedPiece && forcedPiece.player === player) {
+      const forcedCaptures = getPieceCaptures(board, row, col);
+      if (forcedCaptures.length > 0) {
+        return {
+          hasMandatoryCapture: true,
+          movesByOrigin: {
+            [`${row},${col}`]: forcedCaptures,
+          },
+          allMoves: forcedCaptures,
+        };
+      }
+    }
+    }
   }
 
   const pieces = getPlayerPieces(board, player);
@@ -126,7 +139,7 @@ export function getAllLegalMovesForPlayer(state, player = state.currentPlayer) {
     }
   }
 
-  if (captureCount > 0) {
+  if (captureCount > 0 && MANDATORY_CAPTURE_ENABLED) {
     return {
       hasMandatoryCapture: true,
       movesByOrigin: capturesByPiece,
@@ -139,6 +152,12 @@ export function getAllLegalMovesForPlayer(state, player = state.currentPlayer) {
     const moves = getPieceMoves(board, pos.row, pos.col);
     if (moves.length > 0) {
       movesByPiece[`${pos.row},${pos.col}`] = moves;
+    }
+  }
+
+  if (captureCount > 0 && !MANDATORY_CAPTURE_ENABLED) {
+    for (const [origin, captures] of Object.entries(capturesByPiece)) {
+      movesByPiece[origin] = [...(movesByPiece[origin] ?? []), ...captures];
     }
   }
 
@@ -221,7 +240,7 @@ export function applyMove(state, move) {
     ? "Piece captured."
     : `${state.currentPlayer} moved.`;
 
-  if (selectedMove.capture) {
+  if (selectedMove.capture && MANDATORY_CAPTURE_ENABLED) {
     const followUpCaptures = getPieceCaptures(board, selectedMove.to.row, selectedMove.to.col);
     if (followUpCaptures.length > 0) {
       nextPlayer = state.currentPlayer;

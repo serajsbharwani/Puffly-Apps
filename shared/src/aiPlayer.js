@@ -24,6 +24,14 @@ function scoreMove(state, move) {
   return score;
 }
 
+function moveKey(move) {
+  return `${move.from.row}${move.from.col}-${move.to.row}${move.to.col}-${move.isCapture ? 1 : 0}`;
+}
+
+function deterministicChoice(items) {
+  return [...items].sort((a, b) => moveKey(a).localeCompare(moveKey(b)))[0];
+}
+
 function randomChoice(items) {
   return items[Math.floor(Math.random() * items.length)];
 }
@@ -107,7 +115,7 @@ function chooseHardMove(state, computerPlayer) {
     }
   }
 
-  return randomChoice(bestMoves);
+  return deterministicChoice(bestMoves);
 }
 
 export function chooseComputerMove(state, computerPlayer = "light", difficulty = "medium") {
@@ -130,7 +138,7 @@ export function chooseComputerMove(state, computerPlayer = "light", difficulty =
 
   const bestScore = ranked[0].score;
   const bestMoves = ranked.filter((entry) => entry.score === bestScore).map((entry) => entry.move);
-  return randomChoice(bestMoves);
+  return deterministicChoice(bestMoves);
 }
 
 export function performComputerTurn(state, computerPlayer = "light", difficulty = "medium") {

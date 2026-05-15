@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:rules": "node ./src/rulesEngine.test.mjs"
+    "test:rules": "node ./shared/src/rulesEngine.test.mjs"
   }
 }

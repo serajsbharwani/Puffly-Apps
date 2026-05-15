@@ -2,6 +2,11 @@
 
 This is a local browser checkers game designed for children, with standard rules and a playful themed board.
 
+## Repository Layout
+
+- `web/`: browser app shell (HTML, CSS, animation/input/rendering modules, assets)
+- `shared/`: game logic shared across clients (state, rules engine, AI, rules tests)
+
 ## AI Difficulty Levels
 
 - `Easy`: random legal moves.
@@ -26,18 +31,19 @@ This is a local browser checkers game designed for children, with standard rules
 
 ## Run Locally in Chrome
 
-From the `Checkers` folder:
+From the `checkers` repository folder:
 
 1. Start a static server:
    - `python3 -m http.server 8000`
 2. Open this URL in Chrome:
-   - `http://localhost:8000/checkers/`
+   - `http://localhost:8000/`
 
 ## Rules Test Command
 
 Run the rules engine checks:
 
-- `node ./checkers/src/rulesEngine.test.mjs`
+- `npm run test:rules`
+- `node ./shared/src/rulesEngine.test.mjs`
 
 Expected output:
 

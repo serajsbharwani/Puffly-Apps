@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Little Puffly iPhone Checkers</title>
+    <link rel="stylesheet" href="./styles.css?v=34" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <h1>Puffly Checkers</h1>
+      </header>
+
+      <section class="mode-panel" aria-label="Play mode">
+        <button id="play-puffly-btn" class="mode-btn active" type="button">Play with Puffly</button>
+        <button id="play-friend-btn" class="mode-btn" type="button">Play with a Friend</button>
+      </section>
+
+      <section class="control-card">
+        <label for="difficulty-select">Difficulty</label>
+        <select id="difficulty-select" aria-label="Computer difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+        <label for="audio-select">Audio</label>
+        <select id="audio-select" aria-label="Audio feedback">
+          <option value="on" selected>On</option>
+          <option value="off">Off</option>
+        </select>
+      </section>
+
+      <section class="controls">
+        <button id="rules-btn" type="button">Game Rules</button>
+        <button id="restart-btn" type="button">Start New Game</button>
+        <button id="undo-btn" type="button">Undo Last Turn</button>
+      </section>
+
+      <section id="rules-panel" class="rules-panel hidden" aria-live="polite">
+        <h2>Game Rules</h2>
+        <ul>
+          <li>Blue Puffly Team is computer controlled.</li>
+          <li>Green Frog Team is your side.</li>
+          <li>Jumps are required when available.</li>
+          <li>Kinging adds a cap or crown accessory.</li>
+        </ul>
+      </section>
+
+      <section class="board-stage">
+        <div class="board-wrap">
+          <div id="board" class="board" aria-label="Checkers board"></div>
+        </div>
+        <aside id="puffly-panel" class="puffly-panel" aria-live="polite">
+          <p class="puffly-label">Puffly</p>
+          <div class="puffly-face" aria-hidden="true">
+            <span class="puffly-ear left"></span>
+            <span class="puffly-ear right"></span>
+            <span class="puffly-eye left"></span>
+            <span class="puffly-eye right"></span>
+            <span class="puffly-muzzle"></span>
+            <span class="puffly-nose"></span>
+          </div>
+          <p id="puffly-thought" class="puffly-thought">💭 Waiting...</p>
+        </aside>
+      </section>
+
+      <section class="history-card">
+        <h2>Move History</h2>
+        <ol id="history-list"></ol>
+      </section>
+    </main>
+
+    <div id="celebration-overlay" class="celebration-overlay hidden" aria-live="polite">
+      <div id="celebration-fx" class="celebration-fx" aria-hidden="true"></div>
+      <div class="celebration-card">
+        <h2 id="celebration-title">Winner!</h2>
+        <p id="celebration-subtitle">Great game.</p>
+        <button id="celebration-close" type="button">Continue</button>
+      </div>
+    </div>
+
+    <script type="module" src="./src/app.js?v=34"></script>
+  </body>
+</html>

@@ -1,11 +1,11 @@
-import { createInitialState } from "./gameState.js";
-import { chooseComputerMove } from "./aiPlayer.js";
-import { applyMove } from "./rulesEngine.js";
-import { attachInputController } from "./inputController.js";
-import { animatePufflyHandMove } from "./critterAnimation.js";
-import { animateMove, attachPieceToDriver } from "./moveAnimation.js";
-import { renderBoard } from "./renderBoard.js";
-import { updateStatusPanel } from "./uiStatus.js";
+import { createInitialState } from "../../shared/src/gameState.js?v=20260513x";
+import { chooseComputerMove } from "../../shared/src/aiPlayer.js?v=20260513x";
+import { applyMove } from "../../shared/src/rulesEngine.js?v=20260513x";
+import { attachInputController } from "./inputController.js?v=20260513x";
+import { animatePufflyHandMove } from "./critterAnimation.js?v=20260513x";
+import { animateMove, attachPieceToDriver } from "./moveAnimation.js?v=20260513x";
+import { renderBoard } from "./renderBoard.js?v=20260513x";
+import { updateStatusPanel } from "./uiStatus.js?v=20260513x";
 
 const boardElement = document.getElementById("board");
 const turnLabel = document.getElementById("turn-label");
@@ -16,6 +16,10 @@ const themeSelect = document.getElementById("theme-select");
 const themePackSelect = document.getElementById("theme-pack-select");
 const boardSizeSelect = document.getElementById("board-size-select");
 const audioFeedbackSelect = document.getElementById("audio-feedback-select");
+const mobileFocusToggle = document.getElementById("mobile-focus-toggle");
+const mobileStatusPill = document.getElementById("mobile-status-pill");
+const mobileTurnLabel = document.getElementById("mobile-turn-label");
+const mobileStatusLabel = document.getElementById("mobile-status-label");
 const critterOpponentElement = document.getElementById("critter-opponent");
 const celebrationOverlay = document.getElementById("celebration-overlay");
 const celebrationTitle = document.getElementById("celebration-title");
@@ -32,6 +36,7 @@ let themePackPreference = themePackSelect?.value ?? "birthday";
 let boardSizePreference = boardSizeSelect?.value ?? "compact";
 let audioFeedbackEnabled = (audioFeedbackSelect?.value ?? "on") === "on";
 let sceneTheme = "day";
+let mobileGameOnly = false;
 let computerTurnTimer = null;
 let autoThemeTimer = null;
 let announcedWinner = null;
@@ -44,6 +49,12 @@ function refresh(statusMessage) {
     humanPlayer,
     computerPlayer,
   });
+  if (mobileTurnLabel && turnLabel) {
+    mobileTurnLabel.textContent = turnLabel.textContent;
+  }
+  if (mobileStatusLabel && statusLabel) {
+    mobileStatusLabel.textContent = statusLabel.textContent;
+  }
   if (gameState.winner && announcedWinner !== gameState.winner) {
     announcedWinner = gameState.winner;
     showCelebration(gameState.winner);
@@ -184,6 +195,16 @@ function applyThemePackPreference(packChoice) {
 function applyBoardSizePreference(sizeChoice) {
   boardSizePreference = sizeChoice;
   document.body.dataset.boardSize = boardSizePreference;
+}
+
+function setMobileGameOnly(enabled) {
+  mobileGameOnly = enabled;
+  document.body.classList.toggle("mobile-game-only", mobileGameOnly);
+  mobileStatusPill?.classList.toggle("active", mobileGameOnly);
+  if (mobileFocusToggle) {
+    mobileFocusToggle.textContent = mobileGameOnly ? "Show Controls" : "Game Only Mode";
+    mobileFocusToggle.setAttribute("aria-pressed", String(mobileGameOnly));
+  }
 }
 
 function getThemeForLocalTime() {
@@ -356,6 +377,12 @@ if (audioFeedbackSelect) {
   });
 }
 
+if (mobileFocusToggle) {
+  mobileFocusToggle.addEventListener("click", () => {
+    setMobileGameOnly(!mobileGameOnly);
+  });
+}
+
 if (celebrationCloseButton) {
   celebrationCloseButton.addEventListener("click", () => {
     hideCelebration();
@@ -365,5 +392,13 @@ if (celebrationCloseButton) {
 applyThemePreference(themePreference);
 applyThemePackPreference(themePackPreference);
 applyBoardSizePreference(boardSizePreference);
+setMobileGameOnly(false);
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 700 && mobileGameOnly) {
+      setMobileGameOnly(false);
+    }
+  });
+}
 refresh("Puffly opens the game. Get ready to move the frog team.");
 maybeRunComputerTurn();

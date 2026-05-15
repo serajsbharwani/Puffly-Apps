@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Little Puffly Checkers</title>
+    <link rel="stylesheet" href="./styles.css?v=20260513x" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <h1>Little Puffly Checkers</h1>
+        <p class="subtitle">A playful checkers game for family game time</p>
+        <button
+          id="mobile-focus-toggle"
+          class="mobile-focus-toggle"
+          type="button"
+          aria-pressed="false"
+        >
+          Game Only Mode
+        </button>
+      </header>
+      <div id="mobile-status-pill" class="mobile-status-pill" aria-live="polite">
+        <span id="mobile-turn-label" class="mobile-status-turn">Turn: Dark</span>
+        <span id="mobile-status-label" class="mobile-status-text">Select a dark piece to begin.</span>
+      </div>
+
+      <section class="game-layout">
+        <aside class="game-panel">
+          <div class="status-card">
+            <h2>Game Status</h2>
+            <p id="turn-label">Turn: Dark</p>
+            <p id="status-label">Select a dark piece to begin.</p>
+          </div>
+          <div class="control-card">
+            <button id="restart-btn" type="button">Start New Game</button>
+            <label class="difficulty-label" for="difficulty-select">Computer Difficulty</label>
+            <select id="difficulty-select" aria-label="Computer difficulty">
+              <option value="easy">Easy</option>
+              <option value="medium" selected>Medium</option>
+              <option value="hard">Hard</option>
+            </select>
+            <label class="difficulty-label" for="theme-select">Scene Theme</label>
+            <select id="theme-select" aria-label="Scene theme">
+              <option value="auto" selected>Auto (Local Time)</option>
+              <option value="day">Day</option>
+              <option value="night">Night</option>
+            </select>
+            <label class="difficulty-label" for="theme-pack-select">Theme Pack</label>
+            <select id="theme-pack-select" aria-label="Theme pack">
+              <option value="birthday" selected>Birthday Party</option>
+              <option value="school">School Day</option>
+              <option value="beach">Beach Day</option>
+            </select>
+            <label class="difficulty-label" for="board-size-select">Board Size</label>
+            <select id="board-size-select" aria-label="Board size">
+              <option value="compact" selected>Compact</option>
+              <option value="normal">Normal</option>
+              <option value="large">Large</option>
+            </select>
+            <label class="difficulty-label" for="audio-feedback-select">Audio Feedback</label>
+            <select id="audio-feedback-select" aria-label="Audio feedback">
+              <option value="on" selected>On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+          <div class="legend-card">
+            <h2>Legend</h2>
+            <ul>
+              <li>Blue Puffly Team is computer controlled.</li>
+              <li>Green Frog Team is your side.</li>
+              <li>Jumps are required when available.</li>
+              <li>Kinging adds a cap or crown accessory.</li>
+            </ul>
+          </div>
+        </aside>
+
+        <section class="board-stage">
+          <div id="critter-opponent" class="critter-opponent" aria-hidden="true">
+            <p class="critter-label">Puffly (Computer)</p>
+            <div class="critter-thought">💭</div>
+            <div class="critter-face">
+              <span class="critter-ear ear-left"></span>
+              <span class="critter-ear ear-right"></span>
+              <span class="critter-eye eye-left"><span class="critter-pupil"></span></span>
+              <span class="critter-eye eye-right"><span class="critter-pupil"></span></span>
+              <span class="critter-muzzle"></span>
+              <span class="critter-nose"></span>
+              <span class="critter-mouth"></span>
+            </div>
+            <div class="critter-torso"></div>
+            <div class="critter-arms">
+              <span class="critter-hand left-hand"></span>
+              <span class="critter-hand right-hand"></span>
+            </div>
+          </div>
+
+          <div class="critterville-backdrop" aria-hidden="true">
+            <div class="backdrop-sun"></div>
+            <div class="festival-bunting bunting-top">
+              <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div class="festival-bunting bunting-mid">
+              <span></span><span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <div class="balloon-cluster balloons-left">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="balloon-cluster balloons-right">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="backdrop-cloud cloud-a"></div>
+            <div class="backdrop-cloud cloud-b"></div>
+            <div class="backdrop-cloud cloud-c"></div>
+            <div class="backdrop-hill hill-a"></div>
+            <div class="backdrop-hill hill-b"></div>
+            <div class="backdrop-hill hill-c"></div>
+            <div class="backdrop-town-row town-back">
+              <span>🏠</span><span>🌲</span><span>🏡</span><span>🌳</span><span>🏘️</span><span>🌼</span><span>🚲</span>
+            </div>
+            <div class="backdrop-town-row town-front">
+              <span>🌷</span><span>🏠</span><span>🌿</span><span>🏡</span><span>🐦</span><span>🌲</span><span>🏠</span>
+            </div>
+            <div class="play-stickers">
+              <span>⭐</span><span>🦋</span><span>🎈</span><span>🌈</span><span>✨</span>
+            </div>
+            <div class="backdrop-path"></div>
+          </div>
+
+          <div class="story-corner top-left" aria-hidden="true">🏠 Treehouse</div>
+          <div class="story-corner top-right" aria-hidden="true">🛏️ Bedroom</div>
+          <div class="story-corner bottom-left" aria-hidden="true">🏖️ Beach House</div>
+          <div class="story-corner bottom-right" aria-hidden="true">🌳 Pufflyville</div>
+
+          <div class="neighborhood-strip strip-top" aria-hidden="true">
+            <span>🏡</span><span>🌲</span><span>🚲</span><span>🐞</span><span>🌼</span><span>🏡</span>
+          </div>
+          <div class="neighborhood-strip strip-bottom" aria-hidden="true">
+            <span>🐿️</span><span>🌻</span><span>🏠</span><span>🌿</span><span>🐦</span><span>🏠</span>
+          </div>
+
+          <div class="tiny-critter critter-spider" aria-hidden="true">🕷️</div>
+          <div class="tiny-critter critter-mouse" aria-hidden="true">🐭</div>
+          <div class="tiny-critter critter-grasshopper" aria-hidden="true">🦗</div>
+          <div class="tiny-critter critter-ladybug" aria-hidden="true">🐞</div>
+          <div class="tiny-critter critter-snail" aria-hidden="true">🐌</div>
+          <div class="tabletop-shadow" aria-hidden="true"></div>
+          <div class="board-perspective">
+            <div id="board" class="board" aria-label="Checkers board"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="celebration-overlay" class="celebration-overlay hidden" aria-live="polite">
+      <div class="celebration-card">
+        <h2 id="celebration-title">Winner!</h2>
+        <p id="celebration-subtitle">Great game.</p>
+        <button id="celebration-close" type="button">Continue</button>
+      </div>
+      <div id="confetti-layer" class="confetti-layer" aria-hidden="true"></div>
+    </div>
+
+    <script type="module" src="./src/main.js?v=20260513x"></script>
+  </body>
+</html>

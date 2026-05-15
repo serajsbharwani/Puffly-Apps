@@ -1,5 +1,8 @@
-import { BOARD_SIZE, isDarkSquare } from "./gameState.js";
-import { getAllLegalMovesForPlayer, getLegalMovesForPiece } from "./rulesEngine.js";
+import { BOARD_SIZE, isDarkSquare } from "../../shared/src/gameState.js?v=20260513x";
+import {
+  getAllLegalMovesForPlayer,
+  getLegalMovesForPiece,
+} from "../../shared/src/rulesEngine.js?v=20260513x";
 
 function toKey(row, col) {
   return `${row},${col}`;
@@ -16,6 +19,12 @@ export function renderBoard(boardElement, state) {
   const legalForPlayer = getAllLegalMovesForPlayer(state, state.currentPlayer);
   const selectableOrigins = new Set(Object.keys(legalForPlayer.movesByOrigin));
   const selected = state.selectedSquare;
+  const globalCaptureTargets =
+    !selected && legalForPlayer.hasMandatoryCapture
+      ? new Map(
+          legalForPlayer.allMoves.map((move) => [toKey(move.to.row, move.to.col), move]),
+        )
+      : new Map();
   const selectedMoves = selected
     ? getLegalMovesForPiece(state, selected.row, selected.col)
     : [];
@@ -58,7 +67,7 @@ export function renderBoard(boardElement, state) {
         square.classList.add("capture-flash");
       }
 
-      const move = moveTargets.get(key);
+      const move = moveTargets.get(key) ?? globalCaptureTargets.get(key);
       if (move) {
         square.classList.add(move.isCapture ? "capture-target" : "move-target");
       }
