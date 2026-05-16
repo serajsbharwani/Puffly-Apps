@@ -35,7 +35,8 @@ body.dragging-touch {
 }
 
 .app-shell {
-  width: min(520px, 100%);
+  width: 100%;
+  max-width: 1120px;
   margin: 0 auto;
   display: grid;
   gap: 0.7rem;
@@ -163,113 +164,136 @@ body.dragging-touch {
   background: #fff4de;
   border: 2px solid #ce9f49;
   border-radius: 12px;
-  padding: 0.45rem;
+  padding: 0.22rem;
   display: grid;
-  gap: 0.4rem;
-  min-height: 180px;
+  gap: 0.24rem;
 }
 
-.friend-chat-panel h2 {
-  margin: 0;
-  font-size: 0.95rem;
-}
-
-.chat-header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.4rem;
-}
-
-.chat-header-row h2 {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.chat-unread-badge {
-  min-width: 1.1rem;
-  height: 1.1rem;
-  border-radius: 999px;
-  background: #e74747;
-  color: #fff;
-  font-size: 0.72rem;
-  line-height: 1.1rem;
-  text-align: center;
-  padding: 0 0.22rem;
-}
-
-#chat-mute-btn {
-  min-height: 30px;
-  border-radius: 8px;
-  border: 2px solid #75592a;
-  background: #ffe5b4;
-  padding: 0.15rem 0.55rem;
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-
-.chat-messages {
-  background: #fffdf7;
-  border: 2px solid #d3b67a;
+.voice-panel {
+  background: #fffdf5;
+  border: 2px solid #d7bc82;
   border-radius: 10px;
-  min-height: 110px;
-  max-height: 220px;
-  overflow: auto;
-  padding: 0.35rem 0.45rem;
-  font-size: 0.82rem;
-}
-
-.chat-row {
-  margin: 0.12rem 0;
-  word-break: break-word;
-}
-
-.chat-label {
-  font-weight: 700;
-}
-
-.chat-label.blue {
-  color: #2e5f9e;
-}
-
-.chat-label.green {
-  color: #2f7e37;
-}
-
-.chat-compose {
+  padding: 0.22rem;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.35rem;
+  gap: 0.28rem;
 }
 
-.chat-compose input {
-  min-height: 36px;
-  border-radius: 8px;
-  border: 2px solid #94753d;
-  padding: 0.25rem 0.45rem;
+.voice-title {
+  margin: 0;
+  font-size: 0.84rem;
 }
 
-.chat-compose button {
-  min-height: 36px;
-  border-radius: 8px;
-  border: 2px solid #6d5325;
-  background: #ffe5ad;
+.voice-avatars {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.25rem;
+}
+
+.voice-avatar {
+  border: 2px solid #8f7443;
+  border-radius: 10px;
+  background: #fff5df;
+  display: grid;
+  justify-items: center;
+  gap: 0.12rem;
+  padding: 0.2rem 0.1rem;
+  font-size: 0.72rem;
+}
+
+.voice-avatar .avatar-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #d2d2d2;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.voice-avatar.speaking .avatar-dot {
+  background: #44c45d;
+  transform: scale(1.12);
+  box-shadow: 0 0 0 6px rgba(68, 196, 93, 0.18);
+}
+
+.voice-avatar.blue {
+  border-color: #4f7fbf;
+}
+
+.voice-avatar.green {
+  border-color: #5aa05f;
+}
+
+.voice-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.22rem;
+}
+
+.voice-controls button {
+  min-height: 28px;
+  border-radius: 7px;
+  border: 2px solid #7b6031;
+  background: #ffe8b7;
+  font-size: 0.68rem;
   font-weight: 700;
+  padding: 0.1rem 0.22rem;
+}
+
+.speech-unlock-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(32, 22, 10, 0.5);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.speech-unlock-overlay.hidden {
+  display: none;
+}
+
+.speech-unlock-card {
+  width: min(360px, 100%);
+  background: #fff6e5;
+  border: 3px solid #c59339;
+  border-radius: 14px;
+  padding: 1rem;
+  text-align: center;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.speech-unlock-card h2,
+.speech-unlock-card p {
+  margin: 0;
+}
+
+#speech-unlock-btn {
+  min-height: 42px;
+  border-radius: 10px;
+  border: 2px solid #3f652f;
+  background: #dff6df;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.voice-status {
+  margin: 0;
+  font-size: 0.7rem;
 }
 
 body.friend-mode .friend-chat-panel.hidden {
   display: none !important;
 }
 
-@media (min-width: 900px) {
-  body.friend-mode .gameplay-layout {
-    grid-template-columns: minmax(0, 1fr) 250px;
+@media (min-width: 768px) {
+  body {
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
   }
 
-  body.friend-mode .chat-messages {
-    min-height: 250px;
-    max-height: 360px;
+  body.friend-mode .gameplay-layout {
+    grid-template-columns: minmax(0, 1fr) 160px;
   }
 }
 
@@ -434,6 +458,7 @@ body.friend-mode .friend-chat-panel.hidden {
   grid-template-columns: repeat(8, 1fr);
   grid-template-rows: repeat(8, minmax(0, 1fr));
   width: 100%;
+  margin: 0 auto;
   aspect-ratio: 1 / 1;
   border: 3px solid #3e2e20;
   border-radius: 8px;

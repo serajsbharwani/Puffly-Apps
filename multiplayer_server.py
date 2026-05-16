@@ -76,6 +76,7 @@ class RoomStore:
     return {
       "playerCount": player_count,
       "ready": player_count >= 2,
+      "voiceParticipants": room["voice"]["participants"],
     }
 
   def __init__(self) -> None:
@@ -105,6 +106,10 @@ class RoomStore:
       "messages": [],
       "nextMessageId": 1,
       "chatRate": {},
+      "voice": {
+        "participants": {"dark": False, "light": False},
+        "signals": {"dark": [], "light": []},
+      },
       "players": {player_id: Player(player_id=player_id, color="dark")},
       "updated_at": now_ts(),
     }
@@ -224,10 +229,13 @@ class RoomStore:
     room = self.rooms.get(room_code)
     if not room:
       raise ValueError("Room not found.")
-    if player_id not in room["players"]:
+    player: Optional[Player] = room["players"].get(player_id)
+    if not player:
       raise ValueError("Player is not in this room.")
     room["players"].pop(player_id, None)
     room["chatRate"].pop(player_id, None)
+    room["voice"]["participants"][player.color] = False
+    room["voice"]["signals"][player.color] = []
     if not room["players"]:
       self.rooms.pop(room_code, None)
       return {"left": True}
@@ -239,6 +247,10 @@ class RoomStore:
     room["messages"] = []
     room["nextMessageId"] = 1
     room["chatRate"] = {only_player.player_id: {"times": [], "lastText": "", "lastAt": 0.0}}
+    room["voice"] = {
+      "participants": {"dark": False, "light": False},
+      "signals": {"dark": [], "light": []},
+    }
     room["version"] += 1
     room["updated_at"] = now_ts()
     return {
@@ -246,6 +258,82 @@ class RoomStore:
       "state": room["state"],
       "version": room["version"],
       "messages": room["messages"],
+      **self._room_meta(room),
+    }
+
+  def voice_join(self, room_code: str, player_id: str) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    player: Optional[Player] = room["players"].get(player_id)
+    if not player:
+      raise ValueError("Player is not in this room.")
+    room["voice"]["participants"][player.color] = True
+    room["updated_at"] = now_ts()
+    return {
+      "joined": True,
+      **self._room_meta(room),
+    }
+
+  def voice_leave(self, room_code: str, player_id: str) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    player: Optional[Player] = room["players"].get(player_id)
+    if not player:
+      raise ValueError("Player is not in this room.")
+    room["voice"]["participants"][player.color] = False
+    room["voice"]["signals"][player.color] = []
+    room["updated_at"] = now_ts()
+    return {
+      "leftVoice": True,
+      **self._room_meta(room),
+    }
+
+  def voice_signal(
+    self,
+    room_code: str,
+    player_id: str,
+    signal_type: str,
+    payload: Dict[str, Any],
+    target_color: Optional[str] = None,
+  ) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    player: Optional[Player] = room["players"].get(player_id)
+    if not player:
+      raise ValueError("Player is not in this room.")
+    if signal_type not in {"offer", "answer", "ice"}:
+      raise ValueError("Unsupported signal type.")
+    recipient = target_color or ("light" if player.color == "dark" else "dark")
+    if recipient not in {"dark", "light"}:
+      raise ValueError("Invalid signal target.")
+    room["voice"]["signals"][recipient].append(
+      {
+        "type": signal_type,
+        "fromColor": player.color,
+        "payload": payload or {},
+      }
+    )
+    if len(room["voice"]["signals"][recipient]) > 60:
+      room["voice"]["signals"][recipient] = room["voice"]["signals"][recipient][-60:]
+    room["updated_at"] = now_ts()
+    return {"queued": True}
+
+  def voice_poll(self, room_code: str, player_id: str) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    player: Optional[Player] = room["players"].get(player_id)
+    if not player:
+      raise ValueError("Player is not in this room.")
+    queue = room["voice"]["signals"][player.color]
+    signals = list(queue)
+    room["voice"]["signals"][player.color] = []
+    room["updated_at"] = now_ts()
+    return {
+      "signals": signals,
       **self._room_meta(room),
     }
 
@@ -275,6 +363,12 @@ class Handler(SimpleHTTPRequestHandler):
       params = parse_qs(parsed.query)
       room_code = (params.get("roomCode") or [""])[0].strip().upper()
       self._json_endpoint(lambda: STORE.get_state(room_code))
+      return
+    if parsed.path == "/api/rooms/voice/poll":
+      params = parse_qs(parsed.query)
+      room_code = (params.get("roomCode") or [""])[0].strip().upper()
+      player_id = (params.get("playerId") or [""])[0].strip()
+      self._json_endpoint(lambda: STORE.voice_poll(room_code, player_id))
       return
     super().do_GET()
 
@@ -328,6 +422,33 @@ class Handler(SimpleHTTPRequestHandler):
       player_id = str(payload.get("playerId", "")).strip()
       text = str(payload.get("text", ""))
       self._json_endpoint(lambda: STORE.post_chat(room_code, player_id, text))
+      return
+    if parsed.path == "/api/rooms/voice/join":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      self._json_endpoint(lambda: STORE.voice_join(room_code, player_id))
+      return
+    if parsed.path == "/api/rooms/voice/leave":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      self._json_endpoint(lambda: STORE.voice_leave(room_code, player_id))
+      return
+    if parsed.path == "/api/rooms/voice/signal":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      signal_type = str(payload.get("signalType", "")).strip().lower()
+      signal_payload = payload.get("payload") or {}
+      target_color_raw = payload.get("targetColor")
+      target_color = str(target_color_raw).strip().lower() if target_color_raw else None
+      self._json_endpoint(
+        lambda: STORE.voice_signal(
+          room_code=room_code,
+          player_id=player_id,
+          signal_type=signal_type,
+          payload=signal_payload,
+          target_color=target_color,
+        )
+      )
       return
 
     self.send_error(HTTPStatus.NOT_FOUND, "Not found")

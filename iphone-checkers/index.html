@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Little Puffly iPhone Checkers</title>
-    <link rel="stylesheet" href="./styles.css?v=47" />
+    <link rel="stylesheet" href="./styles.css?v=58" />
   </head>
   <body>
     <main class="app-shell">
@@ -33,10 +33,10 @@
         </div>
         <div id="friend-controls" class="friend-controls hidden">
           <div class="friend-room-actions">
-            <button id="create-room-btn" type="button">Create Room</button>
+            <button id="create-room-btn" type="button">Create & Invite</button>
             <input id="room-code-input" type="text" maxlength="8" placeholder="Room code" />
             <button id="join-room-btn" type="button">Join Room</button>
-            <button id="copy-room-btn" type="button">Copy Code</button>
+            <button id="copy-room-btn" type="button">Share Invite</button>
             <button id="leave-room-btn" class="leave-room-btn" type="button">Leave Room</button>
           </div>
           <p id="friend-status" class="friend-status">Choose Create Room or Join Room.</p>
@@ -82,18 +82,25 @@
         </section>
 
         <aside id="friend-chat-panel" class="friend-chat-panel hidden" aria-live="polite">
-          <div class="chat-header-row">
-            <h2>
-              Room Chat
-              <span id="chat-unread-badge" class="chat-unread-badge hidden">0</span>
-            </h2>
-            <button id="chat-mute-btn" type="button">Mute Chat</button>
-          </div>
-          <div id="chat-messages" class="chat-messages"></div>
-          <div class="chat-compose">
-            <input id="chat-input" type="text" maxlength="200" placeholder="Type a message..." />
-            <button id="chat-send-btn" type="button">Send</button>
-          </div>
+          <section class="voice-panel" aria-label="Voice chat">
+            <h2 class="voice-title">Voice Chat</h2>
+            <div class="voice-avatars">
+              <div id="blue-avatar" class="voice-avatar blue">
+                <span class="avatar-dot"></span>
+                <strong>BLUE</strong>
+              </div>
+              <div id="green-avatar" class="voice-avatar green">
+                <span class="avatar-dot"></span>
+                <strong>GREEN</strong>
+              </div>
+            </div>
+            <div class="voice-controls">
+              <button id="voice-join-btn" type="button">Join Voice</button>
+              <button id="voice-mic-btn" type="button">Mute Mic</button>
+              <button id="voice-speaker-btn" type="button">Speaker On</button>
+            </div>
+            <p id="voice-status" class="voice-status">Voice not connected.</p>
+          </section>
         </aside>
       </section>
 
@@ -102,6 +109,14 @@
         <ol id="history-list"></ol>
       </section>
     </main>
+
+    <div id="speech-unlock-overlay" class="speech-unlock-overlay hidden" aria-live="polite">
+      <div class="speech-unlock-card">
+        <h2>Tap Start for Voice</h2>
+        <p>This one-time tap enables voice prompts on iPad Safari.</p>
+        <button id="speech-unlock-btn" type="button">Start</button>
+      </div>
+    </div>
 
     <div id="celebration-overlay" class="celebration-overlay hidden" aria-live="polite">
       <div id="celebration-fx" class="celebration-fx" aria-hidden="true"></div>
@@ -112,6 +127,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/app.js?v=49"></script>
+    <script type="module" src="./src/app.js?v=70"></script>
   </body>
 </html>

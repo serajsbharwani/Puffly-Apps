@@ -38,6 +38,14 @@ const chatInput = document.getElementById("chat-input");
 const chatSendButton = document.getElementById("chat-send-btn");
 const chatMuteButton = document.getElementById("chat-mute-btn");
 const chatUnreadBadge = document.getElementById("chat-unread-badge");
+const voiceJoinButton = document.getElementById("voice-join-btn");
+const voiceMuteMicButton = document.getElementById("voice-mic-btn");
+const voiceSpeakerButton = document.getElementById("voice-speaker-btn");
+const speechUnlockOverlay = document.getElementById("speech-unlock-overlay");
+const speechUnlockButton = document.getElementById("speech-unlock-btn");
+const blueAvatar = document.getElementById("blue-avatar");
+const greenAvatar = document.getElementById("green-avatar");
+const voiceStatusLabel = document.getElementById("voice-status");
 const celebrationOverlay = document.getElementById("celebration-overlay");
 const celebrationFx = document.getElementById("celebration-fx");
 const celebrationTitle = document.getElementById("celebration-title");
@@ -72,6 +80,24 @@ let roomPollTimer = null;
 let roomChatMessages = [];
 let chatNotificationsMuted = false;
 let chatUnreadCount = 0;
+let voicePeer = null;
+let voiceLocalStream = null;
+let voiceRemoteStream = null;
+let voiceSignalPollTimer = null;
+let voiceAudioContext = null;
+let voiceLocalLevelTimer = null;
+let voiceRemoteLevelTimer = null;
+let voiceJoined = false;
+let voiceMicMuted = false;
+let voiceSpeakerMuted = false;
+let voiceOfferSent = false;
+let voiceRemoteAudioElement = null;
+const AUTO_JOIN_ROOM_CODE = getJoinCodeFromUrl();
+let pendingPrioritySpeech = "";
+let pendingJoinIntroTeam = "";
+const speechNeedsInteractionUnlock = detectIOSLikeBrowser();
+let speechUnlocked = !speechNeedsInteractionUnlock;
+let pendingUnlockSpeech = "";
 
 function key(row, col) {
   return `${row},${col}`;
@@ -79,6 +105,28 @@ function key(row, col) {
 
 function clone(data) {
   return JSON.parse(JSON.stringify(data));
+}
+
+function detectIOSLikeBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  const ua = navigator.userAgent || "";
+  const isiOSDevice = /iPad|iPhone|iPod/i.test(ua);
+  const iPadDesktopUA = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  return isiOSDevice || iPadDesktopUA;
+}
+
+function getJoinCodeFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const params = new URLSearchParams(window.location.search);
+  const raw = (params.get("join") || "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,8}$/.test(raw)) {
+    return "";
+  }
+  return raw;
 }
 
 function sleep(ms) {
@@ -97,8 +145,19 @@ function lockBoardGeometry() {
   const computed = window.getComputedStyle(wrap);
   const padLeft = Number.parseFloat(computed.paddingLeft) || 0;
   const padRight = Number.parseFloat(computed.paddingRight) || 0;
-  const innerContentWidth = Math.max(0, wrap.clientWidth - padLeft - padRight);
-  const usable = Math.floor(innerContentWidth);
+  const padTop = Number.parseFloat(computed.paddingTop) || 0;
+  const padBottom = Number.parseFloat(computed.paddingBottom) || 0;
+  const bodyComputed = window.getComputedStyle(document.body);
+  const bodyBottomPadding = Number.parseFloat(bodyComputed.paddingBottom) || 0;
+  const iPadFriendInset =
+    playMode === "friend" && window.innerWidth >= 768
+      ? 96
+      : 0;
+  const innerContentWidth = Math.max(0, wrap.clientWidth - padLeft - padRight - iPadFriendInset);
+  const wrapRect = wrap.getBoundingClientRect();
+  const remainingViewportHeight = Math.max(0, window.innerHeight - wrapRect.top - bodyBottomPadding - 8);
+  const innerContentHeight = Math.max(0, remainingViewportHeight - padTop - padBottom);
+  const usable = Math.floor(Math.min(innerContentWidth, innerContentHeight));
   const cell = Math.max(1, Math.floor(usable / BOARD_SIZE));
   const boardPixels = cell * BOARD_SIZE;
 
@@ -159,8 +218,48 @@ function beep(frequency, duration, type = "sine", gainValue = 0.05) {
   oscillator.stop(now + duration);
 }
 
+function unlockSpeechIfNeeded() {
+  if (speechUnlocked) {
+    return;
+  }
+  speechUnlocked = true;
+  if (pendingJoinIntroTeam) {
+    pendingPrioritySpeech = buildJoinIntroPhrase(pendingJoinIntroTeam);
+  }
+  const queued = pendingPrioritySpeech || pendingUnlockSpeech;
+  pendingUnlockSpeech = "";
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.resume();
+  }
+  if (queued) {
+    lastSpokenAt = 0;
+    lastSpokenPhrase = "";
+    pendingPrioritySpeech = "";
+    pendingJoinIntroTeam = "";
+    speak(queued);
+    // iPad Safari can drop the very first utterance after unlock.
+    window.setTimeout(() => {
+      if (typeof window === "undefined" || !window.speechSynthesis) {
+        return;
+      }
+      if (!window.speechSynthesis.speaking) {
+        lastSpokenAt = 0;
+        speak(queued);
+      }
+    }, 520);
+  }
+  speechUnlockOverlay?.classList.add("hidden");
+}
+
 function speak(text) {
   if (!audioEnabled || typeof window === "undefined" || !window.speechSynthesis) {
+    return;
+  }
+  if (!speechUnlocked) {
+    if (!pendingUnlockSpeech || pendingPrioritySpeech === text) {
+      pendingUnlockSpeech = text;
+    }
     return;
   }
   const now = Date.now();
@@ -172,8 +271,29 @@ function speak(text) {
   utterance.rate = 0.95;
   utterance.pitch = 1;
   utterance.volume = 0.95;
+  utterance.onstart = () => {
+    if (pendingPrioritySpeech === text) {
+      pendingPrioritySpeech = "";
+    }
+  };
+  utterance.onend = null;
+  utterance.onerror = null;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
+}
+
+function flushPendingPrioritySpeech() {
+  if (!pendingPrioritySpeech || !speechUnlocked) {
+    return;
+  }
+  const text = pendingPrioritySpeech;
+  pendingPrioritySpeech = "";
+  lastSpokenAt = 0;
+  lastSpokenPhrase = "";
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+  speak(text);
 }
 
 function speakPhrase(text) {
@@ -182,6 +302,22 @@ function speakPhrase(text) {
   }
   lastSpokenPhrase = text;
   speak(text);
+}
+
+function speakPhraseReliable(text) {
+  if (!text) {
+    return;
+  }
+  pendingPrioritySpeech = text;
+  speakPhrase(text);
+}
+
+function buildJoinIntroPhrase(teamName) {
+  if (playMode === "friend" && remoteSession?.ready && state?.currentPlayer) {
+    const activeTeam = playerDisplayName(state.currentPlayer).toUpperCase();
+    return `You are connected. Welcome to the game room. You are the ${teamName} team. It's ${activeTeam}'s turn.`;
+  }
+  return `You are connected. Welcome to the game room. You are the ${teamName} team.`;
 }
 
 function speakFromStatus(statusMessage) {
@@ -196,7 +332,7 @@ function speakFromStatus(statusMessage) {
   ) {
     phrase = "Wrong move.";
   } else if (statusMessage === "Choose a highlighted destination.") {
-    phrase = "Choose a highlighted square.";
+    phrase = "Choose one of the highlighted squares.";
   } else if (statusMessage === "Undid your previous turn.") {
     phrase = "Last turn undone.";
   } else if (statusMessage === "No legal moves to hint.") {
@@ -384,6 +520,183 @@ function setFriendStatus(text) {
   }
 }
 
+function clearJoinCodeFromUrl() {
+  if (typeof window === "undefined" || !window.history?.replaceState) {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("join")) {
+    return;
+  }
+  url.searchParams.delete("join");
+  const trimmed = `${url.pathname}${url.search}${url.hash}`;
+  window.history.replaceState({}, "", trimmed);
+}
+
+function buildInviteLink(roomCode) {
+  if (typeof window === "undefined") {
+    return roomCode;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("join", roomCode);
+  return url.toString();
+}
+
+async function shareInviteLink(roomCode) {
+  const inviteUrl = buildInviteLink(roomCode);
+  const shareText = `Join my Puffly Checkers room (${roomCode}).`;
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: "Puffly Checkers Invite",
+        text: shareText,
+        url: inviteUrl,
+      });
+      setFriendStatus("Invite sent.");
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        setFriendStatus("Invite canceled.");
+        return;
+      }
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(inviteUrl);
+    setFriendStatus("Invite link copied. Send it to your friend.");
+  } catch {
+    setFriendStatus(`Share this invite link: ${inviteUrl}`);
+  }
+}
+
+function setVoiceStatus(text) {
+  if (voiceStatusLabel) {
+    voiceStatusLabel.textContent = text;
+  }
+}
+
+function updateVoiceButtons() {
+  if (voiceJoinButton) {
+    voiceJoinButton.textContent = voiceJoined ? "Leave Voice" : "Join Voice";
+  }
+  if (voiceMuteMicButton) {
+    voiceMuteMicButton.disabled = !voiceJoined;
+    voiceMuteMicButton.textContent = voiceMicMuted ? "Unmute Mic" : "Mute Mic";
+  }
+  if (voiceSpeakerButton) {
+    voiceSpeakerButton.disabled = !voiceJoined;
+    voiceSpeakerButton.textContent = voiceSpeakerMuted ? "Speaker Off" : "Speaker On";
+  }
+  if (voiceRemoteAudioElement) {
+    voiceRemoteAudioElement.muted = voiceSpeakerMuted;
+  }
+}
+
+function updateSpeechUnlockOverlay() {
+  if (!speechUnlockOverlay) {
+    return;
+  }
+  const shouldShow = playMode === "friend" && speechNeedsInteractionUnlock && !speechUnlocked;
+  speechUnlockOverlay.classList.toggle("hidden", !shouldShow);
+}
+
+function setAvatarSpeaking(color, speaking) {
+  if (color === "dark") {
+    blueAvatar?.classList.toggle("speaking", speaking);
+  } else if (color === "light") {
+    greenAvatar?.classList.toggle("speaking", speaking);
+  }
+}
+
+function clearVoiceSpeakingIndicators() {
+  blueAvatar?.classList.remove("speaking");
+  greenAvatar?.classList.remove("speaking");
+}
+
+function ensureVoiceAudioContext() {
+  if (!voiceAudioContext && typeof window !== "undefined") {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (Ctor) {
+      voiceAudioContext = new Ctor();
+    }
+  }
+  if (voiceAudioContext?.state === "suspended") {
+    voiceAudioContext.resume().catch(() => {});
+  }
+  return voiceAudioContext;
+}
+
+function stopVoiceMeters() {
+  if (voiceLocalLevelTimer) {
+    window.clearInterval(voiceLocalLevelTimer);
+    voiceLocalLevelTimer = null;
+  }
+  if (voiceRemoteLevelTimer) {
+    window.clearInterval(voiceRemoteLevelTimer);
+    voiceRemoteLevelTimer = null;
+  }
+  clearVoiceSpeakingIndicators();
+}
+
+function startStreamLevelMeter(stream, color, timerSetter) {
+  const ctx = ensureVoiceAudioContext();
+  if (!ctx || !stream) {
+    return;
+  }
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  const source = ctx.createMediaStreamSource(stream);
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
+  const timer = window.setInterval(() => {
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i += 1) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    setAvatarSpeaking(color, rms > 0.045);
+  }, 120);
+  timerSetter(timer);
+}
+
+function closeVoiceConnection() {
+  if (voiceSignalPollTimer) {
+    window.clearInterval(voiceSignalPollTimer);
+    voiceSignalPollTimer = null;
+  }
+  stopVoiceMeters();
+  if (voicePeer) {
+    voicePeer.close();
+    voicePeer = null;
+  }
+  if (voiceLocalStream) {
+    for (const track of voiceLocalStream.getTracks()) {
+      track.stop();
+    }
+    voiceLocalStream = null;
+  }
+  if (voiceRemoteStream) {
+    for (const track of voiceRemoteStream.getTracks()) {
+      track.stop();
+    }
+    voiceRemoteStream = null;
+  }
+  if (voiceRemoteAudioElement) {
+    voiceRemoteAudioElement.pause();
+    voiceRemoteAudioElement.srcObject = null;
+    voiceRemoteAudioElement.remove();
+    voiceRemoteAudioElement = null;
+  }
+  voiceJoined = false;
+  voiceOfferSent = false;
+  voiceMicMuted = false;
+  voiceSpeakerMuted = false;
+  setVoiceStatus("Voice not connected.");
+  updateVoiceButtons();
+}
+
 function updateChatMuteButton() {
   if (!chatMuteButton) {
     return;
@@ -518,7 +831,15 @@ function stopRoomPolling() {
 
 function resetSessionForModeSwitch() {
   stopRoomPolling();
+  if (remoteSession && voiceJoined) {
+    apiPost("/api/rooms/voice/leave", {
+      roomCode: remoteSession.roomCode,
+      playerId: remoteSession.playerId,
+    }).catch(() => {});
+  }
+  closeVoiceConnection();
   remoteSession = null;
+  pendingJoinIntroTeam = "";
   if (roomCodeInput) {
     roomCodeInput.value = "";
   }
@@ -526,7 +847,15 @@ function resetSessionForModeSwitch() {
 
 function resetFriendLocalState(message = "Choose Create Room or Join Room.") {
   stopRoomPolling();
+  if (remoteSession && voiceJoined) {
+    apiPost("/api/rooms/voice/leave", {
+      roomCode: remoteSession.roomCode,
+      playerId: remoteSession.playerId,
+    }).catch(() => {});
+  }
+  closeVoiceConnection();
   remoteSession = null;
+  pendingJoinIntroTeam = "";
   roomChatMessages = [];
   setChatUnreadCount(0);
   state = createInitialState();
@@ -556,6 +885,168 @@ async function apiPost(path, payload) {
   return data;
 }
 
+async function sendVoiceSignal(signalType, payload, targetColor) {
+  if (!remoteSession) {
+    return;
+  }
+  await apiPost("/api/rooms/voice/signal", {
+    roomCode: remoteSession.roomCode,
+    playerId: remoteSession.playerId,
+    signalType,
+    payload,
+    targetColor,
+  });
+}
+
+async function handleVoiceSignal(signal) {
+  if (!voicePeer || !signal) {
+    return;
+  }
+  if (signal.type === "offer") {
+    await voicePeer.setRemoteDescription(signal.payload);
+    const answer = await voicePeer.createAnswer();
+    await voicePeer.setLocalDescription(answer);
+    await sendVoiceSignal("answer", voicePeer.localDescription, signal.fromColor);
+    setVoiceStatus("Voice connected.");
+    return;
+  }
+  if (signal.type === "answer") {
+    await voicePeer.setRemoteDescription(signal.payload);
+    setVoiceStatus("Voice connected.");
+    return;
+  }
+  if (signal.type === "ice" && signal.payload) {
+    try {
+      await voicePeer.addIceCandidate(signal.payload);
+    } catch {
+      // Ignore transient ICE errors during negotiation.
+    }
+  }
+}
+
+async function pollVoiceSignals() {
+  if (!voiceJoined || !remoteSession) {
+    return;
+  }
+  const params = new URLSearchParams({
+    roomCode: remoteSession.roomCode,
+    playerId: remoteSession.playerId,
+  });
+  const response = await fetch(`/api/rooms/voice/poll?${params.toString()}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return;
+  }
+  if (data.voiceParticipants) {
+    const bothReady = data.voiceParticipants.dark && data.voiceParticipants.light;
+    if (bothReady && remoteSession.color === "dark" && !voiceOfferSent && voicePeer) {
+      const offer = await voicePeer.createOffer();
+      await voicePeer.setLocalDescription(offer);
+      await sendVoiceSignal("offer", voicePeer.localDescription, "light");
+      voiceOfferSent = true;
+      setVoiceStatus("Voice connected.");
+    } else if (!bothReady) {
+      setVoiceStatus("Waiting for friend voice...");
+    }
+  }
+  const signals = Array.isArray(data.signals) ? data.signals : [];
+  for (const signal of signals) {
+    await handleVoiceSignal(signal);
+  }
+}
+
+async function startVoiceConnection() {
+  if (!remoteSession) {
+    setVoiceStatus("Connect to room first.");
+    return;
+  }
+  if (!remoteSession.ready) {
+    setVoiceStatus("Waiting for friend to join room.");
+    return;
+  }
+  try {
+    voiceLocalStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+      video: false,
+    });
+  } catch {
+    setVoiceStatus("Microphone permission denied.");
+    return;
+  }
+  voicePeer = new RTCPeerConnection({
+    iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+  });
+  voiceRemoteStream = new MediaStream();
+  for (const track of voiceLocalStream.getTracks()) {
+    voicePeer.addTrack(track, voiceLocalStream);
+  }
+  voicePeer.ontrack = (event) => {
+    const [stream] = event.streams;
+    if (!stream) {
+      return;
+    }
+    voiceRemoteStream = stream;
+    if (!voiceRemoteAudioElement) {
+      voiceRemoteAudioElement = document.createElement("audio");
+      voiceRemoteAudioElement.autoplay = true;
+      voiceRemoteAudioElement.playsInline = true;
+      voiceRemoteAudioElement.style.display = "none";
+      document.body.appendChild(voiceRemoteAudioElement);
+    }
+    voiceRemoteAudioElement.srcObject = stream;
+    voiceRemoteAudioElement.muted = voiceSpeakerMuted;
+    voiceRemoteAudioElement.play().catch(() => {});
+    setVoiceStatus("Voice connected.");
+    startStreamLevelMeter(voiceRemoteStream, remoteSession.color === "dark" ? "light" : "dark", (timer) => {
+      if (voiceRemoteLevelTimer) {
+        window.clearInterval(voiceRemoteLevelTimer);
+      }
+      voiceRemoteLevelTimer = timer;
+    });
+  };
+  voicePeer.onicecandidate = (event) => {
+    if (event.candidate) {
+      sendVoiceSignal("ice", event.candidate, remoteSession.color === "dark" ? "light" : "dark").catch(() => {});
+    }
+  };
+  startStreamLevelMeter(voiceLocalStream, remoteSession.color, (timer) => {
+    if (voiceLocalLevelTimer) {
+      window.clearInterval(voiceLocalLevelTimer);
+    }
+    voiceLocalLevelTimer = timer;
+  });
+  await apiPost("/api/rooms/voice/join", {
+    roomCode: remoteSession.roomCode,
+    playerId: remoteSession.playerId,
+  });
+  voiceJoined = true;
+  voiceOfferSent = false;
+  setVoiceStatus("Joining voice...");
+  updateVoiceButtons();
+  if (voiceSignalPollTimer) {
+    window.clearInterval(voiceSignalPollTimer);
+  }
+  voiceSignalPollTimer = window.setInterval(() => {
+    pollVoiceSignals().catch(() => {});
+  }, 500);
+  await pollVoiceSignals();
+}
+
+async function leaveVoiceConnection() {
+  if (remoteSession && voiceJoined) {
+    await apiPost("/api/rooms/voice/leave", {
+      roomCode: remoteSession.roomCode,
+      playerId: remoteSession.playerId,
+    }).catch(() => {});
+  }
+  closeVoiceConnection();
+}
+
 async function syncRoomState() {
   if (!remoteSession) {
     return;
@@ -576,6 +1067,12 @@ async function syncRoomState() {
     remoteSession.playerCount = data.playerCount;
     remoteSession.ready = data.playerCount >= 2;
     setFriendStatus(getFriendStatusText(remoteSession));
+  }
+  if (data.voiceParticipants && voiceJoined) {
+    const bothVoiceReady = data.voiceParticipants.dark && data.voiceParticipants.light;
+    if (!bothVoiceReady) {
+      setVoiceStatus("Waiting for friend voice...");
+    }
   }
   syncRoomChatFromPayload(data);
   const didVersionChange = typeof data.version === "number" && data.version !== oldVersion;
@@ -624,10 +1121,51 @@ function hydrateRoomSession(data) {
   syncRoomChatFromPayload(data, true);
   setChatUnreadCount(0);
   const teamName = playerDisplayName(data.color).toUpperCase();
-  speakPhrase(`You are connected. Welcome to the game room. You are the ${teamName} team.`);
-  lastTurnSpoken = "Welcome to the game room.";
+  pendingJoinIntroTeam = teamName;
+  const joinIntroPhrase = buildJoinIntroPhrase(teamName);
+  speakPhraseReliable(joinIntroPhrase);
+  if (remoteSession.ready && state?.currentPlayer) {
+    const openingTurnPhrase = `${playerDisplayName(state.currentPlayer).toUpperCase()}'S TURN`;
+    // Prevent immediate duplicate turn announcement on the same render cycle.
+    lastTurnSpoken = openingTurnPhrase;
+  } else {
+    lastTurnSpoken = "Welcome to the game room.";
+  }
   startRoomPolling();
+  if (speechNeedsInteractionUnlock && !speechUnlocked) {
+    setFriendStatus("Tap Start to enable voice on this iPad.");
+  }
   render("Remote room connected.");
+}
+
+async function joinRoomWithCode(roomCode, options = {}) {
+  const normalizedCode = String(roomCode || "").trim().toUpperCase();
+  const fromInvite = Boolean(options.fromInvite);
+  if (!normalizedCode) {
+    setFriendStatus("Enter a room code first.");
+    return false;
+  }
+  if (remoteSession) {
+    setFriendStatus(
+      `Already connected to room ${remoteSession.roomCode} as ${playerDisplayName(remoteSession.color).toUpperCase()}. Use the second device to join.`,
+    );
+    return false;
+  }
+  try {
+    const data = await apiPost("/api/rooms/join", { roomCode: normalizedCode });
+    hydrateRoomSession(data);
+    if (fromInvite) {
+      clearJoinCodeFromUrl();
+    }
+    return true;
+  } catch (error) {
+    setFriendStatus(
+      fromInvite
+        ? error?.message || "Invite link could not join this room."
+        : error?.message || "Could not join room.",
+    );
+    return false;
+  }
 }
 
 function setPlayMode(mode) {
@@ -638,6 +1176,16 @@ function setPlayMode(mode) {
   pufflyControls?.classList.toggle("hidden", mode !== "puffly");
   friendControls?.classList.toggle("hidden", mode !== "friend");
   friendChatPanel?.classList.toggle("hidden", mode !== "friend");
+  if (mode !== "friend") {
+    setVoiceStatus("Voice not connected.");
+  } else {
+    setVoiceStatus("Voice not connected.");
+    if (speechNeedsInteractionUnlock && !speechUnlocked) {
+      setFriendStatus("Tap Start to enable voice on this iPad.");
+    }
+  }
+  updateVoiceButtons();
+  updateSpeechUnlockOverlay();
   hideRulesPanel();
   resetSessionForModeSwitch();
   state = createInitialState();
@@ -650,7 +1198,11 @@ function setPlayMode(mode) {
     undoSnapshots = [];
     roomChatMessages = [];
     setChatUnreadCount(0);
-    setFriendStatus("Choose Create Room or Join Room.");
+    setFriendStatus(
+      speechNeedsInteractionUnlock && !speechUnlocked
+        ? "Tap Start to enable voice on this iPad."
+        : "Choose Create Room or Join Room.",
+    );
     updateRulesForMode();
     renderRoomChat(true);
     render("Friend mode: connect to a room.");
@@ -1217,6 +1769,7 @@ createRoomButton?.addEventListener("click", async () => {
   try {
     const data = await apiPost("/api/rooms/create", {});
     hydrateRoomSession(data);
+    await shareInviteLink(data.roomCode);
   } catch (error) {
     setFriendStatus(error?.message || "Could not create room.");
   }
@@ -1226,37 +1779,17 @@ joinRoomButton?.addEventListener("click", async () => {
   if (busy || playMode !== "friend") {
     return;
   }
-  if (remoteSession) {
-    setFriendStatus(
-      `Already connected to room ${remoteSession.roomCode} as ${playerDisplayName(remoteSession.color).toUpperCase()}. Use the second device to join.`,
-    );
-    return;
-  }
   const roomCode = roomCodeInput?.value.trim().toUpperCase();
-  if (!roomCode) {
-    setFriendStatus("Enter a room code first.");
-    return;
-  }
-  try {
-    const data = await apiPost("/api/rooms/join", { roomCode });
-    hydrateRoomSession(data);
-  } catch (error) {
-    setFriendStatus(error?.message || "Could not join room.");
-  }
+  await joinRoomWithCode(roomCode);
 });
 
 copyRoomButton?.addEventListener("click", async () => {
   const roomCode = remoteSession?.roomCode || roomCodeInput?.value.trim().toUpperCase();
   if (!roomCode) {
-    setFriendStatus("No room code to copy.");
+    setFriendStatus("Create a room first to share an invite.");
     return;
   }
-  try {
-    await navigator.clipboard.writeText(roomCode);
-    setFriendStatus(`Room code ${roomCode} copied.`);
-  } catch {
-    setFriendStatus(`Room code: ${roomCode}`);
-  }
+  await shareInviteLink(roomCode);
 });
 
 async function sendRoomChatMessage() {
@@ -1310,6 +1843,40 @@ chatMessagesElement?.addEventListener("scroll", () => {
   }
 });
 
+voiceJoinButton?.addEventListener("click", async () => {
+  if (playMode !== "friend") {
+    return;
+  }
+  if (voiceJoined) {
+    await leaveVoiceConnection();
+    return;
+  }
+  await startVoiceConnection();
+});
+
+voiceMuteMicButton?.addEventListener("click", () => {
+  if (!voiceLocalStream) {
+    return;
+  }
+  voiceMicMuted = !voiceMicMuted;
+  for (const track of voiceLocalStream.getAudioTracks()) {
+    track.enabled = !voiceMicMuted;
+  }
+  updateVoiceButtons();
+});
+
+voiceSpeakerButton?.addEventListener("click", () => {
+  voiceSpeakerMuted = !voiceSpeakerMuted;
+  updateVoiceButtons();
+});
+
+speechUnlockButton?.addEventListener("click", () => {
+  unlockSpeechIfNeeded();
+  setFriendStatus("Voice prompts enabled.");
+  speakPhraseReliable("Voice prompts enabled.");
+  render(lastStatusMessage);
+});
+
 leaveRoomButton?.addEventListener("click", async () => {
   if (busy || playMode !== "friend") {
     return;
@@ -1341,6 +1908,16 @@ if (typeof window !== "undefined") {
 }
 
 updateChatMuteButton();
+updateSpeechUnlockOverlay();
 renderRoomChat(true);
-render("Puffly opens the game.");
-runComputerTurn();
+if (AUTO_JOIN_ROOM_CODE) {
+  setPlayMode("friend");
+  if (roomCodeInput) {
+    roomCodeInput.value = AUTO_JOIN_ROOM_CODE;
+  }
+  setFriendStatus(`Joining invite room ${AUTO_JOIN_ROOM_CODE}...`);
+  joinRoomWithCode(AUTO_JOIN_ROOM_CODE, { fromInvite: true }).catch(() => {});
+} else {
+  render("Puffly opens the game.");
+  runComputerTurn();
+}

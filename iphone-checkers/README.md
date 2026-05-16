@@ -20,9 +20,10 @@ For room-based remote friend play, start the multiplayer API server instead:
    - `http://localhost:8002/iphone-checkers/`
 3. In the app:
    - Switch to `Play with a Friend`
-   - One player taps `Create Room`
-   - Other player enters the room code and taps `Join Room`
+   - One player taps `Create & Invite` and shares the invite link
+   - Friend opens the invite link to auto-join, or enters room code and taps `Join Room`
    - Use `Leave Room` to disconnect and free the slot
+   - Tap `Join Voice` for audio chat and use avatar speaking indicators
    - Use room chat (`BLUE` / `GREEN`) during play
    - Use `Mute Chat` and unread badge cues as needed
    - Share URL on same network or over a reachable host setup
