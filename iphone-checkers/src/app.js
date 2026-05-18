@@ -13,8 +13,8 @@ const friendLockOverlay = document.getElementById("friend-lock-overlay");
 const restartButton = document.getElementById("restart-btn");
 const undoButton = document.getElementById("undo-btn");
 const rulesButton = document.getElementById("rules-btn");
-const difficultySelect = document.getElementById("difficulty-select");
-const audioSelect = document.getElementById("audio-select");
+const difficultyButtons = Array.from(document.querySelectorAll(".difficulty-btn"));
+const audioButtons = Array.from(document.querySelectorAll(".audio-btn"));
 const pufflyControls = document.getElementById("puffly-controls");
 const friendControls = document.getElementById("friend-controls");
 const createRoomButton = document.getElementById("create-room-btn");
@@ -46,6 +46,8 @@ const speechUnlockButton = document.getElementById("speech-unlock-btn");
 const blueAvatar = document.getElementById("blue-avatar");
 const greenAvatar = document.getElementById("green-avatar");
 const voiceStatusLabel = document.getElementById("voice-status");
+const blueCapturedPile = document.getElementById("blue-captured-pile");
+const greenCapturedPile = document.getElementById("green-captured-pile");
 const celebrationOverlay = document.getElementById("celebration-overlay");
 const celebrationFx = document.getElementById("celebration-fx");
 const celebrationTitle = document.getElementById("celebration-title");
@@ -72,6 +74,8 @@ let lastSpokenPhrase = "";
 let lastTurnSpoken = "";
 const AI_MOVE_ANIMATION_MS = 1300;
 const HUMAN_MOVE_ANIMATION_MS = 450;
+const FRIEND_MOVE_DELAY_MS = 420;
+const STARTING_PIECE_COUNT = 12;
 let celebrationTimers = [];
 let pufflyCheerTimer = null;
 let rulesAutoHideTimer = null;
@@ -92,6 +96,7 @@ let voiceMicMuted = false;
 let voiceSpeakerMuted = false;
 let voiceOfferSent = false;
 let voiceRemoteAudioElement = null;
+let applyingRemoteSync = false;
 const AUTO_JOIN_ROOM_CODE = getJoinCodeFromUrl();
 let pendingPrioritySpeech = "";
 let pendingJoinIntroTeam = "";
@@ -149,11 +154,7 @@ function lockBoardGeometry() {
   const padBottom = Number.parseFloat(computed.paddingBottom) || 0;
   const bodyComputed = window.getComputedStyle(document.body);
   const bodyBottomPadding = Number.parseFloat(bodyComputed.paddingBottom) || 0;
-  const iPadFriendInset =
-    playMode === "friend" && window.innerWidth >= 768
-      ? 96
-      : 0;
-  const innerContentWidth = Math.max(0, wrap.clientWidth - padLeft - padRight - iPadFriendInset);
+  const innerContentWidth = Math.max(0, wrap.clientWidth - padLeft - padRight);
   const wrapRect = wrap.getBoundingClientRect();
   const remainingViewportHeight = Math.max(0, window.innerHeight - wrapRect.top - bodyBottomPadding - 8);
   const innerContentHeight = Math.max(0, remainingViewportHeight - padTop - padBottom);
@@ -320,6 +321,59 @@ function buildJoinIntroPhrase(teamName) {
   return `You are connected. Welcome to the game room. You are the ${teamName} team.`;
 }
 
+function squaresEqual(a, b) {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a.row === b.row && a.col === b.col;
+}
+
+function boardsEqual(boardA, boardB) {
+  for (let row = 0; row < BOARD_SIZE; row += 1) {
+    for (let col = 0; col < BOARD_SIZE; col += 1) {
+      const a = boardA[row][col];
+      const b = boardB[row][col];
+      if (!a && !b) {
+        continue;
+      }
+      if (!a || !b) {
+        return false;
+      }
+      if (a.player !== b.player || Boolean(a.king) !== Boolean(b.king)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function statesEquivalentForSync(a, b) {
+  return (
+    boardsEqual(a.board, b.board) &&
+    a.currentPlayer === b.currentPlayer &&
+    (a.winner || null) === (b.winner || null) &&
+    squaresEqual(a.selectedSquare, b.selectedSquare) &&
+    squaresEqual(a.forcedPiece, b.forcedPiece)
+  );
+}
+
+function inferRemoteMoveFromStates(previousState, nextState) {
+  if (!previousState || !nextState || previousState.currentPlayer === nextState.currentPlayer) {
+    return null;
+  }
+  const legal = getAllLegalMovesForPlayer(previousState, previousState.currentPlayer);
+  for (const move of legal.allMoves) {
+    const result = applyMove(previousState, move);
+    if (statesEquivalentForSync(result.nextState, nextState)) {
+      return move;
+    }
+  }
+  return null;
+}
+
 function speakFromStatus(statusMessage) {
   let phrase = "";
   if (statusMessage === "Puffly is thinking...") {
@@ -369,6 +423,61 @@ function playCelebrationAudio() {
   beep(530, 0.08, "triangle", 0.06);
   window.setTimeout(() => beep(660, 0.1, "triangle", 0.06), 90);
   window.setTimeout(() => beep(790, 0.14, "triangle", 0.06), 180);
+}
+
+function countPieces(player) {
+  let total = 0;
+  for (let row = 0; row < BOARD_SIZE; row += 1) {
+    for (let col = 0; col < BOARD_SIZE; col += 1) {
+      if (state.board[row][col]?.player === player) {
+        total += 1;
+      }
+    }
+  }
+  return total;
+}
+
+function renderCapturedPile(container, player, tokenClass) {
+  if (!container) {
+    return;
+  }
+  const capturedCount = Math.max(0, STARTING_PIECE_COUNT - countPieces(player));
+  container.innerHTML = "";
+  if (capturedCount === 0) {
+    const empty = document.createElement("span");
+    empty.className = "captured-empty";
+    empty.textContent = "—";
+    container.appendChild(empty);
+    return;
+  }
+  for (let i = 0; i < capturedCount; i += 1) {
+    const token = document.createElement("span");
+    token.className = `captured-token ${tokenClass}`;
+    token.style.left = `${6 + (i % 2) * 10}px`;
+    token.style.top = `${4 + i * 7}px`;
+    container.appendChild(token);
+  }
+}
+
+function renderCapturedPiles() {
+  renderCapturedPile(blueCapturedPile, "dark", "blue");
+  renderCapturedPile(greenCapturedPile, "light", "green");
+}
+
+function updateDifficultyButtons() {
+  for (const button of difficultyButtons) {
+    const level = button.dataset.difficulty;
+    button.classList.toggle("active", level === difficulty);
+    button.disabled = busy || playMode !== "puffly";
+  }
+}
+
+function updateAudioButtons() {
+  for (const button of audioButtons) {
+    const value = button.dataset.audio;
+    button.classList.toggle("active", (value === "on") === audioEnabled);
+    button.disabled = busy;
+  }
 }
 
 function renderHistory() {
@@ -544,7 +653,13 @@ function buildInviteLink(roomCode) {
 
 async function shareInviteLink(roomCode) {
   const inviteUrl = buildInviteLink(roomCode);
-  const shareText = `Join my Puffly Checkers room (${roomCode}).`;
+  const shareText = `Join my Puffly Checkers room (${roomCode}): ${inviteUrl}`;
+  if (detectIOSLikeBrowser() && typeof window !== "undefined") {
+    const smsUrl = `sms:&body=${encodeURIComponent(shareText)}`;
+    window.location.href = smsUrl;
+    setFriendStatus("Opening Messages with your invite...");
+    return;
+  }
   if (navigator.share) {
     try {
       await navigator.share({
@@ -812,7 +927,7 @@ function updateRulesForMode() {
 
 function getFriendStatusText(session) {
   if (!session) {
-    return "Choose Create Room or Join Room.";
+    return "Tap Create & Invite to start a room.";
   }
   const count = session.playerCount ?? 1;
   const base = `Connected players: ${count}/2 · Room ${session.roomCode}`;
@@ -845,7 +960,7 @@ function resetSessionForModeSwitch() {
   }
 }
 
-function resetFriendLocalState(message = "Choose Create Room or Join Room.") {
+function resetFriendLocalState(message = "Tap Create & Invite to start a room.") {
   stopRoomPolling();
   if (remoteSession && voiceJoined) {
     apiPost("/api/rooms/voice/leave", {
@@ -1048,12 +1163,16 @@ async function leaveVoiceConnection() {
 }
 
 async function syncRoomState() {
-  if (!remoteSession) {
+  if (!remoteSession || applyingRemoteSync) {
     return;
   }
+  applyingRemoteSync = true;
+  try {
   const oldVersion = remoteSession.version;
   const oldReady = remoteSession.ready;
   const oldCount = remoteSession.playerCount;
+  const previousCurrentPlayer = state.currentPlayer;
+  const previousState = clone(state);
   const params = new URLSearchParams({ roomCode: remoteSession.roomCode });
   const response = await fetch(`/api/rooms/state?${params.toString()}`);
   const data = await response.json().catch(() => ({}));
@@ -1079,6 +1198,22 @@ async function syncRoomState() {
   const didReadyChange =
     remoteSession.ready !== oldReady || remoteSession.playerCount !== oldCount;
   if (data.state && (didVersionChange || didReadyChange)) {
+    const shouldAnimateForOpponent =
+      didVersionChange &&
+      playMode === "friend" &&
+      remoteSession.ready &&
+      previousCurrentPlayer &&
+      previousCurrentPlayer !== remoteSession.color;
+    if (shouldAnimateForOpponent) {
+      const remoteMove = inferRemoteMoveFromStates(previousState, data.state);
+      if (remoteMove) {
+        await sleep(140);
+        await animateComputerMove(remoteMove);
+        playMoveAudio(previousCurrentPlayer, remoteMove);
+      } else {
+        await sleep(FRIEND_MOVE_DELAY_MS);
+      }
+    }
     state = data.state;
     const message = remoteSession.ready
       ? didVersionChange
@@ -1086,6 +1221,9 @@ async function syncRoomState() {
         : "Opponent connected."
       : "Waiting for opponent...";
     render(message);
+  }
+  } finally {
+    applyingRemoteSync = false;
   }
 }
 
@@ -1201,7 +1339,7 @@ function setPlayMode(mode) {
     setFriendStatus(
       speechNeedsInteractionUnlock && !speechUnlocked
         ? "Tap Start to enable voice on this iPad."
-        : "Choose Create Room or Join Room.",
+        : "Tap Create & Invite to start a room.",
     );
     updateRulesForMode();
     renderRoomChat(true);
@@ -1333,10 +1471,11 @@ function render(statusMessage = "Make your move.") {
   }
 
   renderHistory();
-  undoButton.disabled = busy || undoSnapshots.length === 0 || playMode === "friend";
+  renderCapturedPiles();
+  undoButton.disabled = busy || undoSnapshots.length === 0;
   rulesButton.disabled = busy;
-  difficultySelect.disabled = busy || playMode !== "puffly";
-  audioSelect.disabled = busy;
+  updateDifficultyButtons();
+  updateAudioButtons();
   const shouldShowFriendLock = playMode === "friend" && (!remoteSession || !remoteSession.ready);
   friendLockOverlay?.classList.toggle("hidden", !shouldShowFriendLock);
   if (friendLockText && shouldShowFriendLock) {
@@ -1378,7 +1517,8 @@ function render(statusMessage = "Make your move.") {
     } else if (!remoteSession.ready) {
       setPufflyState("thinking", "⏳ Waiting...");
     } else {
-      setPufflyState("idle", "🤝 Friend mode");
+      const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
+      setPufflyState("idle", `🤝 Friend Mode - ${activeColor}'s Turn`);
     }
   } else if (state.currentPlayer === computerPlayer) {
     setPufflyState("thinking", "💭 My move...");
@@ -1528,6 +1668,9 @@ async function submitRemoteMove(nextState) {
 async function commitMove(move) {
   maybeStoreUndoBeforeMove();
   busy = true;
+  if (playMode === "friend") {
+    await sleep(FRIEND_MOVE_DELAY_MS);
+  }
   await animateHumanMove(move);
   const mover = state.currentPlayer;
   const result = applyMove(state, move);
@@ -1546,6 +1689,9 @@ async function commitMove(move) {
     render(result.status);
   }
   busy = false;
+  if (playMode === "friend") {
+    render(lastStatusMessage);
+  }
   if (playMode === "puffly") {
     await runComputerTurn();
   }
@@ -1698,31 +1844,80 @@ restartButton.addEventListener("click", async () => {
   await runComputerTurn();
 });
 
-difficultySelect.addEventListener("change", () => {
-  difficulty = difficultySelect.value;
-  render(`Difficulty set to ${difficulty}.`);
-});
+for (const button of difficultyButtons) {
+  button.addEventListener("click", () => {
+    if (busy || playMode !== "puffly") {
+      return;
+    }
+    const nextDifficulty = button.dataset.difficulty;
+    if (!nextDifficulty || nextDifficulty === difficulty) {
+      return;
+    }
+    difficulty = nextDifficulty;
+    render(`Difficulty set to ${difficulty}.`);
+  });
+}
 
-audioSelect.addEventListener("change", () => {
-  audioEnabled = audioSelect.value === "on";
-  if (audioEnabled) {
-    ensureAudioContext();
-    lastSpokenPhrase = "";
-    speakPhrase("Audio on.");
-  } else if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-    lastSpokenPhrase = "";
-  }
-  render(audioEnabled ? "Audio feedback enabled." : "Audio feedback muted.");
-});
+for (const button of audioButtons) {
+  button.addEventListener("click", () => {
+    if (busy) {
+      return;
+    }
+    audioEnabled = button.dataset.audio === "on";
+    updateAudioButtons();
+    if (audioEnabled) {
+      ensureAudioContext();
+      lastSpokenPhrase = "";
+      speakPhrase("Audio on.");
+    } else if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      lastSpokenPhrase = "";
+    }
+    render(audioEnabled ? "Audio feedback enabled." : "Audio feedback muted.");
+  });
+}
 
-undoButton.addEventListener("click", () => {
+undoButton.addEventListener("click", async () => {
   if (busy || undoSnapshots.length === 0) {
     return;
   }
   ensureAudioContext();
   const snapshot = undoSnapshots.pop();
   if (!snapshot) {
+    return;
+  }
+  if (playMode === "friend") {
+    if (!remoteSession) {
+      setFriendStatus("Connect to a room first.");
+      return;
+    }
+    busy = true;
+    try {
+      const data = await apiPost("/api/rooms/undo", {
+        roomCode: remoteSession.roomCode,
+        playerId: remoteSession.playerId,
+      });
+      remoteSession.version = data.version;
+      if (typeof data.playerCount === "number") {
+        remoteSession.playerCount = data.playerCount;
+        remoteSession.ready = data.playerCount >= 2;
+        setFriendStatus(getFriendStatusText(remoteSession));
+      }
+      state = data.state;
+      moveHistory = snapshot.history;
+      winnerAnnounced = null;
+      lastSpokenPhrase = "";
+      lastTurnSpoken = "";
+      hideCelebration();
+      syncRoomChatFromPayload(data);
+      render("Undid your previous turn.");
+    } catch (error) {
+      undoSnapshots.push(snapshot);
+      render(error?.message || "Undo not available right now.");
+    } finally {
+      busy = false;
+      render(lastStatusMessage);
+    }
     return;
   }
   state = snapshot.state;
@@ -1761,9 +1956,7 @@ createRoomButton?.addEventListener("click", async () => {
     return;
   }
   if (remoteSession) {
-    setFriendStatus(
-      `Already connected to room ${remoteSession.roomCode} as ${playerDisplayName(remoteSession.color).toUpperCase()}. Use the second device to join.`,
-    );
+    await shareInviteLink(remoteSession.roomCode);
     return;
   }
   try {

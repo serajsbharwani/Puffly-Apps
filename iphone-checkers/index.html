@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Little Puffly iPhone Checkers</title>
-    <link rel="stylesheet" href="./styles.css?v=58" />
+    <link rel="stylesheet" href="./styles.css?v=62" />
   </head>
   <body>
     <main class="app-shell">
@@ -13,39 +13,36 @@
       </header>
 
       <section class="mode-panel" aria-label="Play mode">
-        <button id="play-puffly-btn" class="mode-btn active" type="button">Play with Puffly</button>
+        <button id="play-puffly-btn" class="mode-btn active" type="button">Practice with Puffly</button>
         <button id="play-friend-btn" class="mode-btn" type="button">Play with a Friend</button>
       </section>
 
       <section class="control-card">
         <div id="puffly-controls" class="puffly-controls">
-          <label for="difficulty-select">Difficulty</label>
-          <select id="difficulty-select" aria-label="Computer difficulty">
-            <option value="easy">Easy</option>
-            <option value="medium" selected>Medium</option>
-            <option value="hard">Hard</option>
-          </select>
-          <label for="audio-select">Audio</label>
-          <select id="audio-select" aria-label="Audio feedback">
-            <option value="on" selected>On</option>
-            <option value="off">Off</option>
-          </select>
+          <span class="difficulty-label">Difficulty</span>
+          <div class="difficulty-buttons" aria-label="Computer difficulty">
+            <button id="difficulty-easy-btn" class="difficulty-btn" type="button" data-difficulty="easy">Easy</button>
+            <button id="difficulty-medium-btn" class="difficulty-btn active" type="button" data-difficulty="medium">Medium</button>
+            <button id="difficulty-hard-btn" class="difficulty-btn" type="button" data-difficulty="hard">Hard</button>
+          </div>
+          <span class="audio-label">Audio</span>
+          <div class="audio-buttons" aria-label="Audio feedback">
+            <button id="audio-on-btn" class="audio-btn active" type="button" data-audio="on">ON</button>
+            <button id="audio-off-btn" class="audio-btn" type="button" data-audio="off">OFF</button>
+          </div>
         </div>
         <div id="friend-controls" class="friend-controls hidden">
           <div class="friend-room-actions">
             <button id="create-room-btn" type="button">Create & Invite</button>
-            <input id="room-code-input" type="text" maxlength="8" placeholder="Room code" />
-            <button id="join-room-btn" type="button">Join Room</button>
-            <button id="copy-room-btn" type="button">Share Invite</button>
             <button id="leave-room-btn" class="leave-room-btn" type="button">Leave Room</button>
           </div>
-          <p id="friend-status" class="friend-status">Choose Create Room or Join Room.</p>
+          <p id="friend-status" class="friend-status">Tap Create & Invite to start a room.</p>
         </div>
       </section>
 
       <section class="controls">
         <button id="rules-btn" type="button">Game Rules</button>
-        <button id="restart-btn" type="button">Start New Game</button>
+        <button id="restart-btn" type="button">Play Again</button>
         <button id="undo-btn" type="button">Undo Last Turn</button>
       </section>
 
@@ -61,11 +58,21 @@
 
       <section class="gameplay-layout">
         <section class="board-stage">
-          <div class="board-wrap">
-            <div id="friend-lock-overlay" class="friend-lock-overlay hidden">
-              <p id="friend-lock-text">Waiting for the players...</p>
+          <div class="board-and-captures">
+            <aside class="captured-tray blue" aria-live="polite">
+              <p>BLUE Captured</p>
+              <div id="blue-captured-pile" class="captured-pile"></div>
+            </aside>
+            <div class="board-wrap">
+              <div id="friend-lock-overlay" class="friend-lock-overlay hidden">
+                <p id="friend-lock-text">Waiting for the players...</p>
+              </div>
+              <div id="board" class="board" aria-label="Checkers board"></div>
             </div>
-            <div id="board" class="board" aria-label="Checkers board"></div>
+            <aside class="captured-tray green" aria-live="polite">
+              <p>GREEN Captured</p>
+              <div id="green-captured-pile" class="captured-pile"></div>
+            </aside>
           </div>
           <aside id="puffly-panel" class="puffly-panel" aria-live="polite">
             <p class="puffly-label">Puffly</p>
@@ -86,11 +93,11 @@
             <h2 class="voice-title">Voice Chat</h2>
             <div class="voice-avatars">
               <div id="blue-avatar" class="voice-avatar blue">
-                <span class="avatar-dot"></span>
+                <span class="avatar-silhouette" aria-hidden="true">👤</span>
                 <strong>BLUE</strong>
               </div>
               <div id="green-avatar" class="voice-avatar green">
-                <span class="avatar-dot"></span>
+                <span class="avatar-silhouette" aria-hidden="true">👤</span>
                 <strong>GREEN</strong>
               </div>
             </div>
@@ -127,6 +134,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/app.js?v=70"></script>
+    <script type="module" src="./src/app.js?v=77"></script>
   </body>
 </html>

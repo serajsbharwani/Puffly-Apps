@@ -99,6 +99,31 @@ body.dragging-touch {
   align-items: center;
 }
 
+.difficulty-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.difficulty-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.difficulty-btn {
+  min-height: 34px;
+  border-radius: 8px;
+  border: 2px solid #9d7a37;
+  background: #fffdf8;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.difficulty-btn.active {
+  border-color: #3a7a36;
+  background: #e5f7e7;
+}
+
 .puffly-controls label {
   font-size: 0.9rem;
   font-weight: 700;
@@ -112,23 +137,42 @@ body.dragging-touch {
   font-size: 0.95rem;
 }
 
-.friend-room-actions {
+.audio-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.audio-buttons {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.audio-btn {
+  min-height: 34px;
+  border-radius: 8px;
+  border: 2px solid #9d7a37;
+  background: #fffdf8;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.audio-btn.active {
+  border-color: #3a7a36;
+  background: #e5f7e7;
+}
+
+.friend-room-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.4rem;
 }
 
-.friend-room-actions input,
 .friend-room-actions button {
   min-height: 38px;
   border-radius: 8px;
   border: 2px solid #7e6433;
   font-size: 0.88rem;
-}
-
-.friend-room-actions input {
-  padding: 0.25rem 0.4rem;
-  text-transform: uppercase;
 }
 
 .friend-room-actions button {
@@ -151,6 +195,64 @@ body.dragging-touch {
   grid-template-columns: minmax(0, 1fr);
   gap: 0.45rem;
   align-items: start;
+}
+
+.board-and-captures {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 56px;
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.captured-tray {
+  border: 2px solid #9c7a3a;
+  border-radius: 12px;
+  background: #fff8e8;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 0.2rem;
+  padding: 0.24rem 0.12rem;
+}
+
+.captured-tray p {
+  margin: 0;
+  font-size: 0.56rem;
+  text-align: center;
+  font-weight: 700;
+}
+
+.captured-pile {
+  position: relative;
+  min-height: 100%;
+}
+
+.captured-token {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 2px solid rgba(45, 38, 24, 0.6);
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.captured-token.blue {
+  background: radial-gradient(circle at 35% 35%, #8db5ea, #2f6db6 72%);
+}
+
+.captured-token.green {
+  background: radial-gradient(circle at 35% 35%, #a8e3ae, #66b86c 72%);
+}
+
+.captured-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #7b6c4a;
+  font-size: 0.9rem;
 }
 
 .gameplay-layout {
@@ -180,7 +282,8 @@ body.dragging-touch {
 
 .voice-title {
   margin: 0;
-  font-size: 0.84rem;
+  font-size: 0.96rem;
+  line-height: 1.2;
 }
 
 .voice-avatars {
@@ -195,22 +298,34 @@ body.dragging-touch {
   background: #fff5df;
   display: grid;
   justify-items: center;
-  gap: 0.12rem;
+  gap: 0.16rem;
   padding: 0.2rem 0.1rem;
-  font-size: 0.72rem;
+  font-size: 0.8rem;
 }
 
-.voice-avatar .avatar-dot {
-  width: 12px;
-  height: 12px;
+.voice-avatar strong {
+  font-size: 0.86rem;
+  letter-spacing: 0.02em;
+}
+
+.voice-avatar .avatar-silhouette {
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
-  background: #d2d2d2;
-  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  border: 2px solid #8f7443;
+  background: #ececec;
+  color: #505050;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  line-height: 1;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, color 120ms ease;
 }
 
-.voice-avatar.speaking .avatar-dot {
-  background: #44c45d;
-  transform: scale(1.12);
+.voice-avatar.speaking .avatar-silhouette {
+  background: #dff7e3;
+  color: #25672d;
+  transform: scale(1.08);
   box-shadow: 0 0 0 6px rgba(68, 196, 93, 0.18);
 }
 
@@ -229,13 +344,13 @@ body.dragging-touch {
 }
 
 .voice-controls button {
-  min-height: 28px;
+  min-height: 36px;
   border-radius: 7px;
   border: 2px solid #7b6031;
   background: #ffe8b7;
-  font-size: 0.68rem;
+  font-size: 0.9rem;
   font-weight: 700;
-  padding: 0.1rem 0.22rem;
+  padding: 0.16rem 0.24rem;
 }
 
 .speech-unlock-overlay {
@@ -279,7 +394,8 @@ body.dragging-touch {
 
 .voice-status {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: 0.8rem;
+  line-height: 1.25;
 }
 
 body.friend-mode .friend-chat-panel.hidden {

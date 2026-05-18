@@ -103,6 +103,7 @@ class RoomStore:
       "code": room_code,
       "state": create_initial_state(),
       "version": 0,
+      "undoStack": [],
       "messages": [],
       "nextMessageId": 1,
       "chatRate": {},
@@ -159,6 +160,9 @@ class RoomStore:
     current_turn = room["state"].get("currentPlayer")
     if current_turn != player.color:
       raise ValueError("It's not your turn yet.")
+    room["undoStack"].append({"state": room["state"], "by": player_id})
+    if len(room["undoStack"]) > 20:
+      room["undoStack"] = room["undoStack"][-20:]
     room["state"] = next_state
     room["version"] += 1
     room["updated_at"] = now_ts()
@@ -176,6 +180,30 @@ class RoomStore:
     if player_id not in room["players"]:
       raise ValueError("Player is not in this room.")
     room["state"] = create_initial_state()
+    room["undoStack"] = []
+    room["version"] += 1
+    room["updated_at"] = now_ts()
+    return {
+      "state": room["state"],
+      "version": room["version"],
+      "messages": room["messages"],
+      **self._room_meta(room),
+    }
+
+  def undo_room(self, room_code: str, player_id: str) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    if player_id not in room["players"]:
+      raise ValueError("Player is not in this room.")
+    undo_stack = room.get("undoStack") or []
+    if not undo_stack:
+      raise ValueError("No turn available to undo.")
+    latest = undo_stack[-1]
+    if latest.get("by") != player_id:
+      raise ValueError("You can only undo your own most recent turn.")
+    room["undoStack"] = undo_stack[:-1]
+    room["state"] = latest["state"]
     room["version"] += 1
     room["updated_at"] = now_ts()
     return {
@@ -244,6 +272,7 @@ class RoomStore:
     only_player = next(iter(room["players"].values()))
     only_player.color = "dark"
     room["state"] = create_initial_state()
+    room["undoStack"] = []
     room["messages"] = []
     room["nextMessageId"] = 1
     room["chatRate"] = {only_player.player_id: {"times": [], "lastText": "", "lastAt": 0.0}}
@@ -411,6 +440,11 @@ class Handler(SimpleHTTPRequestHandler):
       room_code = str(payload.get("roomCode", "")).strip().upper()
       player_id = str(payload.get("playerId", "")).strip()
       self._json_endpoint(lambda: STORE.restart_room(room_code, player_id))
+      return
+    if parsed.path == "/api/rooms/undo":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      self._json_endpoint(lambda: STORE.undo_room(room_code, player_id))
       return
     if parsed.path == "/api/rooms/leave":
       room_code = str(payload.get("roomCode", "")).strip().upper()
