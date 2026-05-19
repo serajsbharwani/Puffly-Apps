@@ -19,6 +19,7 @@ For room-based remote friend play, start the multiplayer API server instead:
 2. Open:
    - `http://localhost:8002/iphone-checkers/`
 3. In the app:
+   - Choose a game from the top selector (`Checkers`, `Four-in-a-Row`, `Puzzle`)
    - Switch to `Play with a Friend`
    - One player taps `Create & Invite` and shares the invite link
    - Friend opens the invite link to auto-join

@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOM_TTL_SECONDS = 6 * 60 * 60
 MAX_ROOMS = 500
+SUPPORTED_GAMES = {"checkers", "fourinarow", "puzzle"}
 
 ROOT_DIR = Path(__file__).resolve().parent
 ROOMS_LOCK = threading.Lock()
@@ -53,6 +54,29 @@ def create_initial_state() -> Dict[str, Any]:
     "winner": None,
     "lastMove": None,
   }
+
+
+def create_fourinarow_initial_state() -> Dict[str, Any]:
+  grid: list[list[Optional[str]]] = [[None for _ in range(7)] for _ in range(6)]
+  return {
+    "grid": grid,
+    "currentPlayer": "dark",
+    "winner": None,
+    "draw": False,
+    "selectedSquare": None,
+    "forcedPiece": None,
+    "lastMove": None,
+    "winningLine": [],
+  }
+
+
+def create_initial_state_for_game(game_type: str) -> Dict[str, Any]:
+  normalized = str(game_type or "checkers").strip().lower()
+  if normalized == "connect4":
+    normalized = "fourinarow"
+  if normalized == "fourinarow":
+    return create_fourinarow_initial_state()
+  return create_initial_state()
 
 
 def random_code() -> str:
@@ -91,8 +115,13 @@ class RoomStore:
   def _new_player_id(self) -> str:
     return f"player-{int(now_ts() * 1000)}-{random.randint(1000, 9999)}"
 
-  def create_room(self) -> Dict[str, Any]:
+  def create_room(self, game_type: str = "checkers") -> Dict[str, Any]:
     self._cleanup()
+    normalized_game = str(game_type or "checkers").strip().lower()
+    if normalized_game == "connect4":
+      normalized_game = "fourinarow"
+    if normalized_game not in SUPPORTED_GAMES:
+      raise ValueError("Unsupported game type.")
     if len(self.rooms) >= MAX_ROOMS:
       raise ValueError("Server is busy. Please try again.")
     room_code = random_code()
@@ -101,7 +130,8 @@ class RoomStore:
     player_id = self._new_player_id()
     room = {
       "code": room_code,
-      "state": create_initial_state(),
+      "gameType": normalized_game,
+      "state": create_initial_state_for_game(normalized_game),
       "version": 0,
       "undoStack": [],
       "messages": [],
@@ -117,11 +147,19 @@ class RoomStore:
     self.rooms[room_code] = room
     return self._session_payload(room, player_id)
 
-  def join_room(self, room_code: str) -> Dict[str, Any]:
+  def join_room(self, room_code: str, game_type: Optional[str] = None) -> Dict[str, Any]:
     self._cleanup()
     room = self.rooms.get(room_code)
     if not room:
       raise ValueError("Room not found.")
+    if game_type:
+      normalized_game = str(game_type).strip().lower()
+      if normalized_game == "connect4":
+        normalized_game = "fourinarow"
+      if normalized_game not in SUPPORTED_GAMES:
+        raise ValueError("Unsupported game type.")
+      if normalized_game != room.get("gameType", "checkers"):
+        raise ValueError("This room is for a different game.")
     colors = {p.color for p in room["players"].values()}
     if "light" in colors:
       raise ValueError("Room already has two players.")
@@ -130,12 +168,31 @@ class RoomStore:
     room["updated_at"] = now_ts()
     return self._session_payload(room, player_id)
 
+  def reconnect_room(self, room_code: str, player_id: str) -> Dict[str, Any]:
+    self._cleanup()
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    if player_id not in room["players"]:
+      raise ValueError("Previous player session is no longer available.")
+    room["updated_at"] = now_ts()
+    return self._session_payload(room, player_id)
+
   def get_state(self, room_code: str) -> Dict[str, Any]:
     room = self.rooms.get(room_code)
     if not room:
       raise ValueError("Room not found.")
+    game_type = room.get("gameType", "checkers")
+    # Backward-compatible migration for rooms created before game-specific state.
+    if game_type == "fourinarow" and not isinstance(room.get("state", {}).get("grid"), list):
+      room["state"] = create_initial_state_for_game(game_type)
+      room["version"] += 1
+    if game_type == "checkers" and not isinstance(room.get("state", {}).get("board"), list):
+      room["state"] = create_initial_state_for_game(game_type)
+      room["version"] += 1
     room["updated_at"] = now_ts()
     return {
+      "gameType": game_type,
       "state": room["state"],
       "version": room["version"],
       "messages": room["messages"],
@@ -179,7 +236,7 @@ class RoomStore:
       raise ValueError("Room not found.")
     if player_id not in room["players"]:
       raise ValueError("Player is not in this room.")
-    room["state"] = create_initial_state()
+    room["state"] = create_initial_state_for_game(room.get("gameType", "checkers"))
     room["undoStack"] = []
     room["version"] += 1
     room["updated_at"] = now_ts()
@@ -271,7 +328,7 @@ class RoomStore:
     # Keep room consistent for the remaining player.
     only_player = next(iter(room["players"].values()))
     only_player.color = "dark"
-    room["state"] = create_initial_state()
+    room["state"] = create_initial_state_for_game(room.get("gameType", "checkers"))
     room["undoStack"] = []
     room["messages"] = []
     room["nextMessageId"] = 1
@@ -370,6 +427,7 @@ class RoomStore:
     player: Player = room["players"][player_id]
     return {
       "roomCode": room["code"],
+      "gameType": room.get("gameType", "checkers"),
       "playerId": player.player_id,
       "color": player.color,
       "state": room["state"],
@@ -416,11 +474,19 @@ class Handler(SimpleHTTPRequestHandler):
       return
 
     if parsed.path == "/api/rooms/create":
-      self._json_endpoint(STORE.create_room)
+      game_type = str(payload.get("gameType", "checkers")).strip().lower()
+      self._json_endpoint(lambda: STORE.create_room(game_type))
       return
     if parsed.path == "/api/rooms/join":
       room_code = str(payload.get("roomCode", "")).strip().upper()
-      self._json_endpoint(lambda: STORE.join_room(room_code))
+      game_type_raw = payload.get("gameType")
+      game_type = str(game_type_raw).strip().lower() if game_type_raw else None
+      self._json_endpoint(lambda: STORE.join_room(room_code, game_type))
+      return
+    if parsed.path == "/api/rooms/reconnect":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      self._json_endpoint(lambda: STORE.reconnect_room(room_code, player_id))
       return
     if parsed.path == "/api/rooms/move":
       room_code = str(payload.get("roomCode", "")).strip().upper()

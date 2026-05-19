@@ -3,14 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Little Puffly iPhone Checkers</title>
-    <link rel="stylesheet" href="./styles.css?v=62" />
+    <title>Puffly Four-in-a-Row</title>
+    <link rel="stylesheet" href="./styles.css?v=66" />
   </head>
   <body>
     <main class="app-shell">
       <header class="app-header">
-        <h1>Puffly Checkers</h1>
+        <h1 id="app-title">Puffly Four-in-a-Row</h1>
       </header>
+
+      <section class="game-panel" aria-label="Game selector">
+        <span class="game-label">Game</span>
+        <div class="game-buttons" role="group" aria-label="Choose game">
+          <button class="game-btn" type="button" data-game="checkers">Checkers</button>
+          <button class="game-btn active" type="button" data-game="fourinarow">Four-in-a-Row</button>
+          <button class="game-btn" type="button" data-game="puzzle">Puzzle (Coming Soon)</button>
+        </div>
+      </section>
 
       <section class="mode-panel" aria-label="Play mode">
         <button id="play-puffly-btn" class="mode-btn active" type="button">Practice with Puffly</button>
@@ -134,6 +143,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/app.js?v=77"></script>
+    <script type="module" src="./src/app.js?v=92"></script>
   </body>
 </html>

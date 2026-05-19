@@ -7,8 +7,21 @@ import {
   getLegalMovesForPiece,
   isDarkSquare,
 } from "./engine.js?v=10";
+import { DEFAULT_GAME_ID, GAME_REGISTRY, getGameConfig, isKnownGame, normalizeGameId } from "./games/registry.js";
+import {
+  FOUR_COLS,
+  FOUR_ROWS,
+  FOUR_STARTING_PIECES,
+  applyFourInARowDrop,
+  chooseFourInARowComputerColumn,
+  createFourInARowInitialState,
+  getDroppableColumns,
+  getLandingRow,
+} from "./games/fourinarow.js";
 
 const boardElement = document.getElementById("board");
+const gameButtons = Array.from(document.querySelectorAll(".game-btn"));
+const appTitle = document.getElementById("app-title");
 const friendLockOverlay = document.getElementById("friend-lock-overlay");
 const restartButton = document.getElementById("restart-btn");
 const undoButton = document.getElementById("undo-btn");
@@ -48,6 +61,8 @@ const greenAvatar = document.getElementById("green-avatar");
 const voiceStatusLabel = document.getElementById("voice-status");
 const blueCapturedPile = document.getElementById("blue-captured-pile");
 const greenCapturedPile = document.getElementById("green-captured-pile");
+const blueCapturedLabel = document.querySelector(".captured-tray.blue p");
+const greenCapturedLabel = document.querySelector(".captured-tray.green p");
 const celebrationOverlay = document.getElementById("celebration-overlay");
 const celebrationFx = document.getElementById("celebration-fx");
 const celebrationTitle = document.getElementById("celebration-title");
@@ -59,9 +74,10 @@ const pufflyFace = pufflyPanel?.querySelector(".puffly-face");
 
 const humanPlayer = "light";
 const computerPlayer = "dark";
-let state = createInitialState();
+let state = createStateForGame(DEFAULT_GAME_ID);
 let busy = false;
 let lastStatusMessage = "Make your move.";
+let selectedGameId = DEFAULT_GAME_ID;
 let playMode = "puffly";
 let difficulty = "medium";
 let audioEnabled = true;
@@ -75,7 +91,7 @@ let lastTurnSpoken = "";
 const AI_MOVE_ANIMATION_MS = 1300;
 const HUMAN_MOVE_ANIMATION_MS = 450;
 const FRIEND_MOVE_DELAY_MS = 420;
-const STARTING_PIECE_COUNT = 12;
+const CHECKERS_STARTING_PIECES = 12;
 let celebrationTimers = [];
 let pufflyCheerTimer = null;
 let rulesAutoHideTimer = null;
@@ -97,7 +113,11 @@ let voiceSpeakerMuted = false;
 let voiceOfferSent = false;
 let voiceRemoteAudioElement = null;
 let applyingRemoteSync = false;
+const FRIEND_SESSION_STORAGE_KEY = "puffly.friend.session.v1";
+let triedStoredFriendReconnect = false;
+let reconnectingStoredFriendSession = false;
 const AUTO_JOIN_ROOM_CODE = getJoinCodeFromUrl();
+const AUTO_GAME_ID = getGameFromUrl();
 let pendingPrioritySpeech = "";
 let pendingJoinIntroTeam = "";
 const speechNeedsInteractionUnlock = detectIOSLikeBrowser();
@@ -134,6 +154,97 @@ function getJoinCodeFromUrl() {
   return raw;
 }
 
+function getGameFromUrl() {
+  if (typeof window === "undefined") {
+    return DEFAULT_GAME_ID;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const raw = normalizeGameId((params.get("game") || "").trim().toLowerCase());
+  if (isKnownGame(raw)) {
+    return raw;
+  }
+  return DEFAULT_GAME_ID;
+}
+
+function createStateForGame(gameId) {
+  const normalized = normalizeGameId(gameId);
+  if (normalized === "fourinarow") {
+    return createFourInARowInitialState();
+  }
+  return createInitialState();
+}
+
+function updateAppTitle() {
+  if (!appTitle) {
+    return;
+  }
+  if (selectedGameId === "fourinarow") {
+    appTitle.textContent = "Puffly Four-in-a-Row";
+    return;
+  }
+  if (selectedGameId === "puzzle") {
+    appTitle.textContent = "Puffly Puzzle (Coming Soon)";
+    return;
+  }
+  appTitle.textContent = "Puffly Checkers";
+}
+
+function updateGameButtons() {
+  for (const button of gameButtons) {
+    const gameId = normalizeGameId(button.dataset.game || DEFAULT_GAME_ID);
+    button.classList.toggle("active", gameId === selectedGameId);
+  }
+}
+
+function readStoredFriendSession() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(FRIEND_SESSION_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const roomCode = String(parsed?.roomCode || "").trim().toUpperCase();
+    const playerId = String(parsed?.playerId || "").trim();
+    const gameType = normalizeGameId(String(parsed?.gameType || "").trim().toLowerCase());
+    if (!roomCode || !playerId) {
+      return null;
+    }
+    return { roomCode, playerId, gameType: isKnownGame(gameType) ? gameType : DEFAULT_GAME_ID };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredFriendSession(session) {
+  if (typeof window === "undefined" || !window.localStorage || !session) {
+    return;
+  }
+  const payload = {
+    roomCode: session.roomCode,
+    playerId: session.playerId,
+    gameType: normalizeGameId(session.gameType || selectedGameId || DEFAULT_GAME_ID),
+  };
+  try {
+    window.localStorage.setItem(FRIEND_SESSION_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage failures (private mode, quota, etc).
+  }
+}
+
+function clearStoredFriendSession() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(FRIEND_SESSION_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -158,6 +269,21 @@ function lockBoardGeometry() {
   const wrapRect = wrap.getBoundingClientRect();
   const remainingViewportHeight = Math.max(0, window.innerHeight - wrapRect.top - bodyBottomPadding - 8);
   const innerContentHeight = Math.max(0, remainingViewportHeight - padTop - padBottom);
+  if (selectedGameId === "fourinarow") {
+    // Account for board border + inner padding so edge circles never clip.
+    const fourBoardChrome = (3 + 4) * 2;
+    const availableWidth = Math.max(0, innerContentWidth - fourBoardChrome);
+    const availableHeight = Math.max(0, innerContentHeight - fourBoardChrome);
+    const cellFromWidth = Math.floor(availableWidth / FOUR_COLS);
+    const cellFromHeight = Math.floor(availableHeight / FOUR_ROWS);
+    const cell = Math.max(1, Math.floor(Math.min(cellFromWidth, cellFromHeight)));
+    boardElement.style.width = `${cell * FOUR_COLS + fourBoardChrome}px`;
+    boardElement.style.height = `${cell * FOUR_ROWS + fourBoardChrome}px`;
+    boardElement.style.gridTemplateColumns = `repeat(${FOUR_COLS}, ${cell}px)`;
+    boardElement.style.gridTemplateRows = `repeat(${FOUR_ROWS}, ${cell}px)`;
+    return;
+  }
+
   const usable = Math.floor(Math.min(innerContentWidth, innerContentHeight));
   const cell = Math.max(1, Math.floor(usable / BOARD_SIZE));
   const boardPixels = cell * BOARD_SIZE;
@@ -185,6 +311,12 @@ function playerDisplayName(color) {
 function ensureAudioContext() {
   if (!audioEnabled || typeof window === "undefined") {
     return null;
+  }
+  // iPad Safari may block speech until a direct user gesture occurs.
+  // ensureAudioContext is invoked from click/tap handlers, so unlock here.
+  if (speechNeedsInteractionUnlock && !speechUnlocked) {
+    unlockSpeechIfNeeded();
+    updateSpeechUnlockOverlay();
   }
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextCtor) {
@@ -374,6 +506,20 @@ function inferRemoteMoveFromStates(previousState, nextState) {
   return null;
 }
 
+function inferRemoteDropFromStates(previousState, nextState) {
+  const latest = nextState?.lastMove;
+  if (!latest) {
+    return null;
+  }
+  if (previousState?.grid?.[latest.row]?.[latest.col]) {
+    return null;
+  }
+  if (nextState?.grid?.[latest.row]?.[latest.col] !== latest.player) {
+    return null;
+  }
+  return latest;
+}
+
 function speakFromStatus(statusMessage) {
   let phrase = "";
   if (statusMessage === "Puffly is thinking...") {
@@ -425,7 +571,7 @@ function playCelebrationAudio() {
   window.setTimeout(() => beep(790, 0.14, "triangle", 0.06), 180);
 }
 
-function countPieces(player) {
+function countCheckersPieces(player) {
   let total = 0;
   for (let row = 0; row < BOARD_SIZE; row += 1) {
     for (let col = 0; col < BOARD_SIZE; col += 1) {
@@ -437,20 +583,31 @@ function countPieces(player) {
   return total;
 }
 
-function renderCapturedPile(container, player, tokenClass) {
+function countFourPieces(player) {
+  let total = 0;
+  for (let row = 0; row < FOUR_ROWS; row += 1) {
+    for (let col = 0; col < FOUR_COLS; col += 1) {
+      if (state.grid?.[row]?.[col] === player) {
+        total += 1;
+      }
+    }
+  }
+  return total;
+}
+
+function renderCapturedPile(container, count, tokenClass) {
   if (!container) {
     return;
   }
-  const capturedCount = Math.max(0, STARTING_PIECE_COUNT - countPieces(player));
   container.innerHTML = "";
-  if (capturedCount === 0) {
+  if (count === 0) {
     const empty = document.createElement("span");
     empty.className = "captured-empty";
     empty.textContent = "—";
     container.appendChild(empty);
     return;
   }
-  for (let i = 0; i < capturedCount; i += 1) {
+  for (let i = 0; i < count; i += 1) {
     const token = document.createElement("span");
     token.className = `captured-token ${tokenClass}`;
     token.style.left = `${6 + (i % 2) * 10}px`;
@@ -460,15 +617,32 @@ function renderCapturedPile(container, player, tokenClass) {
 }
 
 function renderCapturedPiles() {
-  renderCapturedPile(blueCapturedPile, "dark", "blue");
-  renderCapturedPile(greenCapturedPile, "light", "green");
+  if (selectedGameId === "fourinarow") {
+    if (blueCapturedLabel) {
+      blueCapturedLabel.textContent = "BLUE Remaining";
+    }
+    if (greenCapturedLabel) {
+      greenCapturedLabel.textContent = "GREEN Remaining";
+    }
+    renderCapturedPile(blueCapturedPile, Math.max(0, FOUR_STARTING_PIECES - countFourPieces("dark")), "blue");
+    renderCapturedPile(greenCapturedPile, Math.max(0, FOUR_STARTING_PIECES - countFourPieces("light")), "green");
+    return;
+  }
+  if (blueCapturedLabel) {
+    blueCapturedLabel.textContent = "BLUE Captured";
+  }
+  if (greenCapturedLabel) {
+    greenCapturedLabel.textContent = "GREEN Captured";
+  }
+  renderCapturedPile(blueCapturedPile, Math.max(0, CHECKERS_STARTING_PIECES - countCheckersPieces("dark")), "blue");
+  renderCapturedPile(greenCapturedPile, Math.max(0, CHECKERS_STARTING_PIECES - countCheckersPieces("light")), "green");
 }
 
 function updateDifficultyButtons() {
   for (const button of difficultyButtons) {
     const level = button.dataset.difficulty;
     button.classList.toggle("active", level === difficulty);
-    button.disabled = busy || playMode !== "puffly";
+    button.disabled = busy || playMode !== "puffly" || selectedGameId === "puzzle";
   }
 }
 
@@ -648,18 +822,13 @@ function buildInviteLink(roomCode) {
   }
   const url = new URL(window.location.href);
   url.searchParams.set("join", roomCode);
+  url.searchParams.set("game", selectedGameId);
   return url.toString();
 }
 
 async function shareInviteLink(roomCode) {
   const inviteUrl = buildInviteLink(roomCode);
   const shareText = `Join my Puffly Checkers room (${roomCode}): ${inviteUrl}`;
-  if (detectIOSLikeBrowser() && typeof window !== "undefined") {
-    const smsUrl = `sms:&body=${encodeURIComponent(shareText)}`;
-    window.location.href = smsUrl;
-    setFriendStatus("Opening Messages with your invite...");
-    return;
-  }
   if (navigator.share) {
     try {
       await navigator.share({
@@ -668,19 +837,24 @@ async function shareInviteLink(roomCode) {
         url: inviteUrl,
       });
       setFriendStatus("Invite sent.");
-      return;
+      return true;
     } catch (error) {
       if (error?.name === "AbortError") {
         setFriendStatus("Invite canceled.");
-        return;
+        return true;
       }
     }
   }
   try {
     await navigator.clipboard.writeText(inviteUrl);
-    setFriendStatus("Invite link copied. Send it to your friend.");
+    setFriendStatus(`Invite copied with code ${roomCode}. Send it to your friend.`);
+    return true;
   } catch {
-    setFriendStatus(`Share this invite link: ${inviteUrl}`);
+    if (typeof window !== "undefined") {
+      window.prompt(`Copy this invite link for room ${roomCode}:`, inviteUrl);
+    }
+    setFriendStatus(`Room ${roomCode} ready. Share the invite link shown in the prompt.`);
+    return false;
   }
 }
 
@@ -909,6 +1083,7 @@ function updateRulesForMode() {
   if (!ruleLine1 || !ruleLine2 || !ruleLine3 || !ruleLine4) {
     return;
   }
+  const isFour = selectedGameId === "fourinarow";
   if (playMode === "friend") {
     ruleLine1.classList.add("hidden");
     const myColor = remoteSession?.color ? playerDisplayName(remoteSession.color).toUpperCase() : "assigned after joining";
@@ -918,11 +1093,21 @@ function updateRulesForMode() {
         : `Your team color will be ${myColor}.`;
   } else {
     ruleLine1.classList.remove("hidden");
-    ruleLine1.textContent = "Blue Puffly Team is computer controlled.";
-    ruleLine2.textContent = "Green Frog Team is your side.";
+    if (isFour) {
+      ruleLine1.textContent = "Blue Puffly Team drops first and is computer controlled.";
+      ruleLine2.textContent = "Green team is your side.";
+    } else {
+      ruleLine1.textContent = "Blue Puffly Team is computer controlled.";
+      ruleLine2.textContent = "Green Frog Team is your side.";
+    }
   }
-  ruleLine3.textContent = "Jumps are required when available.";
-  ruleLine4.textContent = "Kinging adds a cap or crown accessory.";
+  if (isFour) {
+    ruleLine3.textContent = "Tap one of the highlighted slots to drop your piece.";
+    ruleLine4.textContent = "Connect 4 in any direction to win.";
+  } else {
+    ruleLine3.textContent = "Jumps are required when available.";
+    ruleLine4.textContent = "Kinging adds a cap or crown accessory.";
+  }
 }
 
 function getFriendStatusText(session) {
@@ -970,10 +1155,11 @@ function resetFriendLocalState(message = "Tap Create & Invite to start a room.")
   }
   closeVoiceConnection();
   remoteSession = null;
+  clearStoredFriendSession();
   pendingJoinIntroTeam = "";
   roomChatMessages = [];
   setChatUnreadCount(0);
-  state = createInitialState();
+  state = createStateForGame(selectedGameId);
   moveHistory = [];
   undoSnapshots = [];
   winnerAnnounced = null;
@@ -984,7 +1170,7 @@ function resetFriendLocalState(message = "Tap Create & Invite to start a room.")
   setFriendStatus(message);
   updateRulesForMode();
   renderRoomChat(true);
-  render("Friend mode: connect to a room.");
+  render(selectedGameId === "puzzle" ? `${getGameConfig(selectedGameId).title} gameplay is coming next.` : "Friend mode: connect to a room.");
 }
 
 async function apiPost(path, payload) {
@@ -998,6 +1184,63 @@ async function apiPost(path, payload) {
     throw new Error(data.error || `Request failed (${response.status})`);
   }
   return data;
+}
+
+async function tryReconnectStoredFriendSession(options = {}) {
+  const force = Boolean(options.force);
+  if (AUTO_JOIN_ROOM_CODE && !force) {
+    return;
+  }
+  if (
+    playMode !== "friend" ||
+    remoteSession ||
+    ((!force && triedStoredFriendReconnect) || reconnectingStoredFriendSession)
+  ) {
+    return;
+  }
+  const cached = readStoredFriendSession();
+  if (!cached) {
+    triedStoredFriendReconnect = true;
+    return;
+  }
+  triedStoredFriendReconnect = true;
+  reconnectingStoredFriendSession = true;
+  if (cached.gameType && isKnownGame(cached.gameType) && selectedGameId !== cached.gameType) {
+    selectedGameId = cached.gameType;
+    updateGameButtons();
+    updateAppTitle();
+    updateRulesForMode();
+  }
+  try {
+    const data = await apiPost("/api/rooms/reconnect", {
+      roomCode: cached.roomCode,
+      playerId: cached.playerId,
+    });
+    hydrateRoomSession(data);
+    setFriendStatus(`Reconnected to room ${data.roomCode}.`);
+    render("Room synchronized.");
+  } catch {
+    clearStoredFriendSession();
+    setFriendStatus("Tap Create & Invite to start a room.");
+  } finally {
+    reconnectingStoredFriendSession = false;
+  }
+}
+
+async function ensureFriendSessionBeforeMove() {
+  if (remoteSession) {
+    return true;
+  }
+  triedStoredFriendReconnect = false;
+  await tryReconnectStoredFriendSession({ force: true });
+  if (remoteSession) {
+    return true;
+  }
+  const fallbackCode = String(roomCodeInput?.value || AUTO_JOIN_ROOM_CODE || "").trim().toUpperCase();
+  if (fallbackCode) {
+    await joinRoomWithCode(fallbackCode);
+  }
+  return Boolean(remoteSession);
 }
 
 async function sendVoiceSignal(signalType, payload, targetColor) {
@@ -1187,6 +1430,14 @@ async function syncRoomState() {
     remoteSession.ready = data.playerCount >= 2;
     setFriendStatus(getFriendStatusText(remoteSession));
   }
+  if (typeof data.gameType === "string" && isKnownGame(data.gameType)) {
+      remoteSession.gameType = normalizeGameId(data.gameType);
+    if (selectedGameId !== normalizeGameId(data.gameType)) {
+        selectedGameId = normalizeGameId(data.gameType);
+      updateGameButtons();
+      updateAppTitle();
+    }
+  }
   if (data.voiceParticipants && voiceJoined) {
     const bothVoiceReady = data.voiceParticipants.dark && data.voiceParticipants.light;
     if (!bothVoiceReady) {
@@ -1205,13 +1456,24 @@ async function syncRoomState() {
       previousCurrentPlayer &&
       previousCurrentPlayer !== remoteSession.color;
     if (shouldAnimateForOpponent) {
-      const remoteMove = inferRemoteMoveFromStates(previousState, data.state);
-      if (remoteMove) {
-        await sleep(140);
-        await animateComputerMove(remoteMove);
-        playMoveAudio(previousCurrentPlayer, remoteMove);
+      if (selectedGameId === "fourinarow") {
+        const remoteDrop = inferRemoteDropFromStates(previousState, data.state);
+        if (remoteDrop) {
+          await sleep(140);
+          await animateFourDrop(remoteDrop.player, remoteDrop.row, remoteDrop.col, AI_MOVE_ANIMATION_MS);
+          playMoveAudio(remoteDrop.player, { isCapture: false });
+        } else {
+          await sleep(FRIEND_MOVE_DELAY_MS);
+        }
       } else {
-        await sleep(FRIEND_MOVE_DELAY_MS);
+        const remoteMove = inferRemoteMoveFromStates(previousState, data.state);
+        if (remoteMove) {
+          await sleep(140);
+          await animateComputerMove(remoteMove);
+          playMoveAudio(previousCurrentPlayer, remoteMove);
+        } else {
+          await sleep(FRIEND_MOVE_DELAY_MS);
+        }
       }
     }
     state = data.state;
@@ -1240,12 +1502,19 @@ function startRoomPolling() {
 function hydrateRoomSession(data) {
   remoteSession = {
     roomCode: data.roomCode,
+    gameType: normalizeGameId(data.gameType || selectedGameId),
     playerId: data.playerId,
     color: data.color,
     version: data.version,
     playerCount: data.playerCount ?? 1,
     ready: (data.playerCount ?? 1) >= 2,
   };
+  writeStoredFriendSession(remoteSession);
+  if (isKnownGame(remoteSession.gameType) && selectedGameId !== remoteSession.gameType) {
+    selectedGameId = remoteSession.gameType;
+    updateGameButtons();
+    updateAppTitle();
+  }
   state = data.state;
   moveHistory = [];
   undoSnapshots = [];
@@ -1290,17 +1559,30 @@ async function joinRoomWithCode(roomCode, options = {}) {
     return false;
   }
   try {
-    const data = await apiPost("/api/rooms/join", { roomCode: normalizedCode });
+    const data = await apiPost("/api/rooms/join", { roomCode: normalizedCode, gameType: selectedGameId });
     hydrateRoomSession(data);
     if (fromInvite) {
       clearJoinCodeFromUrl();
     }
     return true;
   } catch (error) {
+    const message = String(error?.message || "");
+    if (message.toLowerCase().includes("room already has two players")) {
+      // If this device is a previously connected player reopening the invite,
+      // fallback to reconnect instead of leaving the board locked.
+      triedStoredFriendReconnect = false;
+      await tryReconnectStoredFriendSession({ force: true });
+      if (remoteSession) {
+        if (fromInvite) {
+          clearJoinCodeFromUrl();
+        }
+        return true;
+      }
+    }
     setFriendStatus(
       fromInvite
-        ? error?.message || "Invite link could not join this room."
-        : error?.message || "Could not join room.",
+        ? message || "Invite link could not join this room."
+        : message || "Could not join room.",
     );
     return false;
   }
@@ -1326,7 +1608,7 @@ function setPlayMode(mode) {
   updateSpeechUnlockOverlay();
   hideRulesPanel();
   resetSessionForModeSwitch();
-  state = createInitialState();
+  state = createStateForGame(selectedGameId);
   winnerAnnounced = null;
   lastSpokenPhrase = "";
   lastTurnSpoken = "";
@@ -1343,7 +1625,13 @@ function setPlayMode(mode) {
     );
     updateRulesForMode();
     renderRoomChat(true);
-    render("Friend mode: connect to a room.");
+    render(
+      selectedGameId === "puzzle"
+        ? `${getGameConfig(selectedGameId).title}: friend room scaffolding ready.`
+        : "Friend mode: connect to a room.",
+    );
+    triedStoredFriendReconnect = false;
+    tryReconnectStoredFriendSession().catch(() => {});
     return;
   }
   moveHistory = [];
@@ -1352,7 +1640,11 @@ function setPlayMode(mode) {
   setChatUnreadCount(0);
   renderRoomChat(true);
   updateRulesForMode();
-  render("New game started. Puffly opens.");
+  if (selectedGameId === "puzzle") {
+    render(`${getGameConfig(selectedGameId).title}: Puffly mode scaffolding ready.`);
+    return;
+  }
+  render(selectedGameId === "fourinarow" ? "New Four-in-a-Row game. Puffly opens." : "New game started. Puffly opens.");
   runComputerTurn();
 }
 
@@ -1429,9 +1721,135 @@ function triggerPufflyCaptureCheer() {
   }, 460);
 }
 
+function createFourPieceElement(player) {
+  const pieceEl = document.createElement("button");
+  pieceEl.type = "button";
+  pieceEl.className = `piece four-piece ${player}`;
+  pieceEl.textContent = player === "dark" ? "🐻" : "🐸";
+  return pieceEl;
+}
+
+function renderFourInARowBoard() {
+  const droppableColumns = getDroppableColumns(state.grid);
+  const winningCells = new Set((state.winningLine || []).map(({ row, col }) => key(row, col)));
+
+  boardElement.innerHTML = "";
+  for (let row = 0; row < FOUR_ROWS; row += 1) {
+    for (let col = 0; col < FOUR_COLS; col += 1) {
+      const square = document.createElement("div");
+      square.className = "square four-slot";
+      square.dataset.row = String(row);
+      square.dataset.col = String(col);
+      if (!state.winner && !state.draw && getLandingRow(state.grid, col) === row) {
+        square.classList.add("four-drop-target");
+      }
+      if (winningCells.has(key(row, col))) {
+        square.classList.add("four-winning");
+      }
+
+      const cellPlayer = state.grid[row][col];
+      if (cellPlayer) {
+        const pieceEl = createFourPieceElement(cellPlayer);
+        square.appendChild(pieceEl);
+      } else if (row === 0 && droppableColumns.includes(col)) {
+        const preview = document.createElement("span");
+        preview.className = "four-preview";
+        square.appendChild(preview);
+      }
+
+      boardElement.appendChild(square);
+    }
+  }
+}
+
 function render(statusMessage = "Make your move.") {
   lastStatusMessage = statusMessage;
   lockBoardGeometry();
+  boardElement.classList.toggle("fourinarow", selectedGameId === "fourinarow");
+  boardElement.setAttribute("aria-label", selectedGameId === "fourinarow" ? "Four-in-a-Row board" : "Checkers board");
+  if (selectedGameId === "puzzle") {
+    const game = getGameConfig(selectedGameId);
+    boardElement.innerHTML = "";
+    const placeholder = document.createElement("div");
+    placeholder.className = "game-placeholder";
+    const modeLabel = playMode === "friend" ? "Play with a Friend" : "Practice with Puffly";
+    placeholder.textContent = `${game.title} (${modeLabel}) is scaffolded for pilot setup. Gameplay wiring comes next.`;
+    boardElement.appendChild(placeholder);
+    renderCapturedPiles();
+    undoButton.disabled = true;
+    rulesButton.disabled = busy;
+    updateDifficultyButtons();
+    updateAudioButtons();
+    friendLockOverlay?.classList.add("hidden");
+    setPufflyState("idle", `🧩 ${game.title} ready`);
+    setPufflyLookToBoard();
+    return;
+  }
+  if (selectedGameId === "fourinarow") {
+    renderFourInARowBoard();
+    renderHistory();
+    renderCapturedPiles();
+    undoButton.disabled = busy || undoSnapshots.length === 0;
+    rulesButton.disabled = busy;
+    updateDifficultyButtons();
+    updateAudioButtons();
+    friendLockOverlay?.classList.add("hidden");
+    if (state.winner) {
+      const isHumanWin = state.winner === humanPlayer;
+      if (isHumanWin) {
+        setPufflyState("idle", "😮 You got me!");
+      } else {
+        setPufflyState("celebrate", "🎉 I win!");
+      }
+      lastTurnSpoken = "";
+      showCelebration();
+      return;
+    }
+    if (state.draw) {
+      hideCelebration();
+      setPufflyState("idle", "🤝 Draw game.");
+      if (lastTurnSpoken !== "Draw game.") {
+        lastTurnSpoken = "Draw game.";
+        speakPhrase("Draw game.");
+      }
+      return;
+    }
+    hideCelebration();
+    let currentTurnPhrase;
+    if (playMode === "friend" && remoteSession) {
+      if (!remoteSession.ready) {
+        currentTurnPhrase = "Welcome to the game room.";
+      } else {
+        const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
+        currentTurnPhrase = `${activeColor}'S TURN`;
+      }
+    } else if (playMode === "friend") {
+      currentTurnPhrase = "Welcome to the game room.";
+    } else {
+      currentTurnPhrase = state.currentPlayer === humanPlayer ? "Your turn." : "Puffly's turn.";
+    }
+    if (lastTurnSpoken !== currentTurnPhrase) {
+      lastTurnSpoken = currentTurnPhrase;
+      speakPhrase(currentTurnPhrase);
+    }
+    if (playMode === "friend") {
+      if (!remoteSession) {
+        setPufflyState("idle", "🤝 Friend mode");
+      } else if (!remoteSession.ready) {
+        setPufflyState("thinking", "⏳ Waiting...");
+      } else {
+        const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
+        setPufflyState("idle", `🤝 Friend Mode - ${activeColor}'s Turn`);
+      }
+    } else if (state.currentPlayer === computerPlayer) {
+      setPufflyState("thinking", "💭 My move...");
+    } else {
+      setPufflyState("idle", "👀 Your turn!");
+    }
+    setPufflyLookToBoard();
+    speakFromStatus(statusMessage);
+    return;
+  }
   const legalForCurrent = getAllLegalMovesForPlayer(state, state.currentPlayer);
   const selected = state.selectedSquare;
   const selectedMoves = selected ? getLegalMovesForPiece(state, selected.row, selected.col) : [];
@@ -1476,11 +1894,7 @@ function render(statusMessage = "Make your move.") {
   rulesButton.disabled = busy;
   updateDifficultyButtons();
   updateAudioButtons();
-  const shouldShowFriendLock = playMode === "friend" && (!remoteSession || !remoteSession.ready);
-  friendLockOverlay?.classList.toggle("hidden", !shouldShowFriendLock);
-  if (friendLockText && shouldShowFriendLock) {
-    friendLockText.textContent = remoteSession ? "Waiting for your friend to join..." : "Waiting for the players...";
-  }
+  friendLockOverlay?.classList.add("hidden");
 
   if (state.winner) {
     if (state.winner === humanPlayer) {
@@ -1634,6 +2048,32 @@ async function animateComputerMove(move) {
   captureSquare?.classList.remove("ai-move-capture");
 }
 
+async function animateFourDrop(player, row, col, durationMs = HUMAN_MOVE_ANIMATION_MS) {
+  const toSquare = findSquareElement(row, col);
+  const fromSquare = findSquareElement(0, col);
+  if (!toSquare || !fromSquare) {
+    return;
+  }
+  const fromRect = fromSquare.getBoundingClientRect();
+  const toRect = toSquare.getBoundingClientRect();
+  const size = Math.min(fromRect.width, fromRect.height) * 0.82;
+
+  const ghost = document.createElement("span");
+  ghost.className = `ai-piece-ghost piece four-piece ${player}`;
+  ghost.style.width = `${size}px`;
+  ghost.style.height = `${size}px`;
+  ghost.style.left = `${fromRect.left + fromRect.width / 2}px`;
+  ghost.style.top = `${fromRect.top + fromRect.height / 2}px`;
+  ghost.style.transitionDuration = `${durationMs}ms`;
+  document.body.appendChild(ghost);
+
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  ghost.style.transform = `translate(${toRect.left - fromRect.left}px, ${toRect.top - fromRect.top}px)`;
+  await sleep(durationMs);
+  ghost.remove();
+  await animateDestinationBounce(toSquare);
+}
+
 function maybeStoreUndoBeforeMove() {
   if (state.forcedPiece) {
     return;
@@ -1642,6 +2082,21 @@ function maybeStoreUndoBeforeMove() {
     return;
   }
   pushUndoSnapshot();
+}
+
+function recordFourDrop(player, col) {
+  const mover = playMode === "friend" ? playerDisplayName(player) : player === humanPlayer ? "You" : "Puffly";
+  moveHistory.push(`${mover.toUpperCase()}: drop in column ${col + 1}`);
+}
+
+function fourInARowStatus(result) {
+  if (result.nextState.winner) {
+    return `${playerDisplayName(result.nextState.winner).toUpperCase()} connected four!`;
+  }
+  if (result.nextState.draw) {
+    return "Board is full. Draw.";
+  }
+  return `${playerDisplayName(result.nextState.currentPlayer).toUpperCase()}'S turn.`;
 }
 
 async function submitRemoteMove(nextState) {
@@ -1697,8 +2152,70 @@ async function commitMove(move) {
   }
 }
 
+async function commitFourDrop(col) {
+  const landingRow = getLandingRow(state.grid, col);
+  if (landingRow < 0) {
+    playInvalidAudio();
+    render("That column is full.");
+    return;
+  }
+  maybeStoreUndoBeforeMove();
+  busy = true;
+  if (playMode === "friend") {
+    await sleep(FRIEND_MOVE_DELAY_MS);
+  }
+  const mover = state.currentPlayer;
+  await animateFourDrop(mover, landingRow, col);
+  const result = applyFourInARowDrop(state, col);
+  if (!result.ok) {
+    busy = false;
+    render(result.message || "That move is not legal.");
+    return;
+  }
+  recordFourDrop(mover, col);
+  playMoveAudio(mover, { isCapture: false });
+  const status = fourInARowStatus(result);
+  if (playMode === "friend") {
+    try {
+      await submitRemoteMove(result.nextState);
+      render("Move synced with friend.");
+    } catch (error) {
+      await syncRoomState().catch(() => {});
+      render(error?.message || "Move sync failed.");
+    }
+  } else {
+    state = result.nextState;
+    render(status);
+  }
+  busy = false;
+  if (playMode === "friend") {
+    render(lastStatusMessage);
+  }
+  if (playMode === "puffly") {
+    await runComputerTurn();
+  }
+}
+
 async function runComputerTurn() {
-  if (playMode !== "puffly" || state.winner || state.currentPlayer !== computerPlayer) {
+  if (playMode !== "puffly" || state.winner || state.draw || state.currentPlayer !== computerPlayer) {
+    return;
+  }
+  if (selectedGameId === "fourinarow") {
+    busy = true;
+    render("Puffly is thinking...");
+    setPufflyState("thinking", "🧠 My turn.");
+    await sleep(moveHistory.length === 0 ? 1200 : 900);
+    const column = chooseFourInARowComputerColumn(state, computerPlayer, difficulty);
+    const result = applyFourInARowDrop(state, column);
+    if (result.ok) {
+      await animateFourDrop(computerPlayer, result.row, result.col, AI_MOVE_ANIMATION_MS);
+      recordFourDrop(computerPlayer, result.col);
+      playMoveAudio(computerPlayer, { isCapture: false });
+      state = result.nextState;
+      render(fourInARowStatus(result));
+    }
+    busy = false;
+    render(lastStatusMessage);
     return;
   }
   busy = true;
@@ -1736,6 +2253,10 @@ async function runComputerTurn() {
 
 boardElement.addEventListener("click", async (event) => {
   ensureAudioContext();
+  if (selectedGameId === "puzzle") {
+    render(`${getGameConfig(selectedGameId).title} gameplay is coming next.`);
+    return;
+  }
   if (busy) {
     return;
   }
@@ -1746,7 +2267,7 @@ boardElement.addEventListener("click", async (event) => {
   const row = Number(square.dataset.row);
   const col = Number(square.dataset.col);
 
-  if (state.winner) {
+  if (state.winner || state.draw) {
     return;
   }
   if (playMode === "puffly" && state.currentPlayer !== humanPlayer) {
@@ -1754,18 +2275,26 @@ boardElement.addEventListener("click", async (event) => {
     return;
   }
   if (playMode === "friend") {
-    if (!remoteSession) {
+    const hasSession = await ensureFriendSessionBeforeMove();
+    if (!hasSession || !remoteSession) {
       render("Connect to a room first.");
       return;
     }
-    if (!remoteSession.ready) {
-      render("Waiting for opponent to join.");
-      return;
-    }
     if (state.currentPlayer !== remoteSession.color) {
+      // Show turn hint, but allow attempting a move; server still enforces turn ownership.
       render("Waiting for your friend...");
+    }
+  }
+
+  if (selectedGameId === "fourinarow") {
+    const canDrop = getLandingRow(state.grid, col) >= 0;
+    if (!canDrop) {
+      playInvalidAudio();
+      render("That column is full.");
       return;
     }
+    await commitFourDrop(col);
+    return;
   }
 
   const piece = state.board[row][col];
@@ -1833,14 +2362,14 @@ restartButton.addEventListener("click", async () => {
     }
     return;
   }
-  state = createInitialState();
+  state = createStateForGame(selectedGameId);
   moveHistory = [];
   undoSnapshots = [];
   winnerAnnounced = null;
   lastSpokenPhrase = "";
   lastTurnSpoken = "";
   hideCelebration();
-  render("New game started. Puffly opens.");
+  render(selectedGameId === "fourinarow" ? "New Four-in-a-Row game. Puffly opens." : "New game started. Puffly opens.");
   await runComputerTurn();
 });
 
@@ -1937,6 +2466,46 @@ rulesButton.addEventListener("click", () => {
   }
 });
 
+function switchGame(nextGameId) {
+  if (!isKnownGame(nextGameId) || nextGameId === selectedGameId) {
+    return;
+  }
+  selectedGameId = nextGameId;
+  updateGameButtons();
+  updateAppTitle();
+  resetSessionForModeSwitch();
+  state = createStateForGame(selectedGameId);
+  moveHistory = [];
+  undoSnapshots = [];
+  winnerAnnounced = null;
+  hideCelebration();
+  lastSpokenPhrase = "";
+  lastTurnSpoken = "";
+  updateRulesForMode();
+  updateDifficultyButtons();
+  const game = getGameConfig(selectedGameId);
+  if (selectedGameId === "puzzle") {
+    const modeLabel = playMode === "friend" ? "friend rooms" : "practice mode";
+    render(`${game.title}: ${modeLabel} scaffolding ready.`);
+    return;
+  }
+  if (playMode === "friend") {
+    render("Friend mode: connect to a room.");
+    return;
+  }
+  render(selectedGameId === "fourinarow" ? "New Four-in-a-Row game. Puffly opens." : "New game started. Puffly opens.");
+  runComputerTurn();
+}
+
+for (const button of gameButtons) {
+  button.addEventListener("click", () => {
+    if (busy) {
+      return;
+    }
+    switchGame(normalizeGameId(button.dataset.game || DEFAULT_GAME_ID));
+  });
+}
+
 playPufflyButton?.addEventListener("click", () => {
   if (busy || playMode === "puffly") {
     return;
@@ -1960,9 +2529,13 @@ createRoomButton?.addEventListener("click", async () => {
     return;
   }
   try {
-    const data = await apiPost("/api/rooms/create", {});
+    const data = await apiPost("/api/rooms/create", { gameType: selectedGameId });
     hydrateRoomSession(data);
-    await shareInviteLink(data.roomCode);
+    setFriendStatus(`Room ${data.roomCode} created. Preparing invite...`);
+    const didShare = await shareInviteLink(data.roomCode);
+    if (!didShare) {
+      setFriendStatus(`Room ${data.roomCode} created. Tap Create & Invite again to open sharing.`);
+    }
   } catch (error) {
     setFriendStatus(error?.message || "Could not create room.");
   }
@@ -2103,6 +2676,11 @@ if (typeof window !== "undefined") {
 updateChatMuteButton();
 updateSpeechUnlockOverlay();
 renderRoomChat(true);
+selectedGameId = AUTO_GAME_ID;
+updateGameButtons();
+updateAppTitle();
+state = createStateForGame(selectedGameId);
+updateRulesForMode();
 if (AUTO_JOIN_ROOM_CODE) {
   setPlayMode("friend");
   if (roomCodeInput) {
@@ -2111,6 +2689,6 @@ if (AUTO_JOIN_ROOM_CODE) {
   setFriendStatus(`Joining invite room ${AUTO_JOIN_ROOM_CODE}...`);
   joinRoomWithCode(AUTO_JOIN_ROOM_CODE, { fromInvite: true }).catch(() => {});
 } else {
-  render("Puffly opens the game.");
+  render(selectedGameId === "fourinarow" ? "Puffly opens Four-in-a-Row." : "Puffly opens the game.");
   runComputerTurn();
 }
