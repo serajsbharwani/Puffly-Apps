@@ -12,7 +12,7 @@ export const GAME_REGISTRY = {
   puzzle: {
     id: "puzzle",
     title: "Puzzle",
-    implemented: false,
+    implemented: true,
   },
 };
 

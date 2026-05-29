@@ -70,12 +70,44 @@ def create_fourinarow_initial_state() -> Dict[str, Any]:
   }
 
 
+def create_puzzle_initial_state() -> Dict[str, Any]:
+  piece_indices = list(range(16))
+  random.shuffle(piece_indices)
+  pieces = []
+  for order, idx in enumerate(piece_indices):
+    pieces.append(
+      {
+        "id": f"pz-{idx + 1}",
+        "correctRow": idx // 4,
+        "correctCol": idx % 4,
+        "owner": "dark" if order < 8 else "light",
+        "placed": False,
+        "placedRow": None,
+        "placedCol": None,
+        "locked": False,
+      }
+    )
+  return {
+    "rows": 4,
+    "cols": 4,
+    "pieces": pieces,
+    "currentPlayer": "dark",
+    "selectedSquare": None,
+    "forcedPiece": None,
+    "winner": None,
+    "draw": False,
+    "lastMove": None,
+  }
+
+
 def create_initial_state_for_game(game_type: str) -> Dict[str, Any]:
   normalized = str(game_type or "checkers").strip().lower()
   if normalized == "connect4":
     normalized = "fourinarow"
   if normalized == "fourinarow":
     return create_fourinarow_initial_state()
+  if normalized == "puzzle":
+    return create_puzzle_initial_state()
   return create_initial_state()
 
 
@@ -185,6 +217,9 @@ class RoomStore:
     game_type = room.get("gameType", "checkers")
     # Backward-compatible migration for rooms created before game-specific state.
     if game_type == "fourinarow" and not isinstance(room.get("state", {}).get("grid"), list):
+      room["state"] = create_initial_state_for_game(game_type)
+      room["version"] += 1
+    if game_type == "puzzle" and not isinstance(room.get("state", {}).get("pieces"), list):
       room["state"] = create_initial_state_for_game(game_type)
       room["version"] += 1
     if game_type == "checkers" and not isinstance(room.get("state", {}).get("board"), list):

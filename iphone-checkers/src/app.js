@@ -18,6 +18,19 @@ import {
   getDroppableColumns,
   getLandingRow,
 } from "./games/fourinarow.js";
+import {
+  PUZZLE_ALLOWED_GRID_SIZES,
+  PUZZLE_COLS,
+  PUZZLE_IMAGE_URL,
+  PUZZLE_ROWS,
+  applyPuzzlePlacement,
+  choosePuzzleComputerPlacement,
+  createPuzzleInitialState,
+  getPuzzlePieceCountForGrid,
+  getPuzzlePiece,
+  getPuzzleRemainingByOwner,
+  normalizePuzzleTurn,
+} from "./games/puzzle.js";
 
 const boardElement = document.getElementById("board");
 const gameButtons = Array.from(document.querySelectorAll(".game-btn"));
@@ -26,6 +39,7 @@ const friendLockOverlay = document.getElementById("friend-lock-overlay");
 const restartButton = document.getElementById("restart-btn");
 const undoButton = document.getElementById("undo-btn");
 const rulesButton = document.getElementById("rules-btn");
+const controlsPanel = document.querySelector(".controls");
 const difficultyButtons = Array.from(document.querySelectorAll(".difficulty-btn"));
 const audioButtons = Array.from(document.querySelectorAll(".audio-btn"));
 const pufflyControls = document.getElementById("puffly-controls");
@@ -38,6 +52,7 @@ const roomCodeInput = document.getElementById("room-code-input");
 const friendStatusLabel = document.getElementById("friend-status");
 const historyList = document.getElementById("history-list");
 const rulesPanel = document.getElementById("rules-panel");
+const puzzleDebugStrip = document.getElementById("puzzle-debug-strip");
 const ruleLine1 = document.getElementById("rule-line-1");
 const ruleLine2 = document.getElementById("rule-line-2");
 const ruleLine3 = document.getElementById("rule-line-3");
@@ -61,6 +76,8 @@ const greenAvatar = document.getElementById("green-avatar");
 const voiceStatusLabel = document.getElementById("voice-status");
 const blueCapturedPile = document.getElementById("blue-captured-pile");
 const greenCapturedPile = document.getElementById("green-captured-pile");
+const blueCapturedTray = document.querySelector(".captured-tray.blue");
+const greenCapturedTray = document.querySelector(".captured-tray.green");
 const blueCapturedLabel = document.querySelector(".captured-tray.blue p");
 const greenCapturedLabel = document.querySelector(".captured-tray.green p");
 const celebrationOverlay = document.getElementById("celebration-overlay");
@@ -71,15 +88,20 @@ const celebrationClose = document.getElementById("celebration-close");
 const pufflyPanel = document.getElementById("puffly-panel");
 const pufflyThought = document.getElementById("puffly-thought");
 const pufflyFace = pufflyPanel?.querySelector(".puffly-face");
+const starterFlipButton = document.getElementById("starter-flip-btn");
+const starterCoin = document.getElementById("starter-coin");
+const PUZZLE_DEBUG_ENABLED =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("puzzleDebug") === "1";
 
 const humanPlayer = "light";
 const computerPlayer = "dark";
+let difficulty = "medium";
 let state = createStateForGame(DEFAULT_GAME_ID);
 let busy = false;
 let lastStatusMessage = "Make your move.";
 let selectedGameId = DEFAULT_GAME_ID;
 let playMode = "puffly";
-let difficulty = "medium";
 let audioEnabled = true;
 let moveHistory = [];
 let undoSnapshots = [];
@@ -91,7 +113,11 @@ let lastTurnSpoken = "";
 const AI_MOVE_ANIMATION_MS = 1300;
 const HUMAN_MOVE_ANIMATION_MS = 450;
 const FRIEND_MOVE_DELAY_MS = 420;
+const STARTER_FLIP_ANIMATION_MS = 1450;
+const PUFFLY_PUZZLE_PLACE_MS = 1250;
 const CHECKERS_STARTING_PIECES = 12;
+const PUZZLE_JIGSAW_BASE = 100;
+const PUZZLE_JIGSAW_TAB = 20;
 let celebrationTimers = [];
 let pufflyCheerTimer = null;
 let rulesAutoHideTimer = null;
@@ -123,6 +149,11 @@ let pendingJoinIntroTeam = "";
 const speechNeedsInteractionUnlock = detectIOSLikeBrowser();
 let speechUnlocked = !speechNeedsInteractionUnlock;
 let pendingUnlockSpeech = "";
+let selectedPuzzlePieceId = "";
+let puzzleTrayBootstrapAttempted = false;
+let puzzlePreFlipGeometryRefreshScheduled = false;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const puzzleEdgeCache = new Map();
 
 function key(row, col) {
   return `${row},${col}`;
@@ -130,6 +161,114 @@ function key(row, col) {
 
 function clone(data) {
   return JSON.parse(JSON.stringify(data));
+}
+
+function puzzleEdgeSeed(row, col) {
+  const raw = Math.sin((row + 1) * 137.19 + (col + 1) * 91.73) * 10000;
+  return raw - Math.floor(raw) >= 0.5 ? 1 : -1;
+}
+
+function getPuzzleGridSizeFromState(targetState = state) {
+  const rows = Number(targetState?.rows || PUZZLE_ROWS);
+  const cols = Number(targetState?.cols || PUZZLE_COLS);
+  const validRows = PUZZLE_ALLOWED_GRID_SIZES.includes(rows) ? rows : PUZZLE_ROWS;
+  const validCols = PUZZLE_ALLOWED_GRID_SIZES.includes(cols) ? cols : PUZZLE_COLS;
+  return { rows: validRows, cols: validCols };
+}
+
+function createPuzzleHorizontalEdges(rows, cols) {
+  return Array.from({ length: rows - 1 }, (_, row) =>
+    Array.from({ length: cols }, (_, col) => puzzleEdgeSeed(row, col + 19)),
+  );
+}
+
+function createPuzzleVerticalEdges(rows, cols) {
+  return Array.from({ length: rows }, (_, row) =>
+    Array.from({ length: cols - 1 }, (_, col) => puzzleEdgeSeed(row + 23, col)),
+  );
+}
+
+function getPuzzleEdgeProfiles(row, col, rows, cols) {
+  const cacheKey = `${rows}x${cols}`;
+  if (!puzzleEdgeCache.has(cacheKey)) {
+    puzzleEdgeCache.set(cacheKey, {
+      horizontal: createPuzzleHorizontalEdges(rows, cols),
+      vertical: createPuzzleVerticalEdges(rows, cols),
+    });
+  }
+  const cached = puzzleEdgeCache.get(cacheKey);
+  const horizontal = cached.horizontal;
+  const vertical = cached.vertical;
+  return {
+    top: row === 0 ? 0 : -horizontal[row - 1][col],
+    right: col === cols - 1 ? 0 : vertical[row][col],
+    bottom: row === rows - 1 ? 0 : horizontal[row][col],
+    left: col === 0 ? 0 : -vertical[row][col - 1],
+  };
+}
+
+function buildPuzzlePiecePath(piece) {
+  const left = 0;
+  const top = 0;
+  const right = PUZZLE_JIGSAW_BASE;
+  const bottom = PUZZLE_JIGSAW_BASE;
+  const { rows, cols } = getPuzzleGridSizeFromState();
+  const edges = getPuzzleEdgeProfiles(piece.correctRow, piece.correctCol, rows, cols);
+  const topOffset = -edges.top * PUZZLE_JIGSAW_TAB;
+  const rightOffset = edges.right * PUZZLE_JIGSAW_TAB;
+  const bottomOffset = edges.bottom * PUZZLE_JIGSAW_TAB;
+  const leftOffset = -edges.left * PUZZLE_JIGSAW_TAB;
+
+  const topA = left + PUZZLE_JIGSAW_BASE * 0.35;
+  const topC = left + PUZZLE_JIGSAW_BASE * 0.65;
+  const rightA = top + PUZZLE_JIGSAW_BASE * 0.35;
+  const rightC = top + PUZZLE_JIGSAW_BASE * 0.65;
+  const bottomA = right - PUZZLE_JIGSAW_BASE * 0.35;
+  const bottomC = right - PUZZLE_JIGSAW_BASE * 0.65;
+  const leftA = bottom - PUZZLE_JIGSAW_BASE * 0.35;
+  const leftC = bottom - PUZZLE_JIGSAW_BASE * 0.65;
+
+  return [
+    `M ${left} ${top}`,
+    `L ${topA} ${top}`,
+    `C ${left + PUZZLE_JIGSAW_BASE * 0.41} ${top} ${left + PUZZLE_JIGSAW_BASE * 0.43} ${top + topOffset} ${left + PUZZLE_JIGSAW_BASE * 0.5} ${top + topOffset}`,
+    `C ${left + PUZZLE_JIGSAW_BASE * 0.57} ${top + topOffset} ${left + PUZZLE_JIGSAW_BASE * 0.59} ${top} ${topC} ${top}`,
+    `L ${right} ${top}`,
+    `L ${right} ${rightA}`,
+    `C ${right} ${top + PUZZLE_JIGSAW_BASE * 0.41} ${right + rightOffset} ${top + PUZZLE_JIGSAW_BASE * 0.43} ${right + rightOffset} ${top + PUZZLE_JIGSAW_BASE * 0.5}`,
+    `C ${right + rightOffset} ${top + PUZZLE_JIGSAW_BASE * 0.57} ${right} ${top + PUZZLE_JIGSAW_BASE * 0.59} ${right} ${rightC}`,
+    `L ${right} ${bottom}`,
+    `L ${bottomA} ${bottom}`,
+    `C ${right - PUZZLE_JIGSAW_BASE * 0.41} ${bottom} ${right - PUZZLE_JIGSAW_BASE * 0.43} ${bottom + bottomOffset} ${right - PUZZLE_JIGSAW_BASE * 0.5} ${bottom + bottomOffset}`,
+    `C ${right - PUZZLE_JIGSAW_BASE * 0.57} ${bottom + bottomOffset} ${right - PUZZLE_JIGSAW_BASE * 0.59} ${bottom} ${bottomC} ${bottom}`,
+    `L ${left} ${bottom}`,
+    `L ${left} ${leftA}`,
+    `C ${left} ${bottom - PUZZLE_JIGSAW_BASE * 0.41} ${left + leftOffset} ${bottom - PUZZLE_JIGSAW_BASE * 0.43} ${left + leftOffset} ${bottom - PUZZLE_JIGSAW_BASE * 0.5}`,
+    `C ${left + leftOffset} ${bottom - PUZZLE_JIGSAW_BASE * 0.57} ${left} ${bottom - PUZZLE_JIGSAW_BASE * 0.59} ${left} ${leftC}`,
+    "Z",
+  ].join(" ");
+}
+
+function buildPuzzleOuterEdgePath(piece, rows, cols) {
+  const commands = [];
+  const inset = 1.25;
+  const left = inset;
+  const top = inset;
+  const right = PUZZLE_JIGSAW_BASE - inset;
+  const bottom = PUZZLE_JIGSAW_BASE - inset;
+  if (piece.correctRow === 0) {
+    commands.push(`M ${left} ${top} L ${right} ${top}`);
+  }
+  if (piece.correctCol === cols - 1) {
+    commands.push(`M ${right} ${top} L ${right} ${bottom}`);
+  }
+  if (piece.correctRow === rows - 1) {
+    commands.push(`M ${left} ${bottom} L ${right} ${bottom}`);
+  }
+  if (piece.correctCol === 0) {
+    commands.push(`M ${left} ${top} L ${left} ${bottom}`);
+  }
+  return commands.join(" ");
 }
 
 function detectIOSLikeBrowser() {
@@ -168,10 +307,145 @@ function getGameFromUrl() {
 
 function createStateForGame(gameId) {
   const normalized = normalizeGameId(gameId);
+  let baseState;
   if (normalized === "fourinarow") {
-    return createFourInARowInitialState();
+    baseState = createFourInARowInitialState();
+  } else if (normalized === "puzzle") {
+    baseState = createPuzzleInitialState({ difficulty });
+  } else {
+    baseState = createInitialState();
   }
-  return createInitialState();
+  return {
+    ...baseState,
+    starterFlipDone: false,
+    starterPlayer: null,
+    preFlipSetupReady: false,
+  };
+}
+
+function isValidPuzzlePiece(piece, puzzleState = state) {
+  const { rows, cols } = getPuzzleGridSizeFromState(puzzleState);
+  return (
+    piece &&
+    typeof piece.id === "string" &&
+    (piece.owner === "dark" || piece.owner === "light") &&
+    Number.isInteger(piece.correctRow) &&
+    Number.isInteger(piece.correctCol) &&
+    piece.correctRow >= 0 &&
+    piece.correctRow < rows &&
+    piece.correctCol >= 0 &&
+    piece.correctCol < cols
+  );
+}
+
+function normalizeStateForGame(stateLike, gameId = selectedGameId) {
+  if (!stateLike || typeof stateLike !== "object") {
+    return createStateForGame(gameId);
+  }
+  const normalizedGame = normalizeGameId(gameId);
+  if (normalizedGame === "puzzle") {
+    const { rows, cols } = getPuzzleGridSizeFromState(stateLike);
+    const expectedCount = getPuzzlePieceCountForGrid(rows);
+    if (!Array.isArray(stateLike.pieces) || stateLike.pieces.length !== expectedCount) {
+      return createStateForGame(gameId);
+    }
+    if (!stateLike.pieces.every((piece) => isValidPuzzlePiece(piece, stateLike))) {
+      return createStateForGame(gameId);
+    }
+  }
+  return {
+    ...stateLike,
+    starterFlipDone: Boolean(stateLike.starterFlipDone),
+    starterPlayer: stateLike.starterPlayer === "dark" || stateLike.starterPlayer === "light" ? stateLike.starterPlayer : null,
+    preFlipSetupReady: Boolean(stateLike.preFlipSetupReady),
+  };
+}
+
+function ensurePuzzleStateReady() {
+  if (selectedGameId !== "puzzle") {
+    return false;
+  }
+  const pieces = state?.pieces;
+  const { rows } = getPuzzleGridSizeFromState();
+  const expectedCount = getPuzzlePieceCountForGrid(rows);
+  if (!Array.isArray(pieces) || pieces.length !== expectedCount || !pieces.every((piece) => isValidPuzzlePiece(piece, state))) {
+    state = createStateForGame("puzzle");
+    selectedPuzzlePieceId = "";
+    return true;
+  }
+  const normalizedTurn = normalizePuzzleTurn(state);
+  if (normalizedTurn !== state) {
+    state = normalizedTurn;
+    return true;
+  }
+  return false;
+}
+
+function isStarterFlipPending() {
+  return !Boolean(state?.starterFlipDone);
+}
+
+function starterLabel(player) {
+  if (playMode === "puffly") {
+    return player === computerPlayer ? "Puffly (Blue)" : "You (Green)";
+  }
+  return `${playerDisplayName(player).toUpperCase()} Team`;
+}
+
+function starterFirstMoveText(player) {
+  if (playMode === "puffly") {
+    return player === computerPlayer ? "Puffly (Blue) goes first" : "You (Green) go first";
+  }
+  return `${playerDisplayName(player).toUpperCase()} goes first`;
+}
+
+function setStarterCoinFace(player) {
+  if (!starterCoin) {
+    return;
+  }
+  starterCoin.classList.remove("pending", "dark", "light");
+  if (isStarterFlipPending()) {
+    starterCoin.classList.add("pending");
+    starterCoin.textContent = "🪙";
+    return;
+  }
+  starterCoin.classList.add(player === "dark" ? "dark" : "light");
+  starterCoin.textContent = player === "dark" ? "🐻" : "🐸";
+}
+
+function updateStarterFlipButton() {
+  if (!starterFlipButton) {
+    return;
+  }
+  const pending = isStarterFlipPending();
+  const waitingForRoom = playMode === "friend" && (!remoteSession || !remoteSession.ready);
+  const canFlipAsPlayer = playMode !== "friend" || remoteSession?.color === "dark";
+  starterFlipButton.disabled = busy || !pending || waitingForRoom || !canFlipAsPlayer;
+  if (!pending) {
+    const starter = state.starterPlayer || state.currentPlayer;
+    starterFlipButton.textContent = starterFirstMoveText(starter);
+  } else {
+    starterFlipButton.textContent = "FLIP";
+  }
+  setStarterCoinFace(state?.starterPlayer || state?.currentPlayer);
+}
+
+function schedulePuzzlePreFlipGeometryRefresh() {
+  if (selectedGameId !== "puzzle" || !isStarterFlipPending() || puzzlePreFlipGeometryRefreshScheduled) {
+    return;
+  }
+  puzzlePreFlipGeometryRefreshScheduled = true;
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      if (selectedGameId !== "puzzle" || !isStarterFlipPending()) {
+        puzzlePreFlipGeometryRefreshScheduled = false;
+        return;
+      }
+      lockBoardGeometry();
+      renderPuzzleBoard();
+      puzzlePreFlipGeometryRefreshScheduled = false;
+    });
+  });
 }
 
 function updateAppTitle() {
@@ -183,7 +457,7 @@ function updateAppTitle() {
     return;
   }
   if (selectedGameId === "puzzle") {
-    appTitle.textContent = "Puffly Puzzle (Coming Soon)";
+    appTitle.textContent = "Puffly Puzzle";
     return;
   }
   appTitle.textContent = "Puffly Checkers";
@@ -281,6 +555,18 @@ function lockBoardGeometry() {
     boardElement.style.height = `${cell * FOUR_ROWS + fourBoardChrome}px`;
     boardElement.style.gridTemplateColumns = `repeat(${FOUR_COLS}, ${cell}px)`;
     boardElement.style.gridTemplateRows = `repeat(${FOUR_ROWS}, ${cell}px)`;
+    return;
+  }
+  if (selectedGameId === "puzzle") {
+    const { rows, cols } = getPuzzleGridSizeFromState();
+    const usable = Math.floor(Math.min(innerContentWidth, innerContentHeight));
+    const cell = Math.max(1, Math.floor(usable / Math.max(rows, cols)));
+    const boardWidth = cell * cols;
+    const boardHeight = cell * rows;
+    boardElement.style.width = `${boardWidth}px`;
+    boardElement.style.height = `${boardHeight}px`;
+    boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
+    boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
     return;
   }
 
@@ -437,11 +723,21 @@ function speakPhrase(text) {
   speak(text);
 }
 
-function speakPhraseReliable(text) {
+function speakPhraseReliable(text, options = {}) {
   if (!text) {
     return;
   }
+  const forceRepeat = Boolean(options.forceRepeat);
+  if (forceRepeat) {
+    // Allow the same phrase to be spoken back-to-back for repeat mistakes.
+    lastSpokenPhrase = "";
+    lastSpokenAt = 0;
+  }
   pendingPrioritySpeech = text;
+  if (forceRepeat) {
+    speak(text);
+    return;
+  }
   speakPhrase(text);
 }
 
@@ -520,6 +816,217 @@ function inferRemoteDropFromStates(previousState, nextState) {
   return latest;
 }
 
+function checkersUndoStateKey(state) {
+  if (!state?.board) {
+    return "";
+  }
+  const boardKey = state.board
+    .map((row) =>
+      row
+        .map((piece) => {
+          if (!piece) {
+            return ".";
+          }
+          return `${piece.player === "dark" ? "d" : "l"}${piece.king ? "k" : "m"}`;
+        })
+        .join(""),
+    )
+    .join("|");
+  const forced = state.forcedPiece ? `${state.forcedPiece.row},${state.forcedPiece.col}` : "-";
+  return `${boardKey}::${state.currentPlayer || "-"}::${forced}`;
+}
+
+function inferUndoCheckersSequence(currentState, targetState, maxDepth = 8) {
+  if (!currentState || !targetState || !currentState.board || !targetState.board) {
+    return [];
+  }
+  const visited = new Set();
+
+  function dfs(stateLike, depth) {
+    if (statesEquivalentForSync(stateLike, currentState)) {
+      return [];
+    }
+    if (depth <= 0) {
+      return null;
+    }
+    const key = checkersUndoStateKey(stateLike);
+    if (visited.has(key)) {
+      return null;
+    }
+    visited.add(key);
+    const legal = getAllLegalMovesForPlayer(stateLike, stateLike.currentPlayer).allMoves;
+    for (const move of legal) {
+      const result = applyMove(stateLike, move);
+      const tail = dfs(result.nextState, depth - 1);
+      if (tail) {
+        return [move, ...tail];
+      }
+    }
+    return null;
+  }
+
+  const found = dfs(targetState, maxDepth);
+  if (found && found.length > 0) {
+    const forwardStates = [clone(targetState)];
+    const forwardMeta = [];
+    let simState = clone(targetState);
+    for (const move of found) {
+      const mover = simState.currentPlayer || null;
+      forwardMeta.push({ move, mover });
+      simState = applyMove(simState, move).nextState;
+      forwardStates.push(clone(simState));
+    }
+    const reverseMoves = [];
+    for (let idx = found.length - 1; idx >= 0; idx -= 1) {
+      const { move, mover } = forwardMeta[idx];
+      reverseMoves.push({
+        from: { ...move.to },
+        to: { ...move.from },
+        capture: move.capture ? { ...move.capture } : null,
+        isCapture: Boolean(move.capture),
+        mover,
+        restoreState: clone(forwardStates[idx]),
+      });
+    }
+    return reverseMoves;
+  }
+
+  const fallbackForward = inferRemoteMoveFromStates(targetState, currentState);
+  if (!fallbackForward) {
+    return [];
+  }
+  return [
+    {
+      ...fallbackForward,
+      from: { ...fallbackForward.to },
+      to: { ...fallbackForward.from },
+      isCapture: Boolean(fallbackForward.capture),
+      mover:
+        currentState?.board?.[fallbackForward.to.row]?.[fallbackForward.to.col]?.player ||
+        targetState?.currentPlayer ||
+        null,
+      restoreState: clone(targetState),
+    },
+  ];
+}
+
+function inferUndoFourDrop(currentState, targetState) {
+  if (!currentState?.grid || !targetState?.grid) {
+    return null;
+  }
+  for (let row = FOUR_ROWS - 1; row >= 0; row -= 1) {
+    for (let col = 0; col < FOUR_COLS; col += 1) {
+      const currentCell = currentState.grid[row]?.[col] || null;
+      const targetCell = targetState.grid[row]?.[col] || null;
+      if (currentCell && !targetCell) {
+        return { player: currentCell, row, col };
+      }
+    }
+  }
+  return null;
+}
+
+function fourStateEquivalent(a, b) {
+  if (!a?.grid || !b?.grid) {
+    return false;
+  }
+  for (let row = 0; row < FOUR_ROWS; row += 1) {
+    for (let col = 0; col < FOUR_COLS; col += 1) {
+      if ((a.grid[row]?.[col] || null) !== (b.grid[row]?.[col] || null)) {
+        return false;
+      }
+    }
+  }
+  return (
+    (a.currentPlayer || null) === (b.currentPlayer || null) &&
+    (a.winner || null) === (b.winner || null) &&
+    Boolean(a.draw) === Boolean(b.draw)
+  );
+}
+
+function inferUndoFourSequence(currentState, targetState, maxDepth = 4) {
+  if (!currentState || !targetState || !currentState.grid || !targetState.grid) {
+    return [];
+  }
+  const visited = new Set();
+
+  function stateKey(stateLike) {
+    const gridKey = stateLike.grid.map((row) => row.map((cell) => cell || ".").join("")).join("|");
+    return `${gridKey}::${stateLike.currentPlayer || "-"}::${stateLike.winner || "-"}::${stateLike.draw ? "1" : "0"}`;
+  }
+
+  function dfs(stateLike, depth) {
+    if (fourStateEquivalent(stateLike, currentState)) {
+      return [];
+    }
+    if (depth <= 0) {
+      return null;
+    }
+    const key = stateKey(stateLike);
+    if (visited.has(key)) {
+      return null;
+    }
+    visited.add(key);
+    const droppable = getDroppableColumns(stateLike.grid);
+    for (const col of droppable) {
+      const result = applyFourInARowDrop(stateLike, col);
+      if (!result.ok) {
+        continue;
+      }
+      const tail = dfs(result.nextState, depth - 1);
+      if (tail) {
+        return [{ col, row: result.row, player: stateLike.currentPlayer, nextState: result.nextState }, ...tail];
+      }
+    }
+    return null;
+  }
+
+  const forward = dfs(targetState, maxDepth);
+  if (!forward || forward.length === 0) {
+    const one = inferUndoFourDrop(currentState, targetState);
+    if (!one) {
+      return [];
+    }
+    return [{ ...one, restoreState: clone(targetState) }];
+  }
+
+  const reverse = [];
+  let restore = clone(currentState);
+  for (let i = forward.length - 1; i >= 0; i -= 1) {
+    const step = forward[i];
+    reverse.push({
+      player: step.player,
+      row: step.row,
+      col: step.col,
+      restoreState: clone(i === 0 ? targetState : forward[i - 1].nextState),
+    });
+    restore = i === 0 ? clone(targetState) : clone(forward[i - 1].nextState);
+  }
+  void restore;
+  return reverse;
+}
+
+function inferUndoPuzzlePlacement(currentState, targetState) {
+  const currentPieces = Array.isArray(currentState?.pieces) ? currentState.pieces : [];
+  const targetMap = new Map((Array.isArray(targetState?.pieces) ? targetState.pieces : []).map((piece) => [piece.id, piece]));
+  for (const piece of currentPieces) {
+    if (!piece?.placed) {
+      continue;
+    }
+    const targetPiece = targetMap.get(piece.id);
+    if (!targetPiece || targetPiece.placed) {
+      continue;
+    }
+    return {
+      pieceId: piece.id,
+      owner: piece.owner,
+      row: piece.placedRow,
+      col: piece.placedCol,
+    };
+  }
+  return null;
+}
+
 function speakFromStatus(statusMessage) {
   let phrase = "";
   if (statusMessage === "Puffly is thinking...") {
@@ -547,6 +1054,16 @@ function speakFromStatus(statusMessage) {
     phrase = "New game. Puffly moves first.";
   } else if (statusMessage === "Puffly opens the game.") {
     phrase = "Puffly starts the game.";
+  } else if (statusMessage === "Flip to see who goes first.") {
+    phrase = "Flip to see who goes first.";
+  } else if (statusMessage.includes("wins the flip and goes first")) {
+    phrase = statusMessage.replace("wins the flip and goes first", "goes first");
+  } else if (statusMessage === "Move closer to the matching slot to snap.") {
+    phrase = "Move closer to the matching slot.";
+  } else if (statusMessage === "Doesn't fit there.") {
+    phrase = "Doesn't fit.";
+  } else if (statusMessage === "Puzzle complete!") {
+    phrase = "Puzzle complete.";
   }
   speakPhrase(phrase);
 }
@@ -616,7 +1133,107 @@ function renderCapturedPile(container, count, tokenClass) {
   }
 }
 
+function createPuzzlePieceElement(piece) {
+  const pieceEl = document.createElement("button");
+  pieceEl.type = "button";
+  pieceEl.className = `puzzle-piece ${piece.owner}`;
+  const { rows, cols } = getPuzzleGridSizeFromState();
+  const edges = getPuzzleEdgeProfiles(piece.correctRow, piece.correctCol, rows, cols);
+  const overlapPriority =
+    (edges.right === 1 ? 4 : 0) +
+    (edges.bottom === 1 ? 3 : 0) +
+    (edges.left === 1 ? 2 : 0) +
+    (edges.top === 1 ? 1 : 0);
+  pieceEl.style.zIndex = String(20 + overlapPriority);
+  if (piece.id === selectedPuzzlePieceId) {
+    pieceEl.classList.add("selected");
+  }
+  pieceEl.dataset.pieceId = piece.id;
+  pieceEl.draggable = false;
+  const clipId = `pz-clip-${piece.id}`;
+  const piecePath = buildPuzzlePiecePath(piece);
+  const outerEdgePath = buildPuzzleOuterEdgePath(piece, rows, cols);
+  const puzzleSvg = document.createElementNS(SVG_NS, "svg");
+  puzzleSvg.setAttribute("class", "puzzle-piece-svg");
+  puzzleSvg.setAttribute("viewBox", `0 0 ${PUZZLE_JIGSAW_BASE} ${PUZZLE_JIGSAW_BASE}`);
+  puzzleSvg.setAttribute("aria-hidden", "true");
+
+  const defs = document.createElementNS(SVG_NS, "defs");
+  const clipPath = document.createElementNS(SVG_NS, "clipPath");
+  clipPath.setAttribute("id", clipId);
+  const clipShape = document.createElementNS(SVG_NS, "path");
+  clipShape.setAttribute("d", piecePath);
+  clipPath.appendChild(clipShape);
+  defs.appendChild(clipPath);
+  puzzleSvg.appendChild(defs);
+
+  const image = document.createElementNS(SVG_NS, "image");
+  image.setAttribute("href", PUZZLE_IMAGE_URL);
+  image.setAttribute("x", String(-piece.correctCol * PUZZLE_JIGSAW_BASE));
+  image.setAttribute("y", String(-piece.correctRow * PUZZLE_JIGSAW_BASE));
+  image.setAttribute("width", String(PUZZLE_JIGSAW_BASE * cols));
+  image.setAttribute("height", String(PUZZLE_JIGSAW_BASE * rows));
+  image.setAttribute("clip-path", `url(#${clipId})`);
+  image.setAttribute("preserveAspectRatio", "none");
+  puzzleSvg.appendChild(image);
+
+  const seam = document.createElementNS(SVG_NS, "path");
+  seam.setAttribute("class", "puzzle-piece-seam");
+  seam.setAttribute("d", piecePath);
+  puzzleSvg.appendChild(seam);
+
+  if (outerEdgePath) {
+    const edgeGlow = document.createElementNS(SVG_NS, "path");
+    edgeGlow.setAttribute("class", "puzzle-piece-edge-glow");
+    edgeGlow.setAttribute("d", outerEdgePath);
+    puzzleSvg.appendChild(edgeGlow);
+  }
+
+  const outline = document.createElementNS(SVG_NS, "path");
+  outline.setAttribute("class", "puzzle-piece-outline");
+  outline.setAttribute("d", piecePath);
+  puzzleSvg.appendChild(outline);
+  pieceEl.appendChild(puzzleSvg);
+
+  if (piece.correctRow === 0 || piece.correctCol === 0 || piece.correctRow === rows - 1 || piece.correctCol === cols - 1) {
+    pieceEl.classList.add("edge-piece");
+  }
+  return pieceEl;
+}
+
+function renderPuzzleTray(container, owner) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  const pending = getPuzzleRemainingByOwner(state, owner);
+  if (pending.length === 0) {
+    const done = document.createElement("span");
+    done.className = "captured-empty";
+    done.textContent = "All placed";
+    container.appendChild(done);
+    return;
+  }
+  container.classList.add("puzzle-tray");
+  for (const piece of pending) {
+    container.appendChild(createPuzzlePieceElement(piece));
+  }
+}
+
 function renderCapturedPiles() {
+  blueCapturedPile?.classList.remove("puzzle-tray");
+  greenCapturedPile?.classList.remove("puzzle-tray");
+  if (selectedGameId === "puzzle") {
+    if (blueCapturedLabel) {
+      blueCapturedLabel.textContent = "BLUE Tray";
+    }
+    if (greenCapturedLabel) {
+      greenCapturedLabel.textContent = "GREEN Tray";
+    }
+    renderPuzzleTray(blueCapturedPile, "dark");
+    renderPuzzleTray(greenCapturedPile, "light");
+    return;
+  }
   if (selectedGameId === "fourinarow") {
     if (blueCapturedLabel) {
       blueCapturedLabel.textContent = "BLUE Remaining";
@@ -642,7 +1259,7 @@ function updateDifficultyButtons() {
   for (const button of difficultyButtons) {
     const level = button.dataset.difficulty;
     button.classList.toggle("active", level === difficulty);
-    button.disabled = busy || playMode !== "puffly" || selectedGameId === "puzzle";
+    button.disabled = busy || playMode !== "puffly";
   }
 }
 
@@ -683,6 +1300,11 @@ function recordMove(player, move) {
   moveHistory.push(`${mover}: ${squareText(move.from)} -> ${squareText(move.to)}${captureTag}`);
 }
 
+function recordPuzzlePlacement(player, piece, row, col) {
+  const mover = playMode === "friend" ? playerDisplayName(player).toUpperCase() : player === humanPlayer ? "You" : "Puffly";
+  moveHistory.push(`${mover}: ${piece.id} -> (${row + 1},${col + 1})`);
+}
+
 function showCelebration() {
   if (!state.winner || winnerAnnounced === state.winner) {
     return;
@@ -705,6 +1327,19 @@ function showCelebration() {
   } else {
     speakPhrase(state.winner === humanPlayer ? "You win." : "Puffly wins.");
   }
+}
+
+function showPuzzleCompletionCelebration() {
+  if (!state.winner || winnerAnnounced === "puzzle-complete") {
+    return;
+  }
+  winnerAnnounced = "puzzle-complete";
+  celebrationTitle.textContent = "Puzzle Complete!";
+  celebrationSubtitle.textContent = "Amazing teamwork, grandpals!";
+  celebrationOverlay.classList.remove("hidden");
+  playWinFx(true);
+  playCelebrationAudio();
+  speakPhrase("Puzzle complete! Great job!");
 }
 
 function hideCelebration() {
@@ -1084,6 +1719,7 @@ function updateRulesForMode() {
     return;
   }
   const isFour = selectedGameId === "fourinarow";
+  const isPuzzle = selectedGameId === "puzzle";
   if (playMode === "friend") {
     ruleLine1.classList.add("hidden");
     const myColor = remoteSession?.color ? playerDisplayName(remoteSession.color).toUpperCase() : "assigned after joining";
@@ -1093,7 +1729,10 @@ function updateRulesForMode() {
         : `Your team color will be ${myColor}.`;
   } else {
     ruleLine1.classList.remove("hidden");
-    if (isFour) {
+    if (isPuzzle) {
+      ruleLine1.textContent = "Blue Puffly Team and Green Team solve together.";
+      ruleLine2.textContent = "Flip to decide who places the first piece.";
+    } else if (isFour) {
       ruleLine1.textContent = "Blue Puffly Team drops first and is computer controlled.";
       ruleLine2.textContent = "Green team is your side.";
     } else {
@@ -1101,7 +1740,10 @@ function updateRulesForMode() {
       ruleLine2.textContent = "Green Frog Team is your side.";
     }
   }
-  if (isFour) {
+  if (isPuzzle) {
+    ruleLine3.textContent = "Drag a tray piece near its matching slot to snap.";
+    ruleLine4.textContent = "Outer-edge pieces glow yellow for easier starts.";
+  } else if (isFour) {
     ruleLine3.textContent = "Tap one of the highlighted slots to drop your piece.";
     ruleLine4.textContent = "Connect 4 in any direction to win.";
   } else {
@@ -1119,7 +1761,33 @@ function getFriendStatusText(session) {
   if (!session.ready) {
     return `${base}. Waiting for opponent...`;
   }
+  if (isStarterFlipPending()) {
+    return `${base}. Blue flips to see who goes first.`;
+  }
   return `${base}. You are ${playerDisplayName(session.color).toUpperCase()}.`;
+}
+
+function updatePuzzleDebugStrip(statusMessage) {
+  if (!puzzleDebugStrip) {
+    return;
+  }
+  if (!PUZZLE_DEBUG_ENABLED) {
+    puzzleDebugStrip.classList.add("hidden");
+    return;
+  }
+  if (selectedGameId !== "puzzle") {
+    puzzleDebugStrip.classList.add("hidden");
+    return;
+  }
+  const stateBlue = getPuzzleRemainingByOwner(state, "dark").length;
+  const stateGreen = getPuzzleRemainingByOwner(state, "light").length;
+  const domBlue = blueCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
+  const domGreen = greenCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
+  const total = (state?.pieces || []).length;
+  const flip = isStarterFlipPending() ? "pending" : "done";
+  puzzleDebugStrip.textContent =
+    `DBG puzzle | mode:${playMode} | flip:${flip} | state(B:${stateBlue},G:${stateGreen},total:${total}) | dom(B:${domBlue},G:${domGreen}) | sel:${selectedPuzzlePieceId || "-"} | msg:${statusMessage}`;
+  puzzleDebugStrip.classList.remove("hidden");
 }
 
 function stopRoomPolling() {
@@ -1130,6 +1798,7 @@ function stopRoomPolling() {
 }
 
 function resetSessionForModeSwitch() {
+  clearPuzzleDrag();
   stopRoomPolling();
   if (remoteSession && voiceJoined) {
     apiPost("/api/rooms/voice/leave", {
@@ -1146,6 +1815,7 @@ function resetSessionForModeSwitch() {
 }
 
 function resetFriendLocalState(message = "Tap Create & Invite to start a room.") {
+  clearPuzzleDrag();
   stopRoomPolling();
   if (remoteSession && voiceJoined) {
     apiPost("/api/rooms/voice/leave", {
@@ -1170,7 +1840,7 @@ function resetFriendLocalState(message = "Tap Create & Invite to start a room.")
   setFriendStatus(message);
   updateRulesForMode();
   renderRoomChat(true);
-  render(selectedGameId === "puzzle" ? `${getGameConfig(selectedGameId).title} gameplay is coming next.` : "Friend mode: connect to a room.");
+  render("Friend mode: connect to a room.");
 }
 
 async function apiPost(path, payload) {
@@ -1476,7 +2146,8 @@ async function syncRoomState() {
         }
       }
     }
-    state = data.state;
+    state = normalizeStateForGame(data.state, selectedGameId);
+    selectedPuzzlePieceId = "";
     const message = remoteSession.ready
       ? didVersionChange
         ? "Room synchronized."
@@ -1515,7 +2186,8 @@ function hydrateRoomSession(data) {
     updateGameButtons();
     updateAppTitle();
   }
-  state = data.state;
+  state = normalizeStateForGame(data.state, selectedGameId);
+  selectedPuzzlePieceId = "";
   moveHistory = [];
   undoSnapshots = [];
   winnerAnnounced = null;
@@ -1608,7 +2280,9 @@ function setPlayMode(mode) {
   updateSpeechUnlockOverlay();
   hideRulesPanel();
   resetSessionForModeSwitch();
+  puzzleTrayBootstrapAttempted = false;
   state = createStateForGame(selectedGameId);
+  selectedPuzzlePieceId = "";
   winnerAnnounced = null;
   lastSpokenPhrase = "";
   lastTurnSpoken = "";
@@ -1625,11 +2299,7 @@ function setPlayMode(mode) {
     );
     updateRulesForMode();
     renderRoomChat(true);
-    render(
-      selectedGameId === "puzzle"
-        ? `${getGameConfig(selectedGameId).title}: friend room scaffolding ready.`
-        : "Friend mode: connect to a room.",
-    );
+    render("Friend mode: connect to a room.");
     triedStoredFriendReconnect = false;
     tryReconnectStoredFriendSession().catch(() => {});
     return;
@@ -1640,12 +2310,7 @@ function setPlayMode(mode) {
   setChatUnreadCount(0);
   renderRoomChat(true);
   updateRulesForMode();
-  if (selectedGameId === "puzzle") {
-    render(`${getGameConfig(selectedGameId).title}: Puffly mode scaffolding ready.`);
-    return;
-  }
-  render(selectedGameId === "fourinarow" ? "New Four-in-a-Row game. Puffly opens." : "New game started. Puffly opens.");
-  runComputerTurn();
+  render("Flip to see who goes first.");
 }
 
 function setPufflyLookAtPoint(clientX, clientY) {
@@ -1721,6 +2386,74 @@ function triggerPufflyCaptureCheer() {
   }, 460);
 }
 
+async function flipStarter() {
+  ensurePuzzleStateReady();
+  if (busy || !isStarterFlipPending()) {
+    return;
+  }
+  if (playMode === "friend") {
+    if (!remoteSession) {
+      render("Connect to a room first.");
+      return;
+    }
+    if (!remoteSession.ready) {
+      render("Waiting for opponent to join.");
+      return;
+    }
+    if (remoteSession.color !== "dark") {
+      render("Blue flips to see who goes first.");
+      return;
+    }
+  }
+
+  ensureAudioContext();
+  busy = true;
+  updateStarterFlipButton();
+  starterCoin?.classList.add("flipping");
+  render("Flipping to see who goes first...");
+  await sleep(STARTER_FLIP_ANIMATION_MS);
+
+  const winner = Math.random() < 0.5 ? "dark" : "light";
+  const nextState = normalizeStateForGame(
+    {
+      ...state,
+      currentPlayer: winner,
+      starterFlipDone: true,
+      starterPlayer: winner,
+      preFlipSetupReady: false,
+      selectedSquare: null,
+      forcedPiece: null,
+      lastMove: null,
+    },
+    selectedGameId,
+  );
+  if (selectedGameId === "fourinarow") {
+    nextState.winner = null;
+    nextState.draw = false;
+    nextState.winningLine = [];
+  }
+  const statusText = `${starterLabel(winner)} wins the flip and goes first.`;
+
+  if (playMode === "friend") {
+    try {
+      await submitRemoteMove(nextState);
+      render(statusText);
+    } catch (error) {
+      await syncRoomState().catch(() => {});
+      render(error?.message || "Flip sync failed.");
+    }
+  } else {
+    state = nextState;
+    render(statusText);
+  }
+  busy = false;
+  starterCoin?.classList.remove("flipping");
+  render(lastStatusMessage);
+  if (playMode === "puffly" && state.currentPlayer === computerPlayer) {
+    await runComputerTurn();
+  }
+}
+
 function createFourPieceElement(player) {
   const pieceEl = document.createElement("button");
   pieceEl.type = "button";
@@ -1762,27 +2495,327 @@ function renderFourInARowBoard() {
   }
 }
 
+function renderPuzzleBoard() {
+  const { rows, cols } = getPuzzleGridSizeFromState();
+  boardElement.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  boardElement.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  const occupied = new Map();
+  for (const piece of state.pieces || []) {
+    if (piece.placed && piece.placedRow !== null && piece.placedCol !== null) {
+      occupied.set(key(piece.placedRow, piece.placedCol), piece);
+    }
+  }
+  boardElement.innerHTML = "";
+  boardElement.classList.add("puzzle-board");
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const cell = document.createElement("div");
+      cell.className = "square puzzle-cell";
+      cell.dataset.row = String(row);
+      cell.dataset.col = String(col);
+      const piece = occupied.get(key(row, col));
+      if (piece) {
+        cell.classList.add("locked");
+        cell.appendChild(createPuzzlePieceElement(piece));
+      }
+      boardElement.appendChild(cell);
+    }
+  }
+}
+
+function playSnapSound() {
+  // Softer tactile "fit" sound: one body thunk + short wood click.
+  beep(170, 0.085, "sine", 0.07);
+  window.setTimeout(() => beep(310, 0.03, "triangle", 0.04), 52);
+}
+
+function selectPuzzlePiece(pieceId) {
+  if (busy || selectedGameId !== "puzzle" || isStarterFlipPending()) {
+    return;
+  }
+  const piece = getPuzzlePiece(state, pieceId);
+  if (!piece || piece.placed) {
+    return;
+  }
+  if (playMode === "friend" && (!remoteSession || state.currentPlayer !== remoteSession.color)) {
+    render("Waiting for your friend...");
+    return;
+  }
+  if (piece.owner !== state.currentPlayer) {
+    playInvalidAudio();
+    speakPhraseReliable("Not your piece.", { forceRepeat: true });
+    render(`Select a ${playerDisplayName(state.currentPlayer).toUpperCase()} tray piece.`);
+    return;
+  }
+  selectedPuzzlePieceId = piece.id;
+  render("Piece selected. Tap its matching slot.");
+}
+
+function puzzleCellCenter(row, col) {
+  const boardRect = boardElement.getBoundingClientRect();
+  const { cols } = getPuzzleGridSizeFromState();
+  const cellSize = boardRect.width / cols;
+  return {
+    x: boardRect.left + (col + 0.5) * cellSize,
+    y: boardRect.top + (row + 0.5) * cellSize,
+    cellSize,
+  };
+}
+
+async function submitPuzzlePlacement(pieceId, row, col, options = {}) {
+  const piece = getPuzzlePiece(state, pieceId);
+  if (!piece || piece.placed) {
+    render("That piece is already placed.");
+    return;
+  }
+  const canAct = playMode !== "friend" || (remoteSession && state.currentPlayer === remoteSession.color);
+  if (!canAct) {
+    render("Waiting for your friend...");
+    return;
+  }
+  const expectedOwner = state.currentPlayer;
+  if (piece.owner !== expectedOwner) {
+    playInvalidAudio();
+    speakPhraseReliable("Not your piece.", { forceRepeat: true });
+    render(`Place a ${playerDisplayName(expectedOwner).toUpperCase()} tray piece.`);
+    return;
+  }
+  if (row !== piece.correctRow || col !== piece.correctCol) {
+    playInvalidAudio();
+    speakPhraseReliable("Doesn't fit.", { forceRepeat: true });
+    render("Doesn't fit there.");
+    return;
+  }
+
+  busy = true;
+  if (!options.skipAnimation) {
+    await animatePuzzleUserPlacement(pieceId, row, col);
+  }
+  const result = applyPuzzlePlacement(state, pieceId, row, col);
+  if (!result.ok) {
+    busy = false;
+    render(result.message || "That puzzle move is not valid.");
+    return;
+  }
+  selectedPuzzlePieceId = "";
+  const targetCell = boardElement.querySelector(`.puzzle-cell[data-row="${row}"][data-col="${col}"]`);
+  await animateDestinationBounce(targetCell);
+  recordPuzzlePlacement(state.currentPlayer, piece, row, col);
+  playSnapSound();
+  if (playMode === "friend") {
+    try {
+      await submitRemoteMove(result.nextState);
+      render(result.message);
+    } catch (error) {
+      await syncRoomState().catch(() => {});
+      render(error?.message || "Move sync failed.");
+    }
+  } else {
+    state = result.nextState;
+    render(result.message);
+  }
+  busy = false;
+  render(lastStatusMessage);
+  if (playMode === "puffly") {
+    await runComputerTurn();
+  }
+}
+
+function clearPuzzleDrag() {
+  // Legacy no-op: drag-ghost interaction removed for puzzle stability.
+}
+
+async function animatePuzzleAutoPlacement(pieceId, row, col) {
+  const piece = getPuzzlePiece(state, pieceId);
+  if (!piece) {
+    await sleep(Math.max(520, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.6)));
+    return;
+  }
+  // Right after flip, iPad/Safari can report stale tray layout for one frame.
+  // Wait for paint so the first Puffly move animates reliably too.
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  const center = puzzleCellCenter(row, col);
+  const getStartRect = () => (piece.owner === "dark" ? blueCapturedTray?.getBoundingClientRect() : greenCapturedTray?.getBoundingClientRect());
+  let startRect = getStartRect();
+  if (!startRect || startRect.width < 8 || startRect.height < 8) {
+    await sleep(120);
+    startRect = getStartRect();
+  }
+  if (!startRect) {
+    await sleep(Math.max(520, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.6)));
+    return;
+  }
+  const sourcePiece = document.querySelector(
+    `${piece.owner === "dark" ? "#blue-captured-pile" : "#green-captured-pile"} .puzzle-piece[data-piece-id="${pieceId}"]`,
+  );
+  const ghost = sourcePiece instanceof HTMLElement ? sourcePiece.cloneNode(true) : createPuzzlePieceElement(piece);
+  ghost.classList.add("drag-ghost");
+  ghost.classList.add("puffly-auto");
+  const ghostSize = Math.max(64, Math.min(startRect.width, startRect.height || startRect.width));
+  ghost.style.width = `${ghostSize}px`;
+  ghost.style.height = `${ghostSize}px`;
+  const startLeft = startRect.left + startRect.width / 2 - ghostSize / 2;
+  const startTop = startRect.top + startRect.height / 2 - ghostSize / 2;
+  ghost.style.left = `${startLeft}px`;
+  ghost.style.top = `${startTop}px`;
+  ghost.style.transition = `transform ${PUFFLY_PUZZLE_PLACE_MS}ms ease-in-out`;
+  document.body.appendChild(ghost);
+  if (sourcePiece instanceof HTMLElement) {
+    sourcePiece.style.opacity = "0.25";
+  }
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  const dx = center.x - startLeft - ghostSize / 2;
+  const dy = center.y - startTop - ghostSize / 2;
+  ghost.style.transform = `translate(${dx}px, ${dy}px)`;
+  await sleep(PUFFLY_PUZZLE_PLACE_MS);
+  if (sourcePiece instanceof HTMLElement) {
+    sourcePiece.style.opacity = "";
+  }
+  ghost.remove();
+}
+
+async function animatePuzzleUserPlacement(pieceId, row, col) {
+  const piece = getPuzzlePiece(state, pieceId);
+  if (!piece) {
+    return;
+  }
+  const center = puzzleCellCenter(row, col);
+  const sourcePiece = document.querySelector(
+    `${piece.owner === "dark" ? "#blue-captured-pile" : "#green-captured-pile"} .puzzle-piece[data-piece-id="${pieceId}"]`,
+  );
+  const sourceRect = sourcePiece instanceof HTMLElement
+    ? sourcePiece.getBoundingClientRect()
+    : (piece.owner === "dark" ? blueCapturedTray?.getBoundingClientRect() : greenCapturedTray?.getBoundingClientRect());
+  if (!sourceRect) {
+    return;
+  }
+  const ghost = sourcePiece instanceof HTMLElement ? sourcePiece.cloneNode(true) : createPuzzlePieceElement(piece);
+  ghost.classList.add("drag-ghost");
+  const ghostSize = Math.max(64, Math.min(sourceRect.width, sourceRect.height || sourceRect.width));
+  ghost.style.width = `${ghostSize}px`;
+  ghost.style.height = `${ghostSize}px`;
+  const startLeft = sourceRect.left + sourceRect.width / 2 - ghostSize / 2;
+  const startTop = sourceRect.top + sourceRect.height / 2 - ghostSize / 2;
+  ghost.style.left = `${startLeft}px`;
+  ghost.style.top = `${startTop}px`;
+  ghost.style.transition = `transform ${Math.max(460, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.65))}ms ease-in-out`;
+  document.body.appendChild(ghost);
+  if (sourcePiece instanceof HTMLElement) {
+    sourcePiece.style.opacity = "0.25";
+  }
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  const dx = center.x - startLeft - ghostSize / 2;
+  const dy = center.y - startTop - ghostSize / 2;
+  ghost.style.transform = `translate(${dx}px, ${dy}px)`;
+  await sleep(Math.max(460, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.65)));
+  if (sourcePiece instanceof HTMLElement) {
+    sourcePiece.style.opacity = "";
+  }
+  ghost.remove();
+}
+
+function beginPuzzleDrag(pieceId, source, event) {
+  void source;
+  void event;
+  selectPuzzlePiece(pieceId);
+}
+
 function render(statusMessage = "Make your move.") {
   lastStatusMessage = statusMessage;
+  const isPuzzleGame = selectedGameId === "puzzle";
+  undoButton?.classList.toggle("hidden", isPuzzleGame);
+  controlsPanel?.classList.toggle("puzzle-no-undo", isPuzzleGame);
+  document.body.classList.toggle("puzzle-game", selectedGameId === "puzzle");
+  ensurePuzzleStateReady();
   lockBoardGeometry();
   boardElement.classList.toggle("fourinarow", selectedGameId === "fourinarow");
-  boardElement.setAttribute("aria-label", selectedGameId === "fourinarow" ? "Four-in-a-Row board" : "Checkers board");
+  boardElement.classList.toggle("puzzle-board", selectedGameId === "puzzle");
+  boardElement.setAttribute(
+    "aria-label",
+    selectedGameId === "fourinarow" ? "Four-in-a-Row board" : selectedGameId === "puzzle" ? "Puzzle board" : "Checkers board",
+  );
   if (selectedGameId === "puzzle") {
-    const game = getGameConfig(selectedGameId);
-    boardElement.innerHTML = "";
-    const placeholder = document.createElement("div");
-    placeholder.className = "game-placeholder";
-    const modeLabel = playMode === "friend" ? "Play with a Friend" : "Practice with Puffly";
-    placeholder.textContent = `${game.title} (${modeLabel}) is scaffolded for pilot setup. Gameplay wiring comes next.`;
-    boardElement.appendChild(placeholder);
+    const isPreFlip = isStarterFlipPending();
+    if (!isPreFlip) {
+      puzzlePreFlipGeometryRefreshScheduled = false;
+    }
+    if (isPreFlip) {
+      const darkRemaining = getPuzzleRemainingByOwner(state, "dark").length;
+      const lightRemaining = getPuzzleRemainingByOwner(state, "light").length;
+      const { rows } = getPuzzleGridSizeFromState();
+      const pieceCount = getPuzzlePieceCountForGrid(rows);
+      const expectedDark = Math.floor(pieceCount / 2);
+      const expectedLight = pieceCount - expectedDark;
+      if (darkRemaining !== expectedDark || lightRemaining !== expectedLight) {
+        state = createStateForGame("puzzle");
+        selectedPuzzlePieceId = "";
+      }
+    }
+    renderPuzzleBoard();
+    schedulePuzzlePreFlipGeometryRefresh();
     renderCapturedPiles();
-    undoButton.disabled = true;
+    updatePuzzleDebugStrip(statusMessage);
+    if (isPreFlip) {
+      let domBlueCount = blueCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
+      let domGreenCount = greenCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
+      const stateBlueRemaining = getPuzzleRemainingByOwner(state, "dark").length;
+      const stateGreenRemaining = getPuzzleRemainingByOwner(state, "light").length;
+      if ((domBlueCount !== stateBlueRemaining || domGreenCount !== stateGreenRemaining) && !puzzleTrayBootstrapAttempted) {
+        puzzleTrayBootstrapAttempted = true;
+        // One-pass hard bootstrap without recursive render calls.
+        state = createStateForGame("puzzle");
+        selectedPuzzlePieceId = "";
+        renderPuzzleBoard();
+        renderCapturedPiles();
+        updatePuzzleDebugStrip(statusMessage);
+        domBlueCount = blueCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
+        domGreenCount = greenCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
+        console.warn(
+          "[PuzzleBootstrap] pre-flip tray mismatch; forced hard bootstrap",
+          { domBlueCount, domGreenCount, stateBlueRemaining, stateGreenRemaining, playMode },
+        );
+      }
+    } else {
+      puzzleTrayBootstrapAttempted = false;
+    }
+    const totalRemaining = (state.pieces || []).filter((piece) => !piece.placed).length;
+    if (totalRemaining === 0 && !state.winner && !puzzleTrayBootstrapAttempted) {
+      puzzleTrayBootstrapAttempted = true;
+      state = createStateForGame("puzzle");
+      selectedPuzzlePieceId = "";
+      render("Flip to see who goes first.");
+      return;
+    }
+    if (totalRemaining > 0) {
+      puzzleTrayBootstrapAttempted = false;
+    }
+    undoButton.disabled = busy || undoSnapshots.length === 0;
     rulesButton.disabled = busy;
     updateDifficultyButtons();
     updateAudioButtons();
+    updateStarterFlipButton();
     friendLockOverlay?.classList.add("hidden");
-    setPufflyState("idle", `🧩 ${game.title} ready`);
+    if (state.winner) {
+      showPuzzleCompletionCelebration();
+      setPufflyState("celebrate", "🧩 Puzzle complete!");
+      return;
+    }
+    if (isStarterFlipPending()) {
+      setPufflyState("thinking", "🪙 Flip to choose who starts.");
+      speakFromStatus("Flip to see who goes first.");
+      return;
+    }
+    if (playMode === "friend" && remoteSession) {
+      const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
+      setPufflyState("idle", `🤝 Puzzle - ${activeColor}'s placement`);
+    } else if (playMode === "puffly" && state.currentPlayer === computerPlayer) {
+      setPufflyState("thinking", "🧩 Puffly placing piece...");
+    } else {
+      setPufflyState("idle", "🧩 Place a matching piece.");
+    }
     setPufflyLookToBoard();
+    speakFromStatus(statusMessage);
     return;
   }
   if (selectedGameId === "fourinarow") {
@@ -1793,6 +2826,7 @@ function render(statusMessage = "Make your move.") {
     rulesButton.disabled = busy;
     updateDifficultyButtons();
     updateAudioButtons();
+    updateStarterFlipButton();
     friendLockOverlay?.classList.add("hidden");
     if (state.winner) {
       const isHumanWin = state.winner === humanPlayer;
@@ -1814,7 +2848,16 @@ function render(statusMessage = "Make your move.") {
       }
       return;
     }
+    if (isStarterFlipPending()) {
+      hideCelebration();
+      lastTurnSpoken = "";
+      setPufflyState("thinking", "🪙 Flip to choose who starts.");
+      setPufflyLookToBoard();
+      speakFromStatus(statusMessage);
+      return;
+    }
     hideCelebration();
+    const suppressTurnVoice = statusMessage === "Undoing move...";
     let currentTurnPhrase;
     if (playMode === "friend" && remoteSession) {
       if (!remoteSession.ready) {
@@ -1828,7 +2871,7 @@ function render(statusMessage = "Make your move.") {
     } else {
       currentTurnPhrase = state.currentPlayer === humanPlayer ? "Your turn." : "Puffly's turn.";
     }
-    if (lastTurnSpoken !== currentTurnPhrase) {
+    if (!suppressTurnVoice && lastTurnSpoken !== currentTurnPhrase) {
       lastTurnSpoken = currentTurnPhrase;
       speakPhrase(currentTurnPhrase);
     }
@@ -1894,6 +2937,7 @@ function render(statusMessage = "Make your move.") {
   rulesButton.disabled = busy;
   updateDifficultyButtons();
   updateAudioButtons();
+  updateStarterFlipButton();
   friendLockOverlay?.classList.add("hidden");
 
   if (state.winner) {
@@ -1906,7 +2950,16 @@ function render(statusMessage = "Make your move.") {
     showCelebration();
     return;
   }
+  if (isStarterFlipPending()) {
+    hideCelebration();
+    lastTurnSpoken = "";
+    setPufflyState("thinking", "🪙 Flip to choose who starts.");
+    setPufflyLookToBoard();
+    speakFromStatus(statusMessage);
+    return;
+  }
   hideCelebration();
+  const suppressTurnVoice = statusMessage === "Undoing move...";
   let currentTurnPhrase;
   if (playMode === "friend" && remoteSession) {
     if (!remoteSession.ready) {
@@ -1921,7 +2974,7 @@ function render(statusMessage = "Make your move.") {
     currentTurnPhrase =
       state.currentPlayer === humanPlayer ? "Your turn." : playMode === "puffly" ? "Puffly's turn." : "Friend turn.";
   }
-  if (lastTurnSpoken !== currentTurnPhrase) {
+  if (!suppressTurnVoice && lastTurnSpoken !== currentTurnPhrase) {
     lastTurnSpoken = currentTurnPhrase;
     speakPhrase(currentTurnPhrase);
   }
@@ -1941,6 +2994,7 @@ function render(statusMessage = "Make your move.") {
   }
   setPufflyLookToBoard();
   speakFromStatus(statusMessage);
+  updatePuzzleDebugStrip(statusMessage);
 }
 
 function findSquareElement(row, col) {
@@ -1967,6 +3021,14 @@ async function animateHumanMove(move) {
   }
   const fromPiece = fromSquare.querySelector(".piece");
   if (!fromPiece) {
+    fromSquare.classList.add("human-move-from");
+    toSquare.classList.add("human-move-to");
+    captureSquare?.classList.add("human-move-capture");
+    await sleep(HUMAN_MOVE_ANIMATION_MS);
+    await animateDestinationBounce(toSquare);
+    fromSquare.classList.remove("human-move-from");
+    toSquare.classList.remove("human-move-to");
+    captureSquare?.classList.remove("human-move-capture");
     return;
   }
   const fromRect = fromSquare.getBoundingClientRect();
@@ -1999,7 +3061,7 @@ async function animateHumanMove(move) {
   captureSquare?.classList.remove("human-move-capture");
 }
 
-async function animateComputerMove(move) {
+async function animateComputerMove(move, durationMs = AI_MOVE_ANIMATION_MS) {
   const fromSquare = findSquareElement(move.from.row, move.from.col);
   const toSquare = findSquareElement(move.to.row, move.to.col);
   const captureSquare = move.capture ? findSquareElement(move.capture.row, move.capture.col) : null;
@@ -2012,7 +3074,8 @@ async function animateComputerMove(move) {
     fromSquare.classList.add("ai-move-from");
     toSquare.classList.add("ai-move-to");
     captureSquare?.classList.add("ai-move-capture");
-    await sleep(Math.max(220, Math.floor(AI_MOVE_ANIMATION_MS * 0.55)));
+    await sleep(durationMs);
+    await animateDestinationBounce(toSquare);
     fromSquare.classList.remove("ai-move-from");
     toSquare.classList.remove("ai-move-to");
     captureSquare?.classList.remove("ai-move-capture");
@@ -2038,7 +3101,7 @@ async function animateComputerMove(move) {
 
   await new Promise((resolve) => window.requestAnimationFrame(resolve));
   ghost.style.transform = `translate(${toRect.left - fromRect.left}px, ${toRect.top - fromRect.top}px)`;
-  await sleep(AI_MOVE_ANIMATION_MS);
+  await sleep(durationMs);
   await animateDestinationBounce(toSquare);
 
   fromPiece.classList.remove("ai-piece-hidden");
@@ -2072,6 +3135,122 @@ async function animateFourDrop(player, row, col, durationMs = HUMAN_MOVE_ANIMATI
   await sleep(durationMs);
   ghost.remove();
   await animateDestinationBounce(toSquare);
+}
+
+async function animateUndoFourLift(player, row, col, durationMs = HUMAN_MOVE_ANIMATION_MS) {
+  const fromSquare = findSquareElement(row, col);
+  const toSquare = findSquareElement(0, col);
+  if (!fromSquare || !toSquare) {
+    return;
+  }
+  const fromRect = fromSquare.getBoundingClientRect();
+  const toRect = toSquare.getBoundingClientRect();
+  const size = Math.min(fromRect.width, fromRect.height) * 0.82;
+
+  const ghost = document.createElement("span");
+  ghost.className = `ai-piece-ghost piece four-piece ${player}`;
+  ghost.style.width = `${size}px`;
+  ghost.style.height = `${size}px`;
+  ghost.style.left = `${fromRect.left + fromRect.width / 2}px`;
+  ghost.style.top = `${fromRect.top + fromRect.height / 2}px`;
+  ghost.style.transitionDuration = `${durationMs}ms`;
+  document.body.appendChild(ghost);
+
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  ghost.style.transform = `translate(${toRect.left - fromRect.left}px, ${toRect.top - fromRect.top}px)`;
+  await sleep(durationMs);
+  ghost.remove();
+}
+
+async function animateUndoPuzzlePlacement(placement, durationMs) {
+  if (!placement || placement.row === null || placement.col === null) {
+    return;
+  }
+  const sourcePiece = document.querySelector(
+    `.puzzle-cell[data-row="${placement.row}"][data-col="${placement.col}"] .puzzle-piece[data-piece-id="${placement.pieceId}"]`,
+  );
+  const sourceCell = findSquareElement(placement.row, placement.col);
+  const sourceRect = sourcePiece instanceof HTMLElement
+    ? sourcePiece.getBoundingClientRect()
+    : sourceCell?.getBoundingClientRect();
+  const targetRect = placement.owner === "dark" ? blueCapturedTray?.getBoundingClientRect() : greenCapturedTray?.getBoundingClientRect();
+  if (!sourceRect || !targetRect) {
+    return;
+  }
+  const pieceState = getPuzzlePiece(state, placement.pieceId);
+  const ghost =
+    sourcePiece instanceof HTMLElement
+      ? sourcePiece.cloneNode(true)
+      : pieceState
+        ? createPuzzlePieceElement(pieceState)
+        : document.createElement("span");
+  ghost.classList.add("drag-ghost");
+  const ghostSize = Math.max(64, Math.min(sourceRect.width, sourceRect.height || sourceRect.width));
+  const startLeft = sourceRect.left + sourceRect.width / 2 - ghostSize / 2;
+  const startTop = sourceRect.top + sourceRect.height / 2 - ghostSize / 2;
+  ghost.style.width = `${ghostSize}px`;
+  ghost.style.height = `${ghostSize}px`;
+  ghost.style.left = `${startLeft}px`;
+  ghost.style.top = `${startTop}px`;
+  const moveDuration = Math.max(460, Math.floor(durationMs || PUFFLY_PUZZLE_PLACE_MS * 0.65));
+  ghost.style.transition = `transform ${moveDuration}ms ease-in-out`;
+  document.body.appendChild(ghost);
+  if (sourcePiece instanceof HTMLElement) {
+    sourcePiece.style.opacity = "0.2";
+  }
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  const endLeft = targetRect.left + targetRect.width / 2 - ghostSize / 2;
+  const endTop = targetRect.top + targetRect.height / 2 - ghostSize / 2;
+  ghost.style.transform = `translate(${endLeft - startLeft}px, ${endTop - startTop}px)`;
+  await sleep(moveDuration);
+  if (sourcePiece instanceof HTMLElement) {
+    sourcePiece.style.opacity = "";
+  }
+  ghost.remove();
+}
+
+async function animateUndoTransition(currentState, targetState) {
+  if (!currentState || !targetState) {
+    return;
+  }
+  if (selectedGameId === "puzzle") {
+    const undoPlacement = inferUndoPuzzlePlacement(currentState, targetState);
+    if (undoPlacement) {
+      const undoDuration =
+        playMode === "puffly" && undoPlacement.owner === computerPlayer
+          ? PUFFLY_PUZZLE_PLACE_MS
+          : Math.max(460, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.65));
+      await animateUndoPuzzlePlacement(undoPlacement, undoDuration);
+    }
+    return;
+  }
+  if (selectedGameId === "fourinarow") {
+    const undoDrops = inferUndoFourSequence(currentState, targetState);
+    for (const undoDrop of undoDrops) {
+      const undoDuration =
+        playMode === "puffly" && undoDrop.player === computerPlayer ? AI_MOVE_ANIMATION_MS : HUMAN_MOVE_ANIMATION_MS;
+      await animateUndoFourLift(undoDrop.player, undoDrop.row, undoDrop.col, undoDuration);
+      if (undoDrop.restoreState) {
+        state = normalizeStateForGame(undoDrop.restoreState, selectedGameId);
+        selectedPuzzlePieceId = "";
+        render("Undoing move...");
+      }
+    }
+    return;
+  }
+  const undoMoves = inferUndoCheckersSequence(currentState, targetState);
+  for (const undoMove of undoMoves) {
+    if (undoMove.mover === humanPlayer) {
+      await animateHumanMove(undoMove);
+    } else {
+      await animateComputerMove(undoMove, AI_MOVE_ANIMATION_MS);
+    }
+    if (undoMove.restoreState) {
+      state = normalizeStateForGame(undoMove.restoreState, selectedGameId);
+      selectedPuzzlePieceId = "";
+      render("Undoing move...");
+    }
+  }
 }
 
 function maybeStoreUndoBeforeMove() {
@@ -2117,7 +3296,7 @@ async function submitRemoteMove(nextState) {
     setFriendStatus(getFriendStatusText(remoteSession));
   }
   syncRoomChatFromPayload(data);
-  state = data.state;
+  state = normalizeStateForGame(data.state, selectedGameId);
 }
 
 async function commitMove(move) {
@@ -2197,7 +3376,21 @@ async function commitFourDrop(col) {
 }
 
 async function runComputerTurn() {
-  if (playMode !== "puffly" || state.winner || state.draw || state.currentPlayer !== computerPlayer) {
+  if (playMode !== "puffly" || isStarterFlipPending() || state.winner || state.draw || state.currentPlayer !== computerPlayer) {
+    return;
+  }
+  if (selectedGameId === "puzzle") {
+    busy = true;
+    render("Puffly is placing a piece...");
+    setPufflyState("thinking", "🧩 My turn.");
+    await sleep(900);
+    const placement = choosePuzzleComputerPlacement(state, computerPlayer);
+    if (placement) {
+      await animatePuzzleAutoPlacement(placement.pieceId, placement.row, placement.col);
+      await submitPuzzlePlacement(placement.pieceId, placement.row, placement.col, { skipAnimation: true });
+    }
+    busy = false;
+    render(lastStatusMessage);
     return;
   }
   if (selectedGameId === "fourinarow") {
@@ -2251,12 +3444,32 @@ async function runComputerTurn() {
   render(lastStatusMessage);
 }
 
-boardElement.addEventListener("click", async (event) => {
-  ensureAudioContext();
-  if (selectedGameId === "puzzle") {
-    render(`${getGameConfig(selectedGameId).title} gameplay is coming next.`);
+function handlePuzzlePiecePointerDown(event) {
+  void event;
+}
+
+blueCapturedPile?.addEventListener("pointerdown", handlePuzzlePiecePointerDown);
+greenCapturedPile?.addEventListener("pointerdown", handlePuzzlePiecePointerDown);
+boardElement.addEventListener("pointerdown", handlePuzzlePiecePointerDown);
+blueCapturedPile?.addEventListener("click", (event) => {
+  const pieceEl = event.target.closest(".puzzle-piece");
+  if (!pieceEl) {
     return;
   }
+  ensureAudioContext();
+  selectPuzzlePiece(pieceEl.dataset.pieceId);
+});
+greenCapturedPile?.addEventListener("click", (event) => {
+  const pieceEl = event.target.closest(".puzzle-piece");
+  if (!pieceEl) {
+    return;
+  }
+  ensureAudioContext();
+  selectPuzzlePiece(pieceEl.dataset.pieceId);
+});
+
+boardElement.addEventListener("click", async (event) => {
+  ensureAudioContext();
   if (busy) {
     return;
   }
@@ -2268,6 +3481,10 @@ boardElement.addEventListener("click", async (event) => {
   const col = Number(square.dataset.col);
 
   if (state.winner || state.draw) {
+    return;
+  }
+  if (isStarterFlipPending()) {
+    render("Flip to see who goes first.");
     return;
   }
   if (playMode === "puffly" && state.currentPlayer !== humanPlayer) {
@@ -2284,6 +3501,15 @@ boardElement.addEventListener("click", async (event) => {
       // Show turn hint, but allow attempting a move; server still enforces turn ownership.
       render("Waiting for your friend...");
     }
+  }
+
+  if (selectedGameId === "puzzle") {
+    if (!selectedPuzzlePieceId) {
+      render("Tap a tray piece, then tap its matching slot.");
+      return;
+    }
+    await submitPuzzlePlacement(selectedPuzzlePieceId, row, col);
+    return;
   }
 
   if (selectedGameId === "fourinarow") {
@@ -2344,7 +3570,8 @@ restartButton.addEventListener("click", async () => {
         roomCode: remoteSession.roomCode,
         playerId: remoteSession.playerId,
       });
-      state = data.state;
+      state = normalizeStateForGame(data.state, selectedGameId);
+      selectedPuzzlePieceId = "";
       remoteSession.version = data.version;
       if (typeof data.playerCount === "number") {
         remoteSession.playerCount = data.playerCount;
@@ -2363,14 +3590,14 @@ restartButton.addEventListener("click", async () => {
     return;
   }
   state = createStateForGame(selectedGameId);
+  selectedPuzzlePieceId = "";
   moveHistory = [];
   undoSnapshots = [];
   winnerAnnounced = null;
   lastSpokenPhrase = "";
   lastTurnSpoken = "";
   hideCelebration();
-  render(selectedGameId === "fourinarow" ? "New Four-in-a-Row game. Puffly opens." : "New game started. Puffly opens.");
-  await runComputerTurn();
+  render("Flip to see who goes first.");
 });
 
 for (const button of difficultyButtons) {
@@ -2383,6 +3610,16 @@ for (const button of difficultyButtons) {
       return;
     }
     difficulty = nextDifficulty;
+    if (selectedGameId === "puzzle") {
+      state = createStateForGame("puzzle");
+      selectedPuzzlePieceId = "";
+      moveHistory = [];
+      undoSnapshots = [];
+      winnerAnnounced = null;
+      hideCelebration();
+      render(`Puzzle difficulty set to ${difficulty}. Flip to see who goes first.`);
+      return;
+    }
     render(`Difficulty set to ${difficulty}.`);
   });
 }
@@ -2406,6 +3643,10 @@ for (const button of audioButtons) {
   });
 }
 
+starterFlipButton?.addEventListener("click", async () => {
+  await flipStarter();
+});
+
 undoButton.addEventListener("click", async () => {
   if (busy || undoSnapshots.length === 0) {
     return;
@@ -2415,6 +3656,7 @@ undoButton.addEventListener("click", async () => {
   if (!snapshot) {
     return;
   }
+  const currentStateBeforeUndo = clone(state);
   if (playMode === "friend") {
     if (!remoteSession) {
       setFriendStatus("Connect to a room first.");
@@ -2432,7 +3674,10 @@ undoButton.addEventListener("click", async () => {
         remoteSession.ready = data.playerCount >= 2;
         setFriendStatus(getFriendStatusText(remoteSession));
       }
-      state = data.state;
+      const targetState = normalizeStateForGame(data.state, selectedGameId);
+      await animateUndoTransition(currentStateBeforeUndo, targetState);
+      state = targetState;
+      selectedPuzzlePieceId = "";
       moveHistory = snapshot.history;
       winnerAnnounced = null;
       lastSpokenPhrase = "";
@@ -2449,13 +3694,24 @@ undoButton.addEventListener("click", async () => {
     }
     return;
   }
-  state = snapshot.state;
-  moveHistory = snapshot.history;
-  winnerAnnounced = null;
-  lastSpokenPhrase = "";
-  lastTurnSpoken = "";
-  hideCelebration();
-  render("Undid your previous turn.");
+  busy = true;
+  try {
+    const targetState = normalizeStateForGame(snapshot.state, selectedGameId);
+    await animateUndoTransition(currentStateBeforeUndo, targetState);
+    state = targetState;
+    selectedPuzzlePieceId = "";
+    moveHistory = snapshot.history;
+    winnerAnnounced = null;
+    lastSpokenPhrase = "";
+    lastTurnSpoken = "";
+    hideCelebration();
+    render("Undid your previous turn.");
+  } catch {
+    undoSnapshots.push(snapshot);
+    render("Undo animation could not complete.");
+  } finally {
+    busy = false;
+  }
 });
 
 rulesButton.addEventListener("click", () => {
@@ -2474,7 +3730,9 @@ function switchGame(nextGameId) {
   updateGameButtons();
   updateAppTitle();
   resetSessionForModeSwitch();
+  puzzleTrayBootstrapAttempted = false;
   state = createStateForGame(selectedGameId);
+  selectedPuzzlePieceId = "";
   moveHistory = [];
   undoSnapshots = [];
   winnerAnnounced = null;
@@ -2483,18 +3741,11 @@ function switchGame(nextGameId) {
   lastTurnSpoken = "";
   updateRulesForMode();
   updateDifficultyButtons();
-  const game = getGameConfig(selectedGameId);
-  if (selectedGameId === "puzzle") {
-    const modeLabel = playMode === "friend" ? "friend rooms" : "practice mode";
-    render(`${game.title}: ${modeLabel} scaffolding ready.`);
-    return;
-  }
   if (playMode === "friend") {
     render("Friend mode: connect to a room.");
     return;
   }
-  render(selectedGameId === "fourinarow" ? "New Four-in-a-Row game. Puffly opens." : "New game started. Puffly opens.");
-  runComputerTurn();
+  render("Flip to see who goes first.");
 }
 
 for (const button of gameButtons) {
@@ -2680,6 +3931,7 @@ selectedGameId = AUTO_GAME_ID;
 updateGameButtons();
 updateAppTitle();
 state = createStateForGame(selectedGameId);
+selectedPuzzlePieceId = "";
 updateRulesForMode();
 if (AUTO_JOIN_ROOM_CODE) {
   setPlayMode("friend");
@@ -2689,6 +3941,5 @@ if (AUTO_JOIN_ROOM_CODE) {
   setFriendStatus(`Joining invite room ${AUTO_JOIN_ROOM_CODE}...`);
   joinRoomWithCode(AUTO_JOIN_ROOM_CODE, { fromInvite: true }).catch(() => {});
 } else {
-  render(selectedGameId === "fourinarow" ? "Puffly opens Four-in-a-Row." : "Puffly opens the game.");
-  runComputerTurn();
+  render("Flip to see who goes first.");
 }

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Puffly Four-in-a-Row</title>
-    <link rel="stylesheet" href="./styles.css?v=66" />
+    <link rel="stylesheet" href="./styles.css?v=94" />
   </head>
   <body>
     <main class="app-shell">
@@ -17,7 +17,7 @@
         <div class="game-buttons" role="group" aria-label="Choose game">
           <button class="game-btn" type="button" data-game="checkers">Checkers</button>
           <button class="game-btn active" type="button" data-game="fourinarow">Four-in-a-Row</button>
-          <button class="game-btn" type="button" data-game="puzzle">Puzzle (Coming Soon)</button>
+          <button class="game-btn" type="button" data-game="puzzle">Puzzle</button>
         </div>
       </section>
 
@@ -65,6 +65,8 @@
         </ul>
       </section>
 
+      <section id="puzzle-debug-strip" class="puzzle-debug-strip" aria-live="polite">DBG puzzle | initializing...</section>
+
       <section class="gameplay-layout">
         <section class="board-stage">
           <div class="board-and-captures">
@@ -94,6 +96,10 @@
               <span class="puffly-nose"></span>
             </div>
             <p id="puffly-thought" class="puffly-thought">💭 Waiting...</p>
+            <div class="starter-flip">
+              <div id="starter-coin" class="starter-coin" aria-hidden="true">🪙</div>
+              <button id="starter-flip-btn" type="button">FLIP</button>
+            </div>
           </aside>
         </section>
 
@@ -143,6 +149,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/app.js?v=92"></script>
+    <script type="module" src="./src/app.js?v=145"></script>
   </body>
 </html>
