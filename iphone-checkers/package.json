@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:engine": "node ./src/engine.test.mjs"
+    "test:engine": "node ./src/engine.test.mjs",
+    "test:voice": "node ./src/voicePhrases.test.mjs",
+    "test": "npm run test:engine && npm run test:voice"
   }
 }

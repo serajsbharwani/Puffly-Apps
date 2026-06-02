@@ -33,10 +33,24 @@ Notes:
 - Room state is memory-only and resets when the server restarts.
 - If you run `python3 -m http.server`, the friend mode API buttons will fail (expected).
 
-## Engine Tests
+## Tests
 
-- `node ./iphone-checkers/src/engine.test.mjs`
+From `iphone-checkers/`:
+
+```bash
+node ./src/engine.test.mjs
+node ./src/voicePhrases.test.mjs
+```
+
+Or `npm test` if npm is on your PATH.
 
 Expected:
 
 - `All iPhone engine tests passed.`
+- `voicePhrases: … clips, … phrases OK`
+
+Practice voice lines are defined in `src/voicePhrases.js`. After changing phrases or `assets/voice/*.wav`, run the voice test before deploying.
+
+## GitHub Actions
+
+On push/PR to `main` or `mobile-compat-v1`, when `iphone-checkers/` changes, the workflow `.github/workflows/iphone-checkers-tests.yml` runs both tests above.

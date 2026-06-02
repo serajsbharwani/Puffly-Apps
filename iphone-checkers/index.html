@@ -3,49 +3,118 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Puffly Four-in-a-Row</title>
-    <link rel="stylesheet" href="./styles.css?v=94" />
+    <title>Puffly Checkers</title>
+    <link rel="stylesheet" href="./styles.css?v=116" />
   </head>
   <body>
-    <main class="app-shell">
+    <div class="app-chrome">
       <header class="app-header">
-        <h1 id="app-title">Puffly Four-in-a-Row</h1>
+        <h1 id="app-title">Puffly Checkers</h1>
       </header>
 
       <section class="game-panel" aria-label="Game selector">
-        <span class="game-label">Game</span>
         <div class="game-buttons" role="group" aria-label="Choose game">
-          <button class="game-btn" type="button" data-game="checkers">Checkers</button>
-          <button class="game-btn active" type="button" data-game="fourinarow">Four-in-a-Row</button>
+          <button class="game-btn active" type="button" data-game="checkers">Checkers</button>
+          <button class="game-btn" type="button" data-game="fourinarow">Four-in-a-Row</button>
           <button class="game-btn" type="button" data-game="puzzle">Puzzle</button>
         </div>
       </section>
 
       <section class="mode-panel" aria-label="Play mode">
-        <button id="play-puffly-btn" class="mode-btn active" type="button">Practice with Puffly</button>
-        <button id="play-friend-btn" class="mode-btn" type="button">Play with a Friend</button>
+        <button
+          id="play-puffly-btn"
+          class="mode-btn active"
+          type="button"
+          data-play-mode="puffly"
+          onclick="window.pufflyOnPufflyModeTap && window.pufflyOnPufflyModeTap(event)"
+        >
+          Practice with Puffly
+        </button>
+        <button
+          id="play-friend-btn"
+          class="mode-btn"
+          type="button"
+          data-play-mode="friend"
+          onclick="window.pufflyOnFriendModeTap && window.pufflyOnFriendModeTap(event)"
+        >
+          Play with a Friend
+        </button>
       </section>
 
       <section class="control-card">
         <div id="puffly-controls" class="puffly-controls">
-          <span class="difficulty-label">Difficulty</span>
-          <div class="difficulty-buttons" aria-label="Computer difficulty">
-            <button id="difficulty-easy-btn" class="difficulty-btn" type="button" data-difficulty="easy">Easy</button>
-            <button id="difficulty-medium-btn" class="difficulty-btn active" type="button" data-difficulty="medium">Medium</button>
-            <button id="difficulty-hard-btn" class="difficulty-btn" type="button" data-difficulty="hard">Hard</button>
+          <div class="difficulty-buttons" aria-label="Practice level">
+            <button id="difficulty-easy-btn" class="difficulty-btn" type="button" data-difficulty="easy">Silly</button>
+            <button id="difficulty-medium-btn" class="difficulty-btn active" type="button" data-difficulty="medium">Playful</button>
+            <button id="difficulty-hard-btn" class="difficulty-btn" type="button" data-difficulty="hard">Clever</button>
           </div>
-          <span class="audio-label">Audio</span>
-          <div class="audio-buttons" aria-label="Audio feedback">
-            <button id="audio-on-btn" class="audio-btn active" type="button" data-audio="on">ON</button>
-            <button id="audio-off-btn" class="audio-btn" type="button" data-audio="off">OFF</button>
-          </div>
+          <button
+            id="audio-toggle-btn"
+            class="toggle-btn audio-toggle is-on"
+            type="button"
+            aria-pressed="true"
+            aria-label="Audio feedback"
+          >
+            Audio
+          </button>
         </div>
         <div id="friend-controls" class="friend-controls hidden">
           <div class="friend-room-actions">
-            <button id="create-room-btn" type="button">Create & Invite</button>
-            <button id="leave-room-btn" class="leave-room-btn" type="button">Leave Room</button>
+            <button
+              id="create-room-btn"
+              class="toggle-btn is-off"
+              type="button"
+              data-friend-action="create"
+            >
+              Create & Invite
+            </button>
+            <button id="leave-room-btn" class="toggle-btn is-off" type="button">Leave Room</button>
           </div>
-          <p id="friend-status" class="friend-status">Tap Create & Invite to start a room.</p>
+          <div class="friend-join-row">
+            <input
+              id="room-code-input"
+              type="text"
+              maxlength="8"
+              placeholder="Code"
+              aria-label="Room code"
+              autocomplete="off"
+              autocapitalize="characters"
+              spellcheck="false"
+            />
+            <button
+              id="join-room-btn"
+              class="toggle-btn is-off"
+              type="button"
+              data-friend-action="join"
+            >
+              Join
+            </button>
+          </div>
+          <div id="friend-invite-panel" class="friend-invite-panel hidden">
+            <p class="friend-invite-code" aria-label="Room code">
+              <span class="friend-invite-label">Room</span>
+              <strong id="friend-room-code"></strong>
+            </p>
+            <button id="copy-invite-btn" class="toggle-btn is-on" type="button">Copy Link</button>
+            <a
+              id="friend-invite-link"
+              class="friend-invite-link visually-hidden"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              tabindex="-1"
+              aria-hidden="true"
+            ></a>
+          </div>
+          <p id="friend-status" class="friend-status" aria-live="polite">Create or join a room.</p>
+        </div>
+      </section>
+
+      <section id="friend-puzzle-difficulty" class="control-card friend-puzzle-panel hidden" aria-label="Puzzle size">
+        <div class="friend-puzzle-buttons">
+          <button class="toggle-btn friend-difficulty-btn is-off" type="button" data-difficulty="easy">Mini</button>
+          <button class="toggle-btn friend-difficulty-btn is-on" type="button" data-difficulty="medium">Classic</button>
+          <button class="toggle-btn friend-difficulty-btn is-off" type="button" data-difficulty="hard">Mega</button>
         </div>
       </section>
 
@@ -54,7 +123,9 @@
         <button id="restart-btn" type="button">Play Again</button>
         <button id="undo-btn" type="button">Undo Last Turn</button>
       </section>
+    </div>
 
+    <main class="app-shell">
       <section id="rules-panel" class="rules-panel hidden" aria-live="polite">
         <h2>Game Rules</h2>
         <ul>
@@ -65,13 +136,13 @@
         </ul>
       </section>
 
-      <section id="puzzle-debug-strip" class="puzzle-debug-strip" aria-live="polite">DBG puzzle | initializing...</section>
+      <section id="puzzle-debug-strip" class="puzzle-debug-strip hidden" aria-live="polite" hidden></section>
 
       <section class="gameplay-layout">
         <section class="board-stage">
           <div class="board-and-captures">
-            <aside class="captured-tray blue" aria-live="polite">
-              <p>BLUE Captured</p>
+            <aside class="captured-tray blue" aria-label="Blue captured pieces" aria-live="polite">
+              <p class="captured-tray-label">Blue</p>
               <div id="blue-captured-pile" class="captured-pile"></div>
             </aside>
             <div class="board-wrap">
@@ -80,22 +151,27 @@
               </div>
               <div id="board" class="board" aria-label="Checkers board"></div>
             </div>
-            <aside class="captured-tray green" aria-live="polite">
-              <p>GREEN Captured</p>
+            <aside class="captured-tray green" aria-label="Green captured pieces" aria-live="polite">
+              <p class="captured-tray-label">Green</p>
               <div id="green-captured-pile" class="captured-pile"></div>
             </aside>
           </div>
-          <aside id="puffly-panel" class="puffly-panel" aria-live="polite">
-            <p class="puffly-label">Puffly</p>
-            <div class="puffly-face" aria-hidden="true">
-              <span class="puffly-ear left"></span>
-              <span class="puffly-ear right"></span>
-              <span class="puffly-eye left"></span>
-              <span class="puffly-eye right"></span>
-              <span class="puffly-muzzle"></span>
-              <span class="puffly-nose"></span>
+          <aside id="puffly-panel" class="puffly-panel team-blue" aria-live="polite">
+            <p id="team-mascot-label" class="puffly-label">Puffly</p>
+            <div class="team-mascot-wrap">
+              <div class="puffly-face team-face blue-face" aria-hidden="true">
+                <span class="puffly-ear left"></span>
+                <span class="puffly-ear right"></span>
+                <span class="puffly-eye left"></span>
+                <span class="puffly-eye right"></span>
+                <span class="puffly-muzzle"></span>
+                <span class="puffly-nose"></span>
+              </div>
+              <div class="frog-mascot team-face green-face hidden" aria-hidden="true">
+                <span class="frog-mascot-icon" aria-hidden="true">🐸</span>
+              </div>
             </div>
-            <p id="puffly-thought" class="puffly-thought">💭 Waiting...</p>
+            <p id="puffly-thought" class="puffly-thought">🪙 Tap FLIP to start</p>
             <div class="starter-flip">
               <div id="starter-coin" class="starter-coin" aria-hidden="true">🪙</div>
               <button id="starter-flip-btn" type="button">FLIP</button>
@@ -121,7 +197,7 @@
               <button id="voice-mic-btn" type="button">Mute Mic</button>
               <button id="voice-speaker-btn" type="button">Speaker On</button>
             </div>
-            <p id="voice-status" class="voice-status">Voice not connected.</p>
+            <p id="voice-status" class="voice-status" aria-live="polite">Voice off</p>
           </section>
         </aside>
       </section>
@@ -135,7 +211,7 @@
     <div id="speech-unlock-overlay" class="speech-unlock-overlay hidden" aria-live="polite">
       <div class="speech-unlock-card">
         <h2>Tap Start for Voice</h2>
-        <p>This one-time tap enables voice prompts on iPad Safari.</p>
+        <p>Tap Start to turn on voice prompts and hear the flip cue before you play.</p>
         <button id="speech-unlock-btn" type="button">Start</button>
       </div>
     </div>
@@ -149,6 +225,298 @@
       </div>
     </div>
 
-    <script type="module" src="./src/app.js?v=145"></script>
+    <script>
+      (function () {
+        function pufflySetFriendStatus(text) {
+          var el = document.getElementById("friend-status");
+          if (el) {
+            el.textContent = text;
+          }
+        }
+        window.pufflySetFriendStatus = pufflySetFriendStatus;
+
+        function readInviteJoinCode() {
+          var search = new URLSearchParams(window.location.search || "");
+          var hashRaw = (window.location.hash || "").replace(/^#/, "");
+          if (hashRaw.charAt(0) === "?") {
+            hashRaw = hashRaw.slice(1);
+          }
+          var hash =
+            hashRaw.indexOf("=") >= 0 ? new URLSearchParams(hashRaw) : new URLSearchParams();
+          var join = (search.get("join") || hash.get("join") || "").trim().toUpperCase();
+          return /^[A-Z0-9]{4,8}$/.test(join) ? join : "";
+        }
+
+        function applyPlayModeChrome(mode) {
+          var isFriend = mode === "friend";
+          document.body.classList.toggle("friend-mode", isFriend);
+          var pufflyControls = document.getElementById("puffly-controls");
+          var friendControls = document.getElementById("friend-controls");
+          var playPuffly = document.getElementById("play-puffly-btn");
+          var playFriend = document.getElementById("play-friend-btn");
+          var speechOverlay = document.getElementById("speech-unlock-overlay");
+          var friendStatus = document.getElementById("friend-status");
+          if (pufflyControls) {
+            if (isFriend) {
+              pufflyControls.classList.add("hidden");
+            } else {
+              pufflyControls.classList.remove("hidden");
+            }
+          }
+          if (friendControls) {
+            if (isFriend) {
+              friendControls.classList.remove("hidden");
+            } else {
+              friendControls.classList.add("hidden");
+            }
+          }
+          if (playPuffly) {
+            playPuffly.classList.toggle("active", !isFriend);
+          }
+          if (playFriend) {
+            playFriend.classList.toggle("active", isFriend);
+          }
+          if (isFriend && friendStatus && !window.__pufflyRoomActionInFlight && !window.__pufflyCreateInFlight) {
+            var pendingJoin = window.__pufflyPendingInviteJoin || readInviteJoinCode();
+            if (pendingJoin) {
+              friendStatus.textContent = "Joining room " + pendingJoin + "...";
+            } else {
+              friendStatus.textContent = "Create or join a room.";
+            }
+          }
+          var createBtn = document.getElementById("create-room-btn");
+          var joinBtn = document.getElementById("join-room-btn");
+          var leaveBtn = document.getElementById("leave-room-btn");
+          if (createBtn) {
+            createBtn.classList.toggle("is-on", isFriend);
+            createBtn.classList.toggle("is-off", !isFriend);
+          }
+          if (joinBtn) {
+            joinBtn.classList.toggle("is-on", isFriend);
+            joinBtn.classList.toggle("is-off", !isFriend);
+          }
+          if (leaveBtn) {
+            leaveBtn.classList.toggle("is-on", false);
+            leaveBtn.classList.toggle("is-off", true);
+          }
+        }
+
+        window.pufflyCreateRoomNow = async function (event) {
+          if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          if (window.__pufflyCreateInFlight) {
+            return;
+          }
+          if (typeof window.pufflyCreateFriendRoom === "function") {
+            try {
+              await window.pufflyCreateFriendRoom();
+            } catch (err) {
+              pufflySetFriendStatus(err && err.message ? err.message : "Could not create room.");
+            }
+            return;
+          }
+          window.__pufflyCreateInFlight = true;
+          window.__pufflyRoomActionInFlight = true;
+          window.__pufflyUserChosePufflyMode = false;
+          window.__pufflyPendingPlayMode = "friend";
+          applyPlayModeChrome("friend");
+          try {
+            pufflySetFriendStatus("Creating room… contacting server");
+            var gameBtn = document.querySelector(".game-btn.active");
+            var gameType = (gameBtn && gameBtn.getAttribute("data-game")) || "checkers";
+            var payload = { gameType: gameType };
+            if (gameType === "puzzle") {
+              var mega = document.querySelector(".friend-difficulty-btn.is-on");
+              var size = mega && mega.getAttribute("data-difficulty");
+              if (size === "easy" || size === "medium" || size === "hard") {
+                payload.puzzleDifficulty = size;
+              } else {
+                payload.puzzleDifficulty = "medium";
+              }
+            }
+            var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+            var timer = controller
+              ? window.setTimeout(function () {
+                  controller.abort();
+                }, 15000)
+              : null;
+            var res = await fetch("/api/rooms/create", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+              signal: controller ? controller.signal : undefined,
+            });
+            if (timer) {
+              window.clearTimeout(timer);
+            }
+            var contentType = res.headers.get("content-type") || "";
+            if (contentType.indexOf("application/json") < 0) {
+              throw new Error("Friend server unavailable (HTTP " + res.status + ")");
+            }
+            var data = await res.json();
+            if (!res.ok) {
+              throw new Error(data.error || "Could not create room (" + res.status + ")");
+            }
+            var codeEl = document.getElementById("friend-room-code");
+            var panel = document.getElementById("friend-invite-panel");
+            var codeInput = document.getElementById("room-code-input");
+            var createBtn = document.getElementById("create-room-btn");
+            if (codeEl) {
+              codeEl.textContent = data.roomCode;
+            }
+            if (codeInput) {
+              codeInput.value = data.roomCode;
+            }
+            if (panel) {
+              panel.classList.remove("hidden");
+            }
+            if (createBtn) {
+              createBtn.classList.add("is-on");
+              createBtn.classList.remove("is-off");
+              createBtn.textContent = "Share Invite";
+            }
+            pufflySetFriendStatus(
+              "Room " + data.roomCode + " created. Waiting for your friend (1/2).",
+            );
+            window.__pufflyPendingRoomHydrate = data;
+            if (typeof window.pufflyHydrateFriendRoom === "function") {
+              window.pufflyHydrateFriendRoom(data);
+            }
+          } catch (err) {
+            if (err && err.name === "AbortError") {
+              pufflySetFriendStatus("Timed out contacting server. Try again.");
+            } else {
+              pufflySetFriendStatus((err && err.message) || "Could not create room.");
+            }
+          } finally {
+            window.__pufflyCreateInFlight = false;
+            window.__pufflyRoomActionInFlight = false;
+          }
+        };
+        window.pufflyOnCreateRoomTap = window.pufflyCreateRoomNow;
+
+        window.pufflyOnJoinRoomTap = async function (event) {
+          if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          pufflySetFriendStatus("Joining room...");
+          applyPlayModeChrome("friend");
+          window.__pufflyPendingPlayMode = "friend";
+          window.__pufflyUserChosePufflyMode = false;
+          if (typeof window.pufflyJoinFriendRoom === "function") {
+            try {
+              await window.pufflyJoinFriendRoom();
+            } catch (err) {
+              pufflySetFriendStatus(err && err.message ? err.message : "Could not join room.");
+            }
+          } else {
+            window.__pufflyPendingJoinRoom = true;
+            pufflySetFriendStatus("Loading game… tap Join Room again in a moment.");
+          }
+        };
+
+        var lastModeTapAt = 0;
+        function runPlayMode(mode) {
+          var now = Date.now();
+          if (now - lastModeTapAt < 400 && window.__pufflyLastPlayMode === mode) {
+            return;
+          }
+          lastModeTapAt = now;
+          window.__pufflyLastPlayMode = mode;
+          window.__pufflyPendingPlayMode = mode;
+          if (mode === "puffly") {
+            window.__pufflyUserChosePufflyMode = true;
+            window.__pufflyPendingInviteJoin = "";
+            window.__pufflyInviteJoinInFlight = false;
+          } else if (mode === "friend") {
+            window.__pufflyUserChosePufflyMode = false;
+          }
+          applyPlayModeChrome(mode);
+          if (mode === "friend" && typeof window.pufflyActivateFriendMode === "function") {
+            window.pufflyActivateFriendMode();
+            return;
+          }
+          if (mode === "puffly" && typeof window.pufflyActivatePufflyMode === "function") {
+            window.pufflyActivatePufflyMode();
+          }
+        }
+
+        window.pufflyOnFriendModeTap = function (event) {
+          if (event) {
+            event.preventDefault();
+          }
+          runPlayMode("friend");
+        };
+
+        window.pufflyOnPufflyModeTap = function (event) {
+          if (event) {
+            event.preventDefault();
+          }
+          runPlayMode("puffly");
+        };
+
+        window.pufflyApplyPlayModeChrome = applyPlayModeChrome;
+
+        function routeModeTap(event) {
+          var btn = event.target && event.target.closest && event.target.closest("[data-play-mode]");
+          if (!btn) {
+            return;
+          }
+          event.preventDefault();
+          runPlayMode(btn.getAttribute("data-play-mode"));
+        }
+
+        document.addEventListener("click", routeModeTap, true);
+
+        document.addEventListener(
+          "click",
+          function (event) {
+            var btn =
+              event.target && event.target.closest && event.target.closest("[data-friend-action]");
+            if (!btn || btn.dataset.friendActionWired === "1") {
+              return;
+            }
+            var action = btn.getAttribute("data-friend-action");
+            if (action === "create") {
+              event.preventDefault();
+              void window.pufflyCreateRoomNow(event);
+            } else if (action === "join") {
+              event.preventDefault();
+              void window.pufflyOnJoinRoomTap(event);
+            }
+          },
+          true,
+        );
+
+        var inviteJoinOnLoad = readInviteJoinCode();
+        if (inviteJoinOnLoad) {
+          window.__pufflyPendingInviteJoin = inviteJoinOnLoad;
+          applyPlayModeChrome("friend");
+          pufflySetFriendStatus("Joining room " + inviteJoinOnLoad + "...");
+          var roomInput = document.getElementById("room-code-input");
+          if (roomInput) {
+            roomInput.value = inviteJoinOnLoad;
+          }
+        }
+
+        window.addEventListener("load", function () {
+          if (!readInviteJoinCode() || window.__pufflyUserChosePufflyMode) {
+            return;
+          }
+          window.setTimeout(function () {
+            if (window.__pufflyUserChosePufflyMode) {
+              return;
+            }
+            if (typeof window.pufflyTryInviteJoinFromUrl === "function") {
+              window.pufflyTryInviteJoinFromUrl();
+            }
+          }, 1200);
+        });
+      })();
+    </script>
+    <script type="module" src="./src/app.js?v=255"></script>
   </body>
 </html>

@@ -34,12 +34,24 @@ body.dragging-touch {
   overflow: hidden;
 }
 
+.app-chrome,
 .app-shell {
   width: 100%;
   max-width: 1120px;
   margin: 0 auto;
   display: grid;
   gap: 0.7rem;
+}
+
+/* Always above speech/celebration overlays so mode buttons stay tappable. */
+.app-chrome {
+  position: relative;
+  z-index: 1300;
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
 }
 
 .app-header {
@@ -58,11 +70,6 @@ body.dragging-touch {
   border: 2px solid #d3b46f;
   border-radius: 12px;
   padding: 0.45rem 0.6rem;
-}
-
-.game-label {
-  font-size: 0.9rem;
-  font-weight: 700;
 }
 
 .game-buttons {
@@ -117,6 +124,13 @@ body.dragging-touch {
   font-size: 0.92rem;
   font-weight: 700;
   color: #3a2f18;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(58, 122, 54, 0.2);
+}
+
+.mode-btn:not(.active):hover {
+  background: #fff0c8;
 }
 
 .mode-btn.active {
@@ -125,6 +139,8 @@ body.dragging-touch {
 }
 
 .control-card {
+  position: relative;
+  z-index: 2;
   display: grid;
   gap: 0.45rem;
   background: #fff5dd;
@@ -135,14 +151,9 @@ body.dragging-touch {
 
 .puffly-controls {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.45rem 0.6rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem 0.55rem;
   align-items: center;
-}
-
-.difficulty-label {
-  font-size: 0.9rem;
-  font-weight: 700;
 }
 
 .difficulty-buttons {
@@ -178,57 +189,162 @@ body.dragging-touch {
   font-size: 0.95rem;
 }
 
-.audio-label {
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-
-.audio-buttons {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.35rem;
-}
-
-.audio-btn {
+.toggle-btn {
   min-height: 34px;
   border-radius: 8px;
   border: 2px solid #9d7a37;
   background: #fffdf8;
   font-size: 0.82rem;
   font-weight: 700;
+  color: #3f321b;
 }
 
-.audio-btn.active {
+.toggle-btn.is-on {
   border-color: #3a7a36;
   background: #e5f7e7;
+  color: #234a24;
+}
+
+.toggle-btn.is-off {
+  border-color: #c9a227;
+  background: #fff4c8;
+  color: #5a4a12;
+}
+
+.audio-toggle {
+  min-width: 4.6rem;
+  padding: 0 0.55rem;
 }
 
 .friend-room-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.4rem;
 }
 
-.friend-room-actions button {
+.friend-join-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.friend-join-row input {
   min-height: 38px;
   border-radius: 8px;
-  border: 2px solid #7e6433;
-  font-size: 0.88rem;
-}
-
-.friend-room-actions button {
-  background: #ffe7ab;
+  border: 2px solid #9d7a37;
+  background: #fffdf8;
+  font-size: 0.95rem;
   font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0 0.55rem;
 }
 
-.leave-room-btn {
-  grid-column: 1 / -1;
-  background: #ffd3d3 !important;
+.friend-join-row .toggle-btn {
+  min-height: 38px;
+  min-width: 5.5rem;
+}
+
+.friend-room-actions .toggle-btn {
+  min-height: 38px;
+  font-size: 0.82rem;
+  padding: 0 0.35rem;
+}
+
+.friend-controls {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.friend-puzzle-panel {
+  margin-top: 0;
+}
+
+.friend-puzzle-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.friend-puzzle-buttons .friend-difficulty-btn {
+  min-height: 34px;
+}
+
+.friend-puzzle-buttons .friend-difficulty-btn.is-locked {
+  opacity: 0.72;
+}
+
+.friend-invite-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.45rem;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  border: 2px dashed #b99852;
+  border-radius: 10px;
+  background: #fffdf6;
+}
+
+.friend-invite-code {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.friend-invite-label {
+  font-weight: 700;
+  color: #5a4a12;
+}
+
+.friend-invite-code strong {
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+}
+
+.friend-invite-link {
+  display: block;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  word-break: break-all;
+  color: #2f5f9c;
+  text-decoration: underline;
+}
+
+.friend-invite-panel .toggle-btn {
+  min-height: 34px;
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .friend-status {
   margin: 0;
-  font-size: 0.8rem;
+  min-height: 1.25rem;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  color: #2f4a24;
+  font-weight: 700;
+}
+
+#friend-controls .toggle-btn[data-friend-action] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(58, 122, 54, 0.25);
+  position: relative;
+  z-index: 2;
 }
 
 .board-stage {
@@ -263,6 +379,21 @@ body.puzzle-game .board-and-captures {
   grid-template-rows: auto 1fr;
   gap: 0.2rem;
   padding: 0.24rem 0.12rem;
+}
+
+.captured-tray.your-tray {
+  border-width: 3px;
+  box-shadow: 0 0 0 2px rgba(63, 122, 54, 0.22);
+}
+
+.captured-tray.blue.your-tray {
+  border-color: #2f6db6;
+  box-shadow: 0 0 0 2px rgba(47, 109, 182, 0.22);
+}
+
+.captured-tray.green.your-tray {
+  border-color: #3a7a36;
+  background: #f0fff0;
 }
 
 .captured-tray p {
@@ -422,6 +553,7 @@ body.puzzle-game .board-and-captures {
   display: grid;
   place-items: center;
   padding: 1rem;
+  pointer-events: auto;
 }
 
 .speech-unlock-overlay.hidden {
@@ -437,6 +569,35 @@ body.puzzle-game .board-and-captures {
   text-align: center;
   display: grid;
   gap: 0.55rem;
+  pointer-events: auto;
+}
+
+body.friend-mode #puffly-controls {
+  display: none !important;
+}
+
+body.friend-mode #friend-controls {
+  display: grid !important;
+}
+
+body.friend-mode #friend-controls.hidden {
+  display: grid !important;
+}
+
+body.friend-mode #create-room-btn,
+body.friend-mode #join-room-btn {
+  border-color: #3a7a36 !important;
+  background: #e5f7e7 !important;
+  color: #234a24 !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  opacity: 1 !important;
+  box-shadow: 0 0 0 1px rgba(58, 122, 54, 0.35);
+}
+
+body.friend-mode #create-room-btn:disabled,
+body.friend-mode #join-room-btn:disabled {
+  opacity: 0.55 !important;
 }
 
 .speech-unlock-card h2,
@@ -518,7 +679,27 @@ body.friend-mode .friend-chat-panel.hidden {
   order: -1;
 }
 
-.puffly-panel.idle .puffly-face {
+.puffly-panel.team-green {
+  background: #e8f9e8;
+  border-color: #4f9a57;
+}
+
+.puffly-panel.team-blue {
+  background: #fff1cf;
+  border-color: #c99335;
+}
+
+.team-mascot-wrap {
+  display: grid;
+  place-items: center;
+  min-height: 50px;
+}
+
+.team-mascot-wrap .team-face {
+  grid-area: 1 / 1;
+}
+
+.puffly-panel.idle .team-face:not(.hidden) {
   animation: pufflyBob 1600ms ease-in-out infinite;
 }
 
@@ -526,11 +707,11 @@ body.friend-mode .friend-chat-panel.hidden {
   animation: pufflyThoughtPulse 650ms ease-in-out infinite alternate;
 }
 
-.puffly-panel.celebrate .puffly-face {
+.puffly-panel.celebrate .team-face:not(.hidden) {
   animation: pufflyCheer 360ms ease-in-out 2;
 }
 
-.puffly-panel.capture-cheer .puffly-face {
+.puffly-panel.capture-cheer .team-face:not(.hidden) {
   animation: pufflyCaptureCheer 300ms ease-in-out 2;
 }
 
@@ -539,6 +720,14 @@ body.friend-mode .friend-chat-panel.hidden {
   font-size: 0.8rem;
   font-weight: 700;
   text-align: center;
+}
+
+.puffly-panel.team-green .puffly-label {
+  color: #1f5d28;
+}
+
+.puffly-panel.team-blue .puffly-label {
+  color: #2f4f79;
 }
 
 .puffly-thought {
@@ -690,6 +879,25 @@ body.friend-mode .friend-chat-panel.hidden {
   background: #243852;
 }
 
+.frog-mascot {
+  width: 72px;
+  height: 86px;
+  border-radius: 10px;
+  border: 2px solid #2f6a36;
+  background: linear-gradient(180deg, #1a3d22 0%, #101010 100%);
+  display: grid;
+  place-items: center;
+}
+
+.frog-mascot-icon {
+  font-size: 2.65rem;
+  line-height: 1;
+  display: block;
+  transform: translateY(2px);
+  pointer-events: none;
+  user-select: none;
+}
+
 .board {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -752,6 +960,7 @@ body.friend-mode .friend-chat-panel.hidden {
 .puzzle-cell {
   border: 1px dashed rgba(48, 81, 121, 0.45);
   overflow: visible;
+  touch-action: manipulation;
 }
 
 .puzzle-cell.locked {
@@ -1055,13 +1264,70 @@ body.friend-mode .friend-chat-panel.hidden {
   filter: drop-shadow(0 0 0 1px rgba(0, 0, 0, 0.9));
 }
 
+.puzzle-tray .puzzle-piece.selected {
+  box-shadow: none;
+  transform: none;
+  filter: none;
+  outline: 4px solid #0e0e0e;
+  outline-offset: 2px;
+}
+
 .puzzle-piece.selected .puzzle-piece-outline {
   stroke: #0e0e0e !important;
   stroke-width: 4;
 }
 
+.puzzle-tray .puzzle-piece.selected .puzzle-piece-outline,
+.puzzle-tray .puzzle-piece.selected .puzzle-piece-seam {
+  stroke: inherit;
+  stroke-width: inherit;
+}
+
 .puzzle-piece.selected .puzzle-piece-seam {
   stroke: rgba(0, 0, 0, 0.55);
+}
+
+.puzzle-tray .puzzle-piece {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.puzzle-cell.puzzle-slot-placing {
+  box-shadow: inset 0 0 0 4px rgba(14, 14, 14, 0.92);
+}
+
+/* Instant Tap 1 (tray) / Tap 2 (slot) press feedback — no transition delay */
+.puzzle-tray .puzzle-piece.puzzle-tap-flash {
+  outline: 4px solid #0e0e0e;
+  outline-offset: 2px;
+  transition: none;
+}
+
+.puzzle-cell.puzzle-tap-flash {
+  box-shadow: inset 0 0 0 4px rgba(14, 14, 14, 0.92);
+  transition: none;
+}
+
+/* iPad/touch: :active paints before JS; avoid transform on SVG tray pieces */
+@media (hover: none) and (pointer: coarse) {
+  .puzzle-tray .puzzle-piece:active,
+  .puzzle-tray .puzzle-piece.puzzle-tap-flash {
+    outline: 4px solid #0e0e0e;
+    outline-offset: 2px;
+    transition: none;
+  }
+
+  .puzzle-cell:active,
+  .puzzle-cell.puzzle-tap-flash {
+    box-shadow: inset 0 0 0 4px rgba(14, 14, 14, 0.92);
+    transition: none;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .puzzle-tray .puzzle-piece.puzzle-tap-flash {
+    transform: scale(0.96);
+  }
 }
 
 .puzzle-piece.dark .puzzle-piece-outline {
@@ -1072,12 +1338,37 @@ body.friend-mode .friend-chat-panel.hidden {
   stroke: #2f6a36;
 }
 
+
 .drag-ghost {
-  position: fixed;
+  position: fixed !important;
+  pointer-events: none !important;
+  z-index: 10000 !important;
+  opacity: 1;
+  cursor: default;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.35));
+}
+
+.puzzle-fly-piece {
+  position: fixed !important;
+  pointer-events: none !important;
+  z-index: 10000 !important;
+  opacity: 1;
+  cursor: default;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  transform-origin: center center;
+  will-change: transform, left, top;
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.35));
+}
+
+.puzzle-fly-placeholder {
+  display: inline-block;
+  visibility: hidden;
   pointer-events: none;
-  z-index: 2000;
-  opacity: 0.94;
-  cursor: grabbing;
 }
 
 .drag-ghost.puffly-auto {
@@ -1129,6 +1420,11 @@ body.friend-mode .friend-chat-panel.hidden {
   display: none;
 }
 
+.puzzle-debug-strip.hidden,
+.puzzle-debug-strip[hidden] {
+  display: none;
+}
+
 .puzzle-debug-strip {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.68rem;
@@ -1173,10 +1469,137 @@ body.friend-mode .friend-chat-panel.hidden {
   margin: 0.1rem 0;
 }
 
+.captured-tray-label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+/* Mac / desktop: tighter chrome, fewer redundant text fields */
+@media (hover: hover) and (pointer: fine), (min-width: 900px) {
+  body {
+    padding-top: 0.45rem;
+    padding-bottom: 0.55rem;
+  }
+
+  .app-chrome,
+  .app-shell {
+    gap: 0.45rem;
+  }
+
+  .app-header h1 {
+    margin: 0;
+    font-size: 1.2rem;
+  }
+
+  .game-panel,
+  .control-card,
+  .controls {
+    padding: 0.3rem 0.45rem;
+  }
+
+  .mode-btn {
+    min-height: 38px;
+    font-size: 0.86rem;
+  }
+
+  .game-btn {
+    min-height: 32px;
+    font-size: 0.8rem;
+  }
+
+  .friend-controls {
+    gap: 0.28rem;
+  }
+
+  .friend-join-row input {
+    min-height: 34px;
+    font-size: 0.88rem;
+  }
+
+  .friend-join-row .toggle-btn {
+    min-height: 34px;
+    min-width: 4.2rem;
+  }
+
+  .friend-status {
+    font-size: 0.76rem;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  body.friend-room-active .friend-join-row {
+    display: none;
+  }
+
+  body.friend-room-active .friend-status:not(.friend-status-alert) {
+    display: none;
+  }
+
+  body.friend-room-active .friend-status.friend-status-alert {
+    display: block;
+    white-space: normal;
+  }
+
+  .friend-invite-panel {
+    padding: 0.28rem 0.4rem;
+    gap: 0.28rem 0.4rem;
+  }
+
+  .friend-invite-label {
+    display: none;
+  }
+
+  .friend-invite-code strong {
+    font-size: 0.9rem;
+  }
+
+  .friend-invite-panel .toggle-btn {
+    min-height: 30px;
+    font-size: 0.78rem;
+    padding: 0 0.45rem;
+  }
+
+  .friend-puzzle-buttons .friend-difficulty-btn {
+    min-height: 30px;
+    font-size: 0.78rem;
+  }
+
+  .voice-status {
+    display: none;
+  }
+
+  .voice-title {
+    font-size: 0.88rem;
+  }
+
+  .voice-controls button {
+    min-height: 32px;
+    font-size: 0.82rem;
+  }
+
+  .captured-tray-label {
+    font-size: 0.62rem;
+  }
+
+  .puffly-thought {
+    font-size: 0.82rem;
+    min-height: 1.1rem;
+  }
+
+  body.friend-mode .gameplay-layout {
+    grid-template-columns: minmax(0, 1fr) 148px;
+  }
+}
+
 .celebration-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: 1250;
   display: grid;
   place-items: center;
   background: rgba(39, 24, 3, 0.55);

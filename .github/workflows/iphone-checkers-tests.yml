@@ -1,0 +1,31 @@
+# Practice voice + engine regression tests for iphone-checkers.
+# See iphone-checkers/src/voicePhrases.js for phrase/clip rules.
+name: iphone-checkers tests
+
+on:
+  push:
+    branches: [main, mobile-compat-v1]
+    paths:
+      - "iphone-checkers/**"
+      - ".github/workflows/iphone-checkers-tests.yml"
+  pull_request:
+    branches: [main, mobile-compat-v1]
+    paths:
+      - "iphone-checkers/**"
+      - ".github/workflows/iphone-checkers-tests.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iphone-checkers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Engine tests
+        run: node ./src/engine.test.mjs
+      - name: Voice phrase + WAV asset tests
+        run: node ./src/voicePhrases.test.mjs

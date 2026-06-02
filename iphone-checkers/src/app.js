@@ -7,6 +7,15 @@ import {
   getLegalMovesForPiece,
   isDarkSquare,
 } from "./engine.js?v=10";
+import {
+  PRACTICE_FLIP_VOICE_PHRASE,
+  SPEECH_BUILD,
+  VOICE_CLIP_BASE,
+  VOICE_CLIP_EXT,
+  VOICE_CLIP_IDS,
+  getPracticeEndgamePhrase,
+  resolveVoiceClipId,
+} from "./voicePhrases.js";
 import { DEFAULT_GAME_ID, GAME_REGISTRY, getGameConfig, isKnownGame, normalizeGameId } from "./games/registry.js";
 import {
   FOUR_COLS,
@@ -40,8 +49,10 @@ const restartButton = document.getElementById("restart-btn");
 const undoButton = document.getElementById("undo-btn");
 const rulesButton = document.getElementById("rules-btn");
 const controlsPanel = document.querySelector(".controls");
-const difficultyButtons = Array.from(document.querySelectorAll(".difficulty-btn"));
-const audioButtons = Array.from(document.querySelectorAll(".audio-btn"));
+const difficultyButtons = Array.from(document.querySelectorAll("#puffly-controls .difficulty-btn"));
+const friendDifficultyButtons = Array.from(document.querySelectorAll(".friend-difficulty-btn"));
+const friendPuzzleDifficultyPanel = document.getElementById("friend-puzzle-difficulty");
+const audioToggleButton = document.getElementById("audio-toggle-btn");
 const pufflyControls = document.getElementById("puffly-controls");
 const friendControls = document.getElementById("friend-controls");
 const createRoomButton = document.getElementById("create-room-btn");
@@ -50,6 +61,10 @@ const copyRoomButton = document.getElementById("copy-room-btn");
 const leaveRoomButton = document.getElementById("leave-room-btn");
 const roomCodeInput = document.getElementById("room-code-input");
 const friendStatusLabel = document.getElementById("friend-status");
+const friendInvitePanel = document.getElementById("friend-invite-panel");
+const friendRoomCodeLabel = document.getElementById("friend-room-code");
+const friendInviteLink = document.getElementById("friend-invite-link");
+const copyInviteButton = document.getElementById("copy-invite-btn");
 const historyList = document.getElementById("history-list");
 const rulesPanel = document.getElementById("rules-panel");
 const puzzleDebugStrip = document.getElementById("puzzle-debug-strip");
@@ -87,7 +102,9 @@ const celebrationSubtitle = document.getElementById("celebration-subtitle");
 const celebrationClose = document.getElementById("celebration-close");
 const pufflyPanel = document.getElementById("puffly-panel");
 const pufflyThought = document.getElementById("puffly-thought");
-const pufflyFace = pufflyPanel?.querySelector(".puffly-face");
+const teamMascotLabel = document.getElementById("team-mascot-label");
+const blueMascotFace = document.querySelector("#puffly-panel .blue-face");
+const greenMascotFace = document.querySelector("#puffly-panel .green-face");
 const starterFlipButton = document.getElementById("starter-flip-btn");
 const starterCoin = document.getElementById("starter-coin");
 const PUZZLE_DEBUG_ENABLED =
@@ -96,9 +113,15 @@ const PUZZLE_DEBUG_ENABLED =
 
 const humanPlayer = "light";
 const computerPlayer = "dark";
+const PRACTICE_DIFFICULTY_LABELS = {
+  checkers: { easy: "Silly", medium: "Playful", hard: "Clever" },
+  fourinarow: { easy: "Silly", medium: "Playful", hard: "Clever" },
+  puzzle: { easy: "Mini", medium: "Classic", hard: "Mega" },
+};
 let difficulty = "medium";
 let state = createStateForGame(DEFAULT_GAME_ID);
 let busy = false;
+let deferRoomSyncUntilIdle = false;
 let lastStatusMessage = "Make your move.";
 let selectedGameId = DEFAULT_GAME_ID;
 let playMode = "puffly";
@@ -113,7 +136,11 @@ let lastTurnSpoken = "";
 const AI_MOVE_ANIMATION_MS = 1300;
 const HUMAN_MOVE_ANIMATION_MS = 450;
 const FRIEND_MOVE_DELAY_MS = 420;
+/** Opponent move animation disabled — strict server snapshots keep both boards identical. */
+const FRIEND_ANIMATE_OPPONENT_MOVES = false;
+const FRIEND_ROOM_POLL_MS = 250;
 const STARTER_FLIP_ANIMATION_MS = 1450;
+const FRIEND_FLIP_SYNC_MS = 380;
 const PUFFLY_PUZZLE_PLACE_MS = 1250;
 const CHECKERS_STARTING_PIECES = 12;
 const PUZZLE_JIGSAW_BASE = 100;
@@ -142,14 +169,31 @@ let applyingRemoteSync = false;
 const FRIEND_SESSION_STORAGE_KEY = "puffly.friend.session.v1";
 let triedStoredFriendReconnect = false;
 let reconnectingStoredFriendSession = false;
+let pendingInviteShareRoomCode = "";
+let lastCreateRoomTapAt = 0;
+let lastJoinRoomTapAt = 0;
+let lastPuzzleBoardActivateAt = 0;
+let lastTrayTapAt = 0;
+let lastBoardTapAt = 0;
+let puzzlePlaceInFlight = false;
+let lastTraySelectedPieceId = "";
+const puzzleTrayPieceById = new Map();
+let boardGeometryLockedAt = 0;
+const BOARD_GEOMETRY_LOCK_TTL_MS = 400;
 const AUTO_JOIN_ROOM_CODE = getJoinCodeFromUrl();
 const AUTO_GAME_ID = getGameFromUrl();
+const AUTO_PUZZLE_SIZE = getPuzzleSizeFromUrl();
 let pendingPrioritySpeech = "";
 let pendingJoinIntroTeam = "";
+let friendSpeechPlaying = false;
+const friendSpeechQueue = [];
+let friendSpeechWatchdog = null;
 const speechNeedsInteractionUnlock = detectIOSLikeBrowser();
+
 let speechUnlocked = !speechNeedsInteractionUnlock;
 let pendingUnlockSpeech = "";
 let selectedPuzzlePieceId = "";
+let puzzleFlipTurnLocal = "dark";
 let puzzleTrayBootstrapAttempted = false;
 let puzzlePreFlipGeometryRefreshScheduled = false;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -168,12 +212,61 @@ function puzzleEdgeSeed(row, col) {
   return raw - Math.floor(raw) >= 0.5 ? 1 : -1;
 }
 
+function inferPuzzleGridSizeFromState(targetState = state) {
+  const pieces = targetState?.pieces;
+  const sizeByCount = { 4: 2, 16: 4, 25: 5 };
+  if (Array.isArray(pieces) && pieces.length > 0 && sizeByCount[pieces.length]) {
+    const countSize = sizeByCount[pieces.length];
+    const rawRows = Number(targetState?.rows);
+    const rawCols = Number(targetState?.cols ?? targetState?.rows);
+    const declaredGridPieces =
+      PUZZLE_ALLOWED_GRID_SIZES.includes(rawRows) && PUZZLE_ALLOWED_GRID_SIZES.includes(rawCols)
+        ? rawRows * rawCols
+        : 0;
+    if (declaredGridPieces !== pieces.length) {
+      return { rows: countSize, cols: countSize };
+    }
+  }
+  const rawRows = Number(targetState?.rows);
+  const rawCols = Number(targetState?.cols ?? targetState?.rows);
+  if (PUZZLE_ALLOWED_GRID_SIZES.includes(rawRows) && PUZZLE_ALLOWED_GRID_SIZES.includes(rawCols)) {
+    return { rows: rawRows, cols: rawCols };
+  }
+  if (Array.isArray(pieces) && pieces.length > 0) {
+    if (sizeByCount[pieces.length]) {
+      const size = sizeByCount[pieces.length];
+      return { rows: size, cols: size };
+    }
+    let maxRow = 0;
+    let maxCol = 0;
+    for (const piece of pieces) {
+      if (Number.isInteger(piece.correctRow)) {
+        maxRow = Math.max(maxRow, piece.correctRow);
+      }
+      if (Number.isInteger(piece.correctCol)) {
+        maxCol = Math.max(maxCol, piece.correctCol);
+      }
+    }
+    const inferred = Math.max(maxRow, maxCol) + 1;
+    if (PUZZLE_ALLOWED_GRID_SIZES.includes(inferred)) {
+      return { rows: inferred, cols: inferred };
+    }
+  }
+  return { rows: PUZZLE_ROWS, cols: PUZZLE_COLS };
+}
+
 function getPuzzleGridSizeFromState(targetState = state) {
-  const rows = Number(targetState?.rows || PUZZLE_ROWS);
-  const cols = Number(targetState?.cols || PUZZLE_COLS);
-  const validRows = PUZZLE_ALLOWED_GRID_SIZES.includes(rows) ? rows : PUZZLE_ROWS;
-  const validCols = PUZZLE_ALLOWED_GRID_SIZES.includes(cols) ? cols : PUZZLE_COLS;
-  return { rows: validRows, cols: validCols };
+  return inferPuzzleGridSizeFromState(targetState);
+}
+
+function puzzleDifficultyFromGridSize(rows) {
+  if (rows === 2) {
+    return "easy";
+  }
+  if (rows === 5) {
+    return "hard";
+  }
+  return "medium";
 }
 
 function createPuzzleHorizontalEdges(rows, cols) {
@@ -271,38 +364,162 @@ function buildPuzzleOuterEdgePath(piece, rows, cols) {
   return commands.join(" ");
 }
 
-function detectIOSLikeBrowser() {
+function isDesktopMacBrowser() {
   if (typeof navigator === "undefined") {
     return false;
   }
   const ua = navigator.userAgent || "";
-  const isiOSDevice = /iPad|iPhone|iPod/i.test(ua);
-  const iPadDesktopUA = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
-  return isiOSDevice || iPadDesktopUA;
+  return (
+    /Macintosh/i.test(ua) &&
+    (/Chrome\//i.test(ua) ||
+      /Edg\//i.test(ua) ||
+      /Firefox\//i.test(ua) ||
+      (/Safari\//i.test(ua) && !/Mobile|CriOS|FxiOS|EdgiOS/i.test(ua)))
+  );
+}
+
+function detectIOSLikeBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  if (isDesktopMacBrowser()) {
+    return false;
+  }
+  const ua = navigator.userAgent || "";
+  if (/iPad|iPhone|iPod/i.test(ua)) {
+    return true;
+  }
+  // iPadOS 13+ desktop UA: MacIntel + touch (not a desktop Mac browser).
+  if (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) {
+    return true;
+  }
+  return false;
+}
+
+/** Desktop: speech is unlocked; Practice still shows its own Start overlay once per load. */
+function initDesktopSpeechDefaults() {
+  if (speechNeedsInteractionUnlock) {
+    return;
+  }
+  speechUnlocked = true;
+  speechGesturePrimed = true;
+  friendVoiceStartDismissed = true;
+  updateSpeechUnlockOverlay();
+}
+
+function isChromiumBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  const ua = navigator.userAgent || "";
+  return /Chrome\//i.test(ua) && !/Edg\//i.test(ua);
+}
+
+function shouldQueueFriendSpeech() {
+  return speechNeedsInteractionUnlock;
+}
+
+function canSpeakNow(options = {}) {
+  if (!audioEnabled || typeof window === "undefined" || !window.speechSynthesis) {
+    return false;
+  }
+  if (options.inGesture) {
+    return true;
+  }
+  if (!speechNeedsInteractionUnlock) {
+    return true;
+  }
+  return speechGesturePrimed && speechUnlocked;
+}
+
+function prepareSpeechSynthesisForUtterance(options = {}) {
+  const syn = typeof window !== "undefined" ? window.speechSynthesis : null;
+  if (!syn) {
+    return null;
+  }
+  syn.resume();
+  const skipCancel = Boolean(options.skipCancel);
+  if (isChromiumBrowser() && !skipCancel) {
+    syn.cancel();
+    syn.resume();
+  }
+  return syn;
+}
+
+function readInviteParamsFromUrl() {
+  if (typeof window === "undefined") {
+    return { join: "", game: "", puzzleSize: "", mode: "" };
+  }
+  const search = new URLSearchParams(window.location.search);
+  let hashRaw = window.location.hash.replace(/^#/, "");
+  if (hashRaw.startsWith("?")) {
+    hashRaw = hashRaw.slice(1);
+  }
+  const hash = new URLSearchParams(hashRaw.includes("=") ? hashRaw : "");
+  const pick = (key) => (search.get(key) || hash.get(key) || "").trim();
+  let join = pick("join").toUpperCase();
+  if (!join && hashRaw && /^[A-Z0-9]{4,8}$/i.test(hashRaw)) {
+    join = hashRaw.toUpperCase();
+  }
+  const game = normalizeGameId(pick("game").toLowerCase());
+  const mode = pick("mode").toLowerCase();
+  let puzzleSize = pick("puzzleSize").toLowerCase() || pick("puzzleDifficulty").toLowerCase();
+  if (puzzleSize === "mini") {
+    puzzleSize = "easy";
+  } else if (puzzleSize === "classic") {
+    puzzleSize = "medium";
+  } else if (puzzleSize === "mega") {
+    puzzleSize = "hard";
+  }
+  return {
+    join: /^[A-Z0-9]{4,8}$/.test(join) ? join : "",
+    game: isKnownGame(game) ? game : "",
+    puzzleSize: puzzleSize === "easy" || puzzleSize === "medium" || puzzleSize === "hard" ? puzzleSize : "",
+    mode: mode === "friend" ? "friend" : "",
+  };
 }
 
 function getJoinCodeFromUrl() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  const params = new URLSearchParams(window.location.search);
-  const raw = (params.get("join") || "").trim().toUpperCase();
-  if (!/^[A-Z0-9]{4,8}$/.test(raw)) {
-    return "";
-  }
-  return raw;
+  return readInviteParamsFromUrl().join;
 }
 
 function getGameFromUrl() {
-  if (typeof window === "undefined") {
-    return DEFAULT_GAME_ID;
+  const inviteGame = readInviteParamsFromUrl().game;
+  return inviteGame || DEFAULT_GAME_ID;
+}
+
+function getPuzzleSizeFromUrl() {
+  return readInviteParamsFromUrl().puzzleSize;
+}
+
+function applyInviteLandingConfig() {
+  const invite = readInviteParamsFromUrl();
+  if (invite.game) {
+    selectedGameId = invite.game;
   }
-  const params = new URLSearchParams(window.location.search);
-  const raw = normalizeGameId((params.get("game") || "").trim().toLowerCase());
-  if (isKnownGame(raw)) {
-    return raw;
+  if (invite.puzzleSize) {
+    difficulty = invite.puzzleSize;
   }
-  return DEFAULT_GAME_ID;
+  updateGameButtons();
+  updateAppTitle();
+  updateDifficultyButtonLabels();
+  updateFriendDifficultyButtons();
+  updateFriendPuzzleDifficultyPanel();
+  updateRulesForMode();
+}
+
+function isValidCheckersBoard(board) {
+  if (!Array.isArray(board) || board.length !== BOARD_SIZE) {
+    return false;
+  }
+  return board.every((row) => Array.isArray(row) && row.length === BOARD_SIZE);
+}
+
+function isValidFourInARowGrid(grid) {
+  if (!Array.isArray(grid) || grid.length !== FOUR_ROWS) {
+    return false;
+  }
+  return grid.every((row) => Array.isArray(row) && row.length === FOUR_COLS);
 }
 
 function createStateForGame(gameId) {
@@ -314,6 +531,18 @@ function createStateForGame(gameId) {
     baseState = createPuzzleInitialState({ difficulty });
   } else {
     baseState = createInitialState();
+  }
+  if (normalized === "puzzle") {
+    const flip =
+      playMode === "friend" && remoteSession ? getPuzzleFlipTurnForRebuild() : puzzleFlipTurnLocal;
+    return {
+      ...baseState,
+      currentPlayer: flip,
+      puzzleFlipTurn: flip,
+      starterFlipDone: false,
+      starterPlayer: null,
+      preFlipSetupReady: false,
+    };
   }
   return {
     ...baseState,
@@ -338,6 +567,93 @@ function isValidPuzzlePiece(piece, puzzleState = state) {
   );
 }
 
+function isPuzzleComplete(stateLike = state) {
+  const pieces = stateLike?.pieces;
+  return Array.isArray(pieces) && pieces.length > 0 && pieces.every((piece) => piece.placed);
+}
+
+function repairPuzzleStateGrid(stateLike) {
+  if (!stateLike || !Array.isArray(stateLike.pieces) || stateLike.pieces.length === 0) {
+    return stateLike;
+  }
+  const { rows, cols } = inferPuzzleGridSizeFromState(stateLike);
+  if (stateLike.rows === rows && stateLike.cols === cols) {
+    return stateLike;
+  }
+  return { ...stateLike, rows, cols };
+}
+
+function flushDeferredRoomSync() {
+  if (!deferRoomSyncUntilIdle || !remoteSession) {
+    return;
+  }
+  deferRoomSyncUntilIdle = false;
+  syncRoomState().catch(() => {});
+}
+
+function finalizePuzzleCompletionState(stateLike) {
+  if (!isPuzzleComplete(stateLike)) {
+    return stateLike;
+  }
+  return {
+    ...stateLike,
+    draw: true,
+    winner: null,
+  };
+}
+
+function mergePuzzleFriendState(stateLike) {
+  const repaired = repairPuzzleStateGrid(stateLike);
+  const { rows, cols } = inferPuzzleGridSizeFromState(repaired);
+  return finalizePuzzleCompletionState({
+    ...repaired,
+    rows,
+    cols,
+    starterFlipDone: Boolean(stateLike.starterFlipDone),
+    starterPlayer: stateLike.starterPlayer === "dark" || stateLike.starterPlayer === "light" ? stateLike.starterPlayer : null,
+    preFlipSetupReady: Boolean(stateLike.preFlipSetupReady),
+    puzzleFlipTurn:
+      stateLike.puzzleFlipTurn === "light" || stateLike.puzzleFlipTurn === "dark"
+        ? stateLike.puzzleFlipTurn
+        : remoteSession?.puzzleFlipTurn === "light" || remoteSession?.puzzleFlipTurn === "dark"
+          ? remoteSession.puzzleFlipTurn
+          : null,
+  });
+}
+
+function applyPuzzleFlipTurnFromRemote(stateLike, apiPayload) {
+  const flip =
+    apiPayload?.puzzleFlipTurn ??
+    stateLike?.puzzleFlipTurn ??
+    (!stateLike?.starterFlipDone && (stateLike?.currentPlayer === "light" || stateLike?.currentPlayer === "dark")
+      ? stateLike.currentPlayer
+      : null);
+  if (flip !== "dark" && flip !== "light") {
+    return;
+  }
+  syncPuzzleFlipTurnFromPayload({ puzzleFlipTurn: flip });
+}
+
+function rebuildPuzzleStateKeepingFlipTurn() {
+  const flip = getPuzzleFlipTurnForRebuild();
+  puzzleFlipTurnLocal = flip;
+  if (remoteSession) {
+    remoteSession.puzzleFlipTurn = flip;
+  }
+  if (playMode === "friend" && remoteSession) {
+    if (state && !state.starterFlipDone) {
+      state.puzzleFlipTurn = flip;
+      state.currentPlayer = flip;
+    }
+    selectedPuzzlePieceId = "";
+    return;
+  }
+  state = createStateForGame("puzzle");
+  state.currentPlayer = flip;
+  state.puzzleFlipTurn = flip;
+  selectedPuzzlePieceId = "";
+}
+
 function normalizeStateForGame(stateLike, gameId = selectedGameId) {
   if (!stateLike || typeof stateLike !== "object") {
     return createStateForGame(gameId);
@@ -346,12 +662,48 @@ function normalizeStateForGame(stateLike, gameId = selectedGameId) {
   if (normalizedGame === "puzzle") {
     const { rows, cols } = getPuzzleGridSizeFromState(stateLike);
     const expectedCount = getPuzzlePieceCountForGrid(rows);
-    if (!Array.isArray(stateLike.pieces) || stateLike.pieces.length !== expectedCount) {
-      return createStateForGame(gameId);
+    const piecesValid =
+      Array.isArray(stateLike.pieces) &&
+      stateLike.pieces.length === expectedCount &&
+      stateLike.pieces.every((piece) => isValidPuzzlePiece(piece, stateLike));
+    if (!piecesValid) {
+      if (playMode === "friend" && remoteSession && Array.isArray(stateLike.pieces) && stateLike.pieces.length > 0) {
+        return mergePuzzleFriendState(stateLike);
+      }
+      const fallbackDifficulty =
+        rows === 2 ? "easy" : rows === 5 ? "hard" : rows === 4 ? "medium" : difficulty;
+      const baseState = createPuzzleInitialState({ difficulty: fallbackDifficulty, size: rows });
+      return {
+        ...baseState,
+        currentPlayer:
+          stateLike.puzzleFlipTurn === "light" || stateLike.puzzleFlipTurn === "dark"
+            ? stateLike.puzzleFlipTurn
+            : !stateLike.starterFlipDone && (stateLike.currentPlayer === "light" || stateLike.currentPlayer === "dark")
+              ? stateLike.currentPlayer
+              : baseState.currentPlayer,
+        puzzleFlipTurn:
+          stateLike.puzzleFlipTurn === "light" || stateLike.puzzleFlipTurn === "dark" ? stateLike.puzzleFlipTurn : null,
+        starterFlipDone: Boolean(stateLike.starterFlipDone),
+        starterPlayer:
+          stateLike.starterPlayer === "dark" || stateLike.starterPlayer === "light" ? stateLike.starterPlayer : null,
+        preFlipSetupReady: Boolean(stateLike.preFlipSetupReady),
+      };
     }
-    if (!stateLike.pieces.every((piece) => isValidPuzzlePiece(piece, stateLike))) {
-      return createStateForGame(gameId);
+    return mergePuzzleFriendState(stateLike);
+  }
+  if (normalizedGame === "fourinarow") {
+    if (!isValidFourInARowGrid(stateLike.grid)) {
+      return createStateForGame("fourinarow");
     }
+    return {
+      ...stateLike,
+      starterFlipDone: Boolean(stateLike.starterFlipDone),
+      starterPlayer: stateLike.starterPlayer === "dark" || stateLike.starterPlayer === "light" ? stateLike.starterPlayer : null,
+      preFlipSetupReady: Boolean(stateLike.preFlipSetupReady),
+    };
+  }
+  if (!isValidCheckersBoard(stateLike.board)) {
+    return createStateForGame("checkers");
   }
   return {
     ...stateLike,
@@ -361,16 +713,50 @@ function normalizeStateForGame(stateLike, gameId = selectedGameId) {
   };
 }
 
+function ensureRenderableGameState() {
+  if (selectedGameId === "puzzle") {
+    return ensurePuzzleStateReady();
+  }
+  if (selectedGameId === "fourinarow") {
+    if (isValidFourInARowGrid(state?.grid)) {
+      return false;
+    }
+    state = createStateForGame("fourinarow");
+    return true;
+  }
+  if (isValidCheckersBoard(state?.board)) {
+    return false;
+  }
+  state = createStateForGame("checkers");
+  return true;
+}
+
 function ensurePuzzleStateReady() {
   if (selectedGameId !== "puzzle") {
     return false;
+  }
+  if (state && Array.isArray(state.pieces) && state.pieces.length > 0) {
+    state = repairPuzzleStateGrid(state);
   }
   const pieces = state?.pieces;
   const { rows } = getPuzzleGridSizeFromState();
   const expectedCount = getPuzzlePieceCountForGrid(rows);
   if (!Array.isArray(pieces) || pieces.length !== expectedCount || !pieces.every((piece) => isValidPuzzlePiece(piece, state))) {
-    state = createStateForGame("puzzle");
-    selectedPuzzlePieceId = "";
+    if (playMode === "friend" && remoteSession) {
+      if (Array.isArray(pieces) && pieces.length > 0) {
+        state = mergePuzzleFriendState(state);
+        const repairedCount = getPuzzlePieceCountForGrid(state.rows);
+        if (
+          state.pieces.length === repairedCount &&
+          state.pieces.every((piece) => isValidPuzzlePiece(piece, state))
+        ) {
+          applyPuzzleFlipTurnFromRemote(state, { puzzleFlipTurn: remoteSession.puzzleFlipTurn });
+          return false;
+        }
+      }
+      return false;
+    }
+    rebuildPuzzleStateKeepingFlipTurn();
     return true;
   }
   const normalizedTurn = normalizePuzzleTurn(state);
@@ -419,13 +805,22 @@ function updateStarterFlipButton() {
   }
   const pending = isStarterFlipPending();
   const waitingForRoom = playMode === "friend" && (!remoteSession || !remoteSession.ready);
-  const canFlipAsPlayer = playMode !== "friend" || remoteSession?.color === "dark";
+  const flipperColor = getFriendFlipperColor();
+  const canFlipAsPlayer = playMode !== "friend" || remoteSession?.color === flipperColor;
   starterFlipButton.disabled = busy || !pending || waitingForRoom || !canFlipAsPlayer;
   if (!pending) {
     const starter = state.starterPlayer || state.currentPlayer;
     starterFlipButton.textContent = starterFirstMoveText(starter);
+    starterFlipButton.removeAttribute("aria-label");
+  } else if (playMode === "friend" && remoteSession?.ready && !canFlipAsPlayer) {
+    starterFlipButton.textContent = "WAIT";
+    starterFlipButton.setAttribute(
+      "aria-label",
+      `${playerDisplayName(flipperColor)} flips first`,
+    );
   } else {
     starterFlipButton.textContent = "FLIP";
+    starterFlipButton.setAttribute("aria-label", PRACTICE_FLIP_VOICE_PHRASE);
   }
   setStarterCoinFace(state?.starterPlayer || state?.currentPlayer);
 }
@@ -500,6 +895,8 @@ function writeStoredFriendSession(session) {
     roomCode: session.roomCode,
     playerId: session.playerId,
     gameType: normalizeGameId(session.gameType || selectedGameId || DEFAULT_GAME_ID),
+    version: typeof session.version === "number" ? session.version : undefined,
+    color: session.color === "dark" || session.color === "light" ? session.color : undefined,
   };
   try {
     window.localStorage.setItem(FRIEND_SESSION_STORAGE_KEY, JSON.stringify(payload));
@@ -519,6 +916,136 @@ function clearStoredFriendSession() {
   }
 }
 
+function resetLocalGameState(gameId = selectedGameId) {
+  const normalized = normalizeGameId(gameId);
+  selectedGameId = normalized;
+  state = createStateForGame(normalized);
+  selectedPuzzlePieceId = "";
+  moveHistory = [];
+  undoSnapshots = [];
+  winnerAnnounced = null;
+  puzzleTrayBootstrapAttempted = false;
+  lastSpokenPhrase = "";
+  lastTurnSpoken = "";
+  resetPracticeFlipVoiceTracking();
+  hideCelebration();
+}
+
+function prepareFreshAppLoad() {
+  stopRoomPolling();
+  remoteSession = null;
+  pendingInviteShareRoomCode = "";
+  pendingJoinIntroTeam = "";
+  triedStoredFriendReconnect = true;
+  reconnectingStoredFriendSession = false;
+  if (!getJoinCodeFromUrl()) {
+    clearStoredFriendSession();
+    if (roomCodeInput) {
+      roomCodeInput.value = "";
+    }
+  }
+}
+
+function enterFriendLobbyChrome(options = {}) {
+  playMode = "friend";
+  syncPlayModeChrome();
+  if (!speechNeedsInteractionUnlock) {
+    speechUnlocked = true;
+    speechGesturePrimed = true;
+    friendVoiceStartDismissed = true;
+  } else {
+    speechUnlocked = false;
+    speechGesturePrimed = false;
+    friendVoiceStartDismissed = false;
+  }
+  updateSpeechUnlockOverlay();
+  updateFriendPuzzleDifficultyPanel();
+  updateRulesForMode();
+  updateFriendRoomButtons();
+  updateFriendLockOverlay();
+  friendChatPanel?.classList.toggle("hidden", false);
+  if (!options.keepStatus) {
+    const joiningCode = options.joiningCode || getJoinCodeFromUrl();
+    if (joiningCode) {
+      setFriendStatus(`Joining room ${joiningCode}...`);
+    } else {
+      setFriendStatus(getFriendCreateRoomHint());
+      setPufflyState("idle", "🤝 Tap Create & Invite above to start.");
+      if (!remoteSession) {
+        announceFriendLobbyPrompt();
+      }
+    }
+  }
+}
+
+async function bootstrapInviteJoin(roomCode) {
+  const normalizedCode = String(roomCode || "")
+    .trim()
+    .toUpperCase();
+  if (!normalizedCode) {
+    return false;
+  }
+  if (typeof window !== "undefined" && window.__pufflyUserChosePufflyMode) {
+    return false;
+  }
+  if (typeof window !== "undefined") {
+    window.__pufflyInviteJoinInFlight = true;
+    window.__pufflyPendingInviteJoin = normalizedCode;
+  }
+  applyInviteLandingConfig();
+  updateGameButtons();
+  updateDifficultyButtonLabels();
+  updateFriendDifficultyButtons();
+  updateAppTitle();
+  resetLocalGameState(selectedGameId);
+  clearStoredFriendSession();
+  stopRoomPolling();
+  remoteSession = null;
+  enterFriendLobbyChrome({ joiningCode: normalizedCode });
+  if (roomCodeInput) {
+    roomCodeInput.value = normalizedCode;
+  }
+  setFriendStatus(`Joining room ${normalizedCode}...`);
+  try {
+    const joined = await joinRoomWithCode(normalizedCode, {
+      fromInvite: true,
+      skipModeSetup: true,
+    });
+    if (typeof window !== "undefined" && window.__pufflyUserChosePufflyMode) {
+      return false;
+    }
+    if (!joined) {
+      setFriendStatus("Could not join that invite. Check the link or tap Join Room.");
+      render("Friend mode: connect to a room.");
+      return false;
+    }
+    return true;
+  } catch (error) {
+    setFriendStatus(error?.message || "Could not join that invite.");
+    render("Friend mode: connect to a room.");
+    return false;
+  } finally {
+    if (typeof window !== "undefined") {
+      window.__pufflyInviteJoinInFlight = false;
+    }
+    flushPendingPlayModeTap();
+  }
+}
+
+function maybeAutoJoinFromInviteLink() {
+  if (typeof window !== "undefined" && window.__pufflyUserChosePufflyMode) {
+    return;
+  }
+  const code = getJoinCodeFromUrl();
+  if (!code || remoteSession) {
+    return;
+  }
+  if (typeof window !== "undefined" && window.__pufflyInviteJoinInFlight) {
+    return;
+  }
+  void bootstrapInviteJoin(code);
+}
+
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -527,7 +1054,10 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function lockBoardGeometry() {
+function lockBoardGeometry(force = false) {
+  if (!force && Date.now() - boardGeometryLockedAt < BOARD_GEOMETRY_LOCK_TTL_MS) {
+    return;
+  }
   const wrap = boardElement.parentElement;
   if (!wrap) {
     return;
@@ -555,6 +1085,7 @@ function lockBoardGeometry() {
     boardElement.style.height = `${cell * FOUR_ROWS + fourBoardChrome}px`;
     boardElement.style.gridTemplateColumns = `repeat(${FOUR_COLS}, ${cell}px)`;
     boardElement.style.gridTemplateRows = `repeat(${FOUR_ROWS}, ${cell}px)`;
+    boardGeometryLockedAt = Date.now();
     return;
   }
   if (selectedGameId === "puzzle") {
@@ -567,6 +1098,7 @@ function lockBoardGeometry() {
     boardElement.style.height = `${boardHeight}px`;
     boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
     boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
+    boardGeometryLockedAt = Date.now();
     return;
   }
 
@@ -578,6 +1110,94 @@ function lockBoardGeometry() {
   boardElement.style.height = `${boardPixels}px`;
   boardElement.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, ${cell}px)`;
   boardElement.style.gridTemplateRows = `repeat(${BOARD_SIZE}, ${cell}px)`;
+  boardGeometryLockedAt = Date.now();
+}
+
+function scheduleAudioUnlockFromGesture() {
+  window.requestAnimationFrame(() => {
+    ensureAudioContext();
+    flushPendingPrioritySpeech();
+  });
+}
+
+function abortPracticeInteractionForModeSwitch() {
+  cancelPracticeFlipVoiceTimers();
+  practiceFlipSpeakGeneration += 1;
+  resetPracticeFlipVoiceTracking();
+  releasePuzzleInteractionLocks();
+  busy = false;
+  deferRoomSyncUntilIdle = false;
+  practiceFlipDelivering = false;
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+function isFriendChromeVisible() {
+  return (
+    typeof document !== "undefined" && document.body.classList.contains("friend-mode")
+  );
+}
+
+function isFriendModeUiActive() {
+  return playMode === "friend";
+}
+
+function ensureFriendPlayModeSynced() {
+  const domShowsFriend = isFriendChromeVisible();
+  if (playMode !== "friend") {
+    if (!domShowsFriend) {
+      return false;
+    }
+    if (typeof window !== "undefined") {
+      window.__pufflyUserChosePufflyMode = false;
+      window.__pufflyPendingPlayMode = "friend";
+    }
+    abortPracticeInteractionForModeSwitch();
+    playMode = "friend";
+    syncPlayModeChrome();
+    updateFriendPuzzleDifficultyPanel();
+    updateRulesForMode();
+    updateFriendRoomButtons();
+    speechUnlockOverlay?.classList.add("hidden");
+    updateSpeechUnlockOverlay();
+  }
+  return playMode === "friend";
+}
+
+function releaseStaleBusyForFriendAction() {
+  if (!busy) {
+    return;
+  }
+  if (playMode === "friend" && !remoteSession && !pendingInviteShareRoomCode) {
+    busy = false;
+  }
+}
+
+function getFriendLockMessage() {
+  if (!isFriendModeUiActive()) {
+    return "";
+  }
+  // Before a room exists, keep the board visible — prompt via status line only.
+  if (!remoteSession) {
+    return "";
+  }
+  if (!remoteSession.ready) {
+    return "Waiting for your friend to join...";
+  }
+  return "";
+}
+
+function updateFriendLockOverlay() {
+  if (!friendLockOverlay) {
+    return;
+  }
+  const message = getFriendLockMessage();
+  const show = Boolean(message);
+  friendLockOverlay.classList.toggle("hidden", !show);
+  if (friendLockText && message) {
+    friendLockText.textContent = message;
+  }
 }
 
 function squareText(square) {
@@ -594,13 +1214,505 @@ function playerDisplayName(color) {
   return "Unknown";
 }
 
-function ensureAudioContext() {
+function syncPuzzleFlipTurnFromPayload(apiPayload) {
+  const flip =
+    apiPayload?.puzzleFlipTurn === "light" || apiPayload?.puzzleFlipTurn === "dark"
+      ? apiPayload.puzzleFlipTurn
+      : apiPayload?.state?.puzzleFlipTurn === "light" || apiPayload?.state?.puzzleFlipTurn === "dark"
+        ? apiPayload.state.puzzleFlipTurn
+        : null;
+  if (flip !== "dark" && flip !== "light") {
+    return;
+  }
+  puzzleFlipTurnLocal = flip;
+  if (remoteSession) {
+    remoteSession.puzzleFlipTurn = flip;
+  }
+  if (state && !state.starterFlipDone) {
+    state.puzzleFlipTurn = flip;
+    state.currentPlayer = flip;
+  }
+}
+
+function getPuzzleFlipTurnForRebuild() {
+  if (playMode === "friend" && remoteSession) {
+    if (remoteSession.puzzleFlipTurn === "light" || remoteSession.puzzleFlipTurn === "dark") {
+      return remoteSession.puzzleFlipTurn;
+    }
+  }
+  if (state?.puzzleFlipTurn === "light" || state?.puzzleFlipTurn === "dark") {
+    return state.puzzleFlipTurn;
+  }
+  return puzzleFlipTurnLocal === "light" ? "light" : "dark";
+}
+
+function getPuzzleFlipTurn() {
+  if (selectedGameId !== "puzzle" || !isStarterFlipPending()) {
+    return state?.starterPlayer || state?.currentPlayer || "dark";
+  }
+  return getPuzzleFlipTurnForRebuild();
+}
+
+function getFriendFlipperColor() {
+  if (selectedGameId === "puzzle" && isStarterFlipPending()) {
+    return getPuzzleFlipTurn();
+  }
+  return "dark";
+}
+
+function recoverBrokenPuzzleStateIfNeeded() {
+  if (selectedGameId !== "puzzle") {
+    return false;
+  }
+  if (playMode === "friend" && remoteSession) {
+    return false;
+  }
+  const pieces = state?.pieces;
+  const totalRemaining = Array.isArray(pieces) ? pieces.filter((piece) => !piece.placed).length : 0;
+  if (totalRemaining > 0 || isPuzzleComplete()) {
+    return false;
+  }
+  rebuildPuzzleStateKeepingFlipTurn();
+  puzzleTrayBootstrapAttempted = false;
+  return true;
+}
+
+function releasePuzzleInteractionLocks() {
+  puzzlePlaceInFlight = false;
+  if (selectedGameId !== "puzzle") {
+    return;
+  }
+  busy = false;
+  deferRoomSyncUntilIdle = false;
+  flushDeferredRoomSync();
+}
+
+function forcePuzzleUiRecoverable() {
+  if (selectedGameId !== "puzzle") {
+    return;
+  }
+  releasePuzzleInteractionLocks();
+  hideCelebration();
+  if (!isPuzzleComplete()) {
+    winnerAnnounced = null;
+  }
+  puzzleTrayBootstrapAttempted = false;
+  recoverBrokenPuzzleStateIfNeeded();
+}
+
+function togglePuzzleFlipTurnForNextGame() {
+  puzzleFlipTurnLocal = puzzleFlipTurnLocal === "dark" ? "light" : "dark";
+}
+
+function puzzleFlipPromptText() {
+  return `${playerDisplayName(getPuzzleFlipTurn())} flips to see who goes first.`;
+}
+
+function getFriendTurnPhrase(player = state?.currentPlayer) {
+  return `${playerDisplayName(player)}'s Turn`;
+}
+
+function getFriendFlipTurnPhrase(player = getFriendFlipperColor()) {
+  return `It's ${playerDisplayName(player)}'s turn to flip.`;
+}
+
+function buildFriendGameSwitchVoicePhrase(gameId = selectedGameId) {
+  const gameTitle = getGameConfig(normalizeGameId(gameId)).title;
+  let phrase = `Now playing ${gameTitle} with your friend.`;
+  if (playMode === "friend" && remoteSession?.ready && isStarterFlipPending()) {
+    phrase += ` ${getFriendFlipTurnPhrase(getFriendFlipperColor())}`;
+  }
+  return phrase;
+}
+
+function getFriendVoiceTurnPhrase() {
+  if (playMode === "friend" && remoteSession?.ready && isStarterFlipPending()) {
+    return getFriendFlipTurnPhrase(getFriendFlipperColor());
+  }
+  return getFriendTurnPhrase(state?.currentPlayer);
+}
+
+function shouldSpeakPuzzleFlipVoice() {
+  if (playMode === "puffly") {
+    return true;
+  }
+  return playMode === "friend" && Boolean(remoteSession?.ready);
+}
+
+function announceFriendFlipTurnVoice() {
+  if (!shouldSpeakPuzzleFlipVoice() || !isStarterFlipPending()) {
+    return;
+  }
+  if (playMode === "friend" && Date.now() < friendSwitchVoiceLockUntil) {
+    return;
+  }
+  const phrase =
+    playMode === "friend" ? getFriendFlipTurnPhrase(getFriendFlipperColor()) : "Flip to see who goes first.";
+  const now = Date.now();
+  if (phrase === friendFlipTurnLastPhrase && now < friendFlipTurnSpeechLockUntil) {
+    return;
+  }
+  if (lastTurnSpoken === phrase && now < friendFlipTurnSpeechLockUntil) {
+    return;
+  }
+  friendFlipTurnLastPhrase = phrase;
+  friendFlipTurnSpeechLockUntil = now + 2200;
+  lastTurnSpoken = phrase;
+  speakFriendTurnPhrase(phrase);
+}
+
+let practiceFlipPromptDebounceTimer = null;
+let practiceFlipFallbackTimer = null;
+let practiceSpeechPrimeInstalled = false;
+let practiceFlipUtteranceHeard = false;
+let practiceFlipVoicesHooked = false;
+let practiceFlipSpeakGeneration = 0;
+let practiceFlipDelivering = false;
+let practiceFlipErrorRetried = false;
+let practiceFlipColdBootActive = false;
+let practiceFlipVoicesHandled = false;
+let suppressFlipVoiceFromRender = false;
+let friendSpeechPrimeInstalled = false;
+let friendTurnSpeechPending = "";
+let speechGesturePrimed = !speechNeedsInteractionUnlock;
+let practiceVoiceStartDismissed = false;
+let practiceFlipSpeechLockUntil = 0;
+let practiceFlipResultSpeechLockUntil = 0;
+let practiceFlipResultLastPhrase = "";
+let friendJoinWelcomeSpoken = false;
+let friendVoiceStartDismissed = !speechNeedsInteractionUnlock;
+let friendFlipTurnSpeechLockUntil = 0;
+let friendFlipTurnLastPhrase = "";
+let friendOpponentJoinedSpeechLockUntil = 0;
+let friendSwitchVoiceLockUntil = 0;
+let friendLobbyPromptSpoken = false;
+const FRIEND_LOBBY_VOICE_PHRASE =
+  "Create a game room and invite a friend to play.";
+
+function resetPracticeFlipVoiceTracking() {
+  practiceFlipUtteranceHeard = false;
+  practiceFlipDelivering = false;
+  practiceFlipErrorRetried = false;
+  practiceFlipResultLastPhrase = "";
+  practiceFlipResultSpeechLockUntil = 0;
+}
+
+function cancelPracticeFlipVoiceTimers() {
+  if (practiceFlipPromptDebounceTimer) {
+    window.clearTimeout(practiceFlipPromptDebounceTimer);
+    practiceFlipPromptDebounceTimer = null;
+  }
+  if (practiceFlipFallbackTimer) {
+    window.clearTimeout(practiceFlipFallbackTimer);
+    practiceFlipFallbackTimer = null;
+  }
+}
+
+function resetPracticeFlipSpeechLocks() {
+  practiceFlipDelivering = false;
+  practiceFlipSpeechLockUntil = 0;
+}
+
+/** Single entry for practice flip voice — prevents duplicate/overlapping speaks. */
+function speakPracticeFlipPromptOnce(options = {}) {
+  const force = Boolean(options.force);
+  const inGesture = Boolean(options.inGesture);
+  if (playMode !== "puffly" || !isStarterFlipPending() || state?.winner || state?.draw) {
+    return false;
+  }
+  if (!practiceVoiceStartDismissed && !inGesture) {
+    pendingPrioritySpeech = PRACTICE_FLIP_VOICE_PHRASE;
+    pendingUnlockSpeech = PRACTICE_FLIP_VOICE_PHRASE;
+    updateSpeechUnlockOverlay();
+    return false;
+  }
+  const now = Date.now();
+  if (!force && (practiceFlipDelivering || now < practiceFlipSpeechLockUntil)) {
+    return false;
+  }
+  if (!force && practiceFlipUtteranceHeard) {
+    return false;
+  }
+  if (speechNeedsInteractionUnlock && !speechGesturePrimed && !inGesture) {
+    pendingPrioritySpeech = PRACTICE_FLIP_VOICE_PHRASE;
+    pendingUnlockSpeech = PRACTICE_FLIP_VOICE_PHRASE;
+    updateSpeechUnlockOverlay();
+    return false;
+  }
+
+  cancelPracticeFlipVoiceTimers();
+  pendingPrioritySpeech = "";
+  pendingUnlockSpeech = "";
+  if (force) {
+    resetPracticeFlipSpeechLocks();
+    practiceFlipUtteranceHeard = false;
+  }
+  practiceFlipDelivering = true;
+  practiceFlipSpeechLockUntil = now + 2200;
+  lastSpokenAt = 0;
+  lastSpokenPhrase = "";
+  speechUnlocked = true;
+  speechGesturePrimed = true;
+
+  speakImmediate(PRACTICE_FLIP_VOICE_PHRASE, { inGesture });
+  window.setTimeout(() => {
+    if (practiceFlipDelivering && lastSpokenPhrase !== PRACTICE_FLIP_VOICE_PHRASE) {
+      practiceFlipDelivering = false;
+      practiceFlipSpeechLockUntil = 0;
+    }
+  }, 2500);
+  return true;
+}
+
+/** Single entry for post-flip "X goes first" — prevents duplicate speaks from re-renders. */
+function speakPracticeFlipResultOnce(player, options = {}) {
+  if (playMode !== "puffly" || !player) {
+    return false;
+  }
+  const phrase = starterFirstMoveText(player);
+  if (!phrase || !audioEnabled) {
+    return false;
+  }
+  const force = Boolean(options.force);
+  const now = Date.now();
+  if (!force && phrase === practiceFlipResultLastPhrase && now < practiceFlipResultSpeechLockUntil) {
+    return false;
+  }
+  practiceFlipResultLastPhrase = phrase;
+  practiceFlipResultSpeechLockUntil = now + 2800;
+  const turnPhrase = player === humanPlayer ? "Your turn." : "Puffly's turn.";
+  void pufflySpeak(phrase, {
+    onstart: () => {
+      lastSpokenPhrase = phrase;
+      lastTurnSpoken = turnPhrase;
+    },
+  });
+  return true;
+}
+
+function deliverPracticeFlipPromptInGesture(force = false) {
+  return speakPracticeFlipPromptOnce({ force, inGesture: true });
+}
+
+function deliverPracticeFlipPrompt(force = false) {
+  speakPracticeFlipPromptOnce({ force, inGesture: false });
+}
+
+function requestPracticeFlipVoice(options = {}) {
+  if (!isStarterFlipPending() || state?.winner || state?.draw) {
+    return;
+  }
+  if (playMode === "friend") {
+    if (shouldSpeakPuzzleFlipVoice()) {
+      announceFriendFlipTurnVoice();
+    }
+    return;
+  }
+  if (playMode !== "puffly") {
+    return;
+  }
+  speakPracticeFlipPromptOnce({ force: Boolean(options.force), inGesture: false });
+}
+
+/** Reset practice state to pre-flip and announce the standard flip voiceover once. */
+function beginPracticeFlipRound(options = {}) {
+  if (playMode !== "puffly" && !options.force) {
+    return;
+  }
+  if (playMode !== "puffly") {
+    playMode = "puffly";
+    syncPlayModeChrome();
+  }
+  practiceFlipSpeakGeneration += 1;
+  cancelPracticeFlipVoiceTimers();
+  if (options.togglePuzzleFlip && selectedGameId === "puzzle") {
+    togglePuzzleFlipTurnForNextGame();
+  }
+  if (selectedGameId === "puzzle") {
+    rebuildPuzzleStateKeepingFlipTurn();
+  } else {
+    state = createStateForGame(selectedGameId);
+  }
+  selectedPuzzlePieceId = "";
+  moveHistory = [];
+  undoSnapshots = [];
+  winnerAnnounced = null;
+  lastSpokenPhrase = "";
+  lastTurnSpoken = "";
+  resetPracticeFlipVoiceTracking();
+  practiceFlipSpeechLockUntil = 0;
+  hideCelebration();
+  puzzleTrayBootstrapAttempted = false;
+  suppressFlipVoiceFromRender = true;
+  render("Flip to see who goes first.");
+  suppressFlipVoiceFromRender = false;
+  if (!practiceVoiceStartDismissed) {
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  speakPracticeFlipPromptOnce({ force: true, inGesture: false });
+}
+
+function installPrimePracticeSpeechOnFirstGesture() {
+  if (practiceSpeechPrimeInstalled || typeof document === "undefined") {
+    return;
+  }
+  practiceSpeechPrimeInstalled = true;
+  const prime = () => {
+    if (!practiceVoiceStartDismissed) {
+      return;
+    }
+    ensureAudioContext({ skipSpeechUnlock: true });
+    primeSpeechSynthesisFromUserGesture();
+  };
+  document.addEventListener("pointerdown", prime, { once: true, capture: true });
+  document.addEventListener("keydown", prime, { once: true, capture: true });
+}
+
+function installFriendSpeechPrimeOnGesture() {
+  if (friendSpeechPrimeInstalled || typeof document === "undefined") {
+    return;
+  }
+  friendSpeechPrimeInstalled = true;
+  const primeFriendSpeech = () => {
+    if (playMode !== "friend" || !audioEnabled) {
+      return;
+    }
+    ensureAudioContext();
+    primeSpeechSynthesisFromUserGesture();
+    if (pendingPrioritySpeech || pendingUnlockSpeech) {
+      flushPendingPrioritySpeech();
+    }
+    if (friendSpeechQueue.length) {
+      drainFriendSpeechQueue();
+    }
+  };
+  document.addEventListener("pointerdown", primeFriendSpeech, { capture: true });
+  document.addEventListener("keydown", primeFriendSpeech, { capture: true });
+}
+
+function announcePracticeFlipVoice() {
+  if (suppressFlipVoiceFromRender) {
+    return;
+  }
+  requestPracticeFlipVoice();
+}
+
+function announceFriendTurnVoice() {
+  if (playMode !== "friend" || !remoteSession?.ready || isStarterFlipPending() || state?.winner || state?.draw) {
+    return;
+  }
+  const phrase = getFriendTurnPhrase(state.currentPlayer);
+  if (lastTurnSpoken !== phrase) {
+    speakFriendTurnPhrase(phrase);
+  }
+}
+
+/** "Your turn." / "Puffly's turn." in practice; friend turn phrase in friend mode. */
+function announceGameplayTurnVoice(statusMessage = "") {
+  if (isStarterFlipPending() || state?.winner || state?.draw) {
+    return;
+  }
+  if (playMode === "puffly" && !practiceVoiceStartDismissed) {
+    return;
+  }
+  if (
+    playMode === "puffly" &&
+    (Date.now() < practiceFlipResultSpeechLockUntil ||
+      String(statusMessage || "").includes("wins the flip and goes first"))
+  ) {
+    return;
+  }
+  if (statusMessage === "Undoing move...") {
+    return;
+  }
+  let currentTurnPhrase;
+  if (playMode === "friend" && remoteSession) {
+    if (!remoteSession.ready) {
+      currentTurnPhrase = "Welcome to the game room.";
+    } else {
+      currentTurnPhrase = getFriendVoiceTurnPhrase();
+    }
+  } else if (playMode === "friend") {
+    currentTurnPhrase = "Welcome to the game room.";
+  } else if (playMode === "puffly") {
+    currentTurnPhrase = state.currentPlayer === humanPlayer ? "Your turn." : "Puffly's turn.";
+  } else {
+    return;
+  }
+  if (lastTurnSpoken === currentTurnPhrase) {
+    return;
+  }
+  if (playMode === "friend") {
+    speakFriendTurnPhrase(currentTurnPhrase);
+  } else {
+    void pufflySpeak(currentTurnPhrase, {
+      onstart: () => {
+        lastTurnSpoken = currentTurnPhrase;
+        lastSpokenPhrase = currentTurnPhrase;
+      },
+    });
+  }
+}
+
+function getLocalTeamColor() {
+  if (playMode === "friend" && remoteSession?.color) {
+    return remoteSession.color;
+  }
+  // Practice mode always shows Puffly (blue bear) as the mascot opponent.
+  return "dark";
+}
+
+function getActiveMascotFace() {
+  return getLocalTeamColor() === "light" ? greenMascotFace : blueMascotFace;
+}
+
+function updateTeamMascot() {
+  const teamColor = getLocalTeamColor();
+  const isGreenTeam = teamColor === "light";
+  const inFriendRoom = playMode === "friend" && Boolean(remoteSession);
+  pufflyPanel?.classList.toggle("team-green", isGreenTeam);
+  pufflyPanel?.classList.toggle("team-blue", !isGreenTeam);
+  blueMascotFace?.classList.toggle("hidden", isGreenTeam);
+  greenMascotFace?.classList.toggle("hidden", !isGreenTeam);
+  document.body.classList.toggle("friend-green-player", inFriendRoom && isGreenTeam);
+  document.body.classList.toggle("friend-blue-player", inFriendRoom && !isGreenTeam);
+  blueCapturedTray?.classList.toggle("your-tray", inFriendRoom && !isGreenTeam);
+  greenCapturedTray?.classList.toggle("your-tray", inFriendRoom && isGreenTeam);
+  if (teamMascotLabel) {
+    if (inFriendRoom) {
+      teamMascotLabel.textContent = isGreenTeam ? "Green Team (You) 🐸" : "Blue Team (You) 🐻";
+    } else {
+      teamMascotLabel.textContent = "Puffly";
+    }
+  }
+}
+
+function friendMascotThoughtForTurn() {
+  if (!remoteSession?.ready) {
+    return "⏳ Waiting for your friend...";
+  }
+  if (isStarterFlipPending()) {
+    const flipper = getFriendFlipperColor();
+    return remoteSession.color === flipper
+      ? "🪙 Tap FLIP to start"
+      : `🪙 ${playerDisplayName(flipper)} is flipping...`;
+  }
+  const isYourTurn = state.currentPlayer === remoteSession.color;
+  if (remoteSession.color === "light") {
+    return isYourTurn ? "🐸 Your turn — GREEN tray" : "🐻 Blue friend's turn";
+  }
+  return isYourTurn ? "🐻 Your turn — BLUE tray" : "🐸 Green friend's turn";
+}
+
+function ensureAudioContext(options = {}) {
   if (!audioEnabled || typeof window === "undefined") {
     return null;
   }
   // iPad Safari may block speech until a direct user gesture occurs.
   // ensureAudioContext is invoked from click/tap handlers, so unlock here.
-  if (speechNeedsInteractionUnlock && !speechUnlocked) {
+  const skipSpeechUnlock = Boolean(options.skipSpeechUnlock);
+  if (!skipSpeechUnlock && speechNeedsInteractionUnlock && !speechUnlocked) {
     unlockSpeechIfNeeded();
     updateSpeechUnlockOverlay();
   }
@@ -637,26 +1749,562 @@ function beep(frequency, duration, type = "sine", gainValue = 0.05) {
   oscillator.stop(now + duration);
 }
 
-function unlockSpeechIfNeeded() {
-  if (speechUnlocked) {
+function primeSpeechEngine() {
+  if (typeof window === "undefined" || !window.speechSynthesis || !audioEnabled) {
+    return;
+  }
+  window.speechSynthesis.resume();
+}
+
+/** Prime audio engine from a tap without opening the friend voice gate on iOS. */
+function primeFriendGestureOnly() {
+  if (!audioEnabled || typeof window === "undefined" || !window.speechSynthesis) {
+    return;
+  }
+  speechGesturePrimed = true;
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.resume();
+}
+
+/** Unlock speech from a user gesture without playing a hidden utterance (avoids overlap/garble). */
+function primeSpeechSynthesisFromUserGesture() {
+  if (!audioEnabled || typeof window === "undefined" || !window.speechSynthesis) {
+    return;
+  }
+  if (playMode === "friend" && speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    primeFriendGestureOnly();
     return;
   }
   speechUnlocked = true;
-  if (pendingJoinIntroTeam) {
+  speechGesturePrimed = true;
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.resume();
+  drainFriendSpeechQueue();
+  flushPendingPrioritySpeech();
+}
+
+function drainFriendSpeechQueue() {
+  if (friendSpeechPlaying || !friendSpeechQueue.length) {
+    return;
+  }
+  if (
+    !speechGesturePrimed ||
+    !speechUnlocked ||
+    typeof window === "undefined" ||
+    !window.speechSynthesis ||
+    !audioEnabled
+  ) {
+    return;
+  }
+  const text = friendSpeechQueue.shift();
+  speakImmediate(text);
+}
+
+function armFriendSpeechWatchdog() {
+  if (friendSpeechWatchdog) {
+    window.clearTimeout(friendSpeechWatchdog);
+  }
+  friendSpeechWatchdog = window.setTimeout(() => {
+    friendSpeechWatchdog = null;
+    if (!friendSpeechPlaying) {
+      return;
+    }
+    friendSpeechPlaying = false;
+    if (typeof window !== "undefined" && window.speechSynthesis?.speaking) {
+      window.speechSynthesis.cancel();
+    }
+    drainFriendSpeechQueue();
+  }, 8000);
+}
+
+function enqueueFriendSpeech(text) {
+  if (!text || !audioEnabled) {
+    return;
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return;
+  }
+  if (friendSpeechQueue[friendSpeechQueue.length - 1] === trimmed) {
+    return;
+  }
+  if (friendSpeechPlaying && lastSpokenPhrase === trimmed) {
+    return;
+  }
+  if (/'s Turn$/i.test(trimmed)) {
+    for (let i = friendSpeechQueue.length - 1; i >= 0; i -= 1) {
+      if (/'s Turn$/i.test(friendSpeechQueue[i])) {
+        friendSpeechQueue.splice(i, 1);
+      }
+    }
+  }
+  friendSpeechQueue.push(trimmed);
+  drainFriendSpeechQueue();
+}
+
+let speechUnlockGestureHandledAt = 0;
+let speechResumePumpTimer = null;
+
+function needsChromeSpeechDelay() {
+  return isDesktopMacBrowser() && isChromiumBrowser();
+}
+
+const voiceClipPlayers = new Map();
+
+function voiceClipUrl(clipId) {
+  return `${VOICE_CLIP_BASE}${clipId}.${VOICE_CLIP_EXT}`;
+}
+
+function preloadVoiceClips() {
+  if (typeof Audio === "undefined") {
+    return;
+  }
+  for (const clipId of VOICE_CLIP_IDS) {
+    if (voiceClipPlayers.has(clipId)) {
+      continue;
+    }
+    const audio = new Audio(voiceClipUrl(clipId));
+    audio.preload = "auto";
+    voiceClipPlayers.set(clipId, audio);
+  }
+}
+
+function stopAllVoiceClips() {
+  for (const audio of voiceClipPlayers.values()) {
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function playVoiceClip(clipId, handlers = {}) {
+  if (!audioEnabled || typeof Audio === "undefined") {
+    return Promise.resolve(false);
+  }
+  ensureAudioContext({ skipSpeechUnlock: true });
+  stopAllVoiceClips();
+  preloadVoiceClips();
+  let audio = voiceClipPlayers.get(clipId);
+  if (!audio) {
+    audio = new Audio(voiceClipUrl(clipId));
+    audio.preload = "auto";
+    voiceClipPlayers.set(clipId, audio);
+  }
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+  } catch {
+    // ignore
+  }
+  const fireEnd = () => {
+    if (handlers.onend) {
+      handlers.onend();
+    }
+  };
+  const fireError = (err) => {
+    console.warn("[puffly] clip failed", SPEECH_BUILD, clipId, err);
+    if (handlers.onerror) {
+      handlers.onerror(err);
+    }
+  };
+  audio.onended = fireEnd;
+  audio.onerror = () => fireError(new Error(`clip error: ${clipId}`));
+  return audio
+    .play()
+    .then(() => {
+      console.info("[puffly] clip playing", SPEECH_BUILD, clipId);
+      if (handlers.onstart) {
+        handlers.onstart();
+      }
+      return true;
+    })
+    .catch((err) => {
+      fireError(err);
+      return false;
+    });
+}
+
+function stopSpeechResumePump() {
+  if (speechResumePumpTimer) {
+    window.clearInterval(speechResumePumpTimer);
+    speechResumePumpTimer = null;
+  }
+}
+
+function startSpeechResumePump() {
+  if (speechResumePumpTimer) {
+    return;
+  }
+  speechResumePumpTimer = window.setInterval(() => {
+    const syn = typeof window !== "undefined" ? window.speechSynthesis : null;
+    if (!syn) {
+      stopSpeechResumePump();
+      return;
+    }
+    syn.resume();
+    if (!syn.speaking && !syn.pending) {
+      stopSpeechResumePump();
+    }
+  }, 100);
+}
+
+function refreshSpeechVoiceCache() {
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    return [];
+  }
+  return window.speechSynthesis.getVoices();
+}
+
+function pickEnglishVoice(voices) {
+  if (!voices.length) {
+    return null;
+  }
+  return (
+    voices.find((voice) => voice.lang && voice.lang.startsWith("en") && voice.localService) ||
+    voices.find((voice) => voice.lang && voice.lang.startsWith("en")) ||
+    voices[0]
+  );
+}
+
+function createSpeechUtterance(text, handlers = {}) {
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-US";
+  utterance.rate = handlers.rate ?? 0.95;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  const voices = refreshSpeechVoiceCache();
+  const voice = pickEnglishVoice(voices);
+  if (voice) {
+    utterance.voice = voice;
+  }
+  if (handlers.onstart) {
+    utterance.onstart = handlers.onstart;
+  }
+  if (handlers.onend) {
+    utterance.onend = handlers.onend;
+  }
+  if (handlers.onerror) {
+    utterance.onerror = handlers.onerror;
+  }
+  return utterance;
+}
+
+/**
+ * Speak a line — use bundled WAV clips when mapped; otherwise Web Speech API.
+ */
+function pufflySpeak(text, handlers = {}, options = {}) {
+  if (!text || !audioEnabled) {
+    return Promise.resolve(false);
+  }
+  const clipId = resolveVoiceClipId(text);
+  if (clipId) {
+    return playVoiceClip(clipId, handlers);
+  }
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    return Promise.resolve(false);
+  }
+  const syn = window.speechSynthesis;
+  syn.resume();
+  refreshSpeechVoiceCache();
+  const allowCancel = Boolean(options.allowCancel) && playMode !== "puffly";
+  if (allowCancel && isChromiumBrowser()) {
+    syn.cancel();
+    syn.resume();
+  }
+  const speakOnce = () => {
+    const utterance = createSpeechUtterance(text, handlers);
+    syn.resume();
+    syn.speak(utterance);
+  };
+  startSpeechResumePump();
+  if (needsChromeSpeechDelay() && !options.immediate) {
+    window.setTimeout(speakOnce, 80);
+    return Promise.resolve(true);
+  }
+  speakOnce();
+  return Promise.resolve(true);
+}
+
+/** Practice Start tap — speak flip cue from the Start click. */
+function deliverPracticeVoiceOnStartTap() {
+  if (!audioEnabled || typeof window === "undefined") {
+    console.warn("[puffly] speech build", SPEECH_BUILD, "blocked: audio off");
+    return false;
+  }
+  console.info("[puffly] speech build", SPEECH_BUILD, "practice Start tap");
+  speechUnlocked = true;
+  speechGesturePrimed = true;
+  const queuedBeforeClear = pendingUnlockSpeech || pendingPrioritySpeech;
+  pendingUnlockSpeech = "";
+  pendingPrioritySpeech = "";
+  cancelPracticeFlipVoiceTimers();
+  resetPracticeFlipSpeechLocks();
+  practiceFlipUtteranceHeard = false;
+  lastSpokenPhrase = "";
+
+  if (!isStarterFlipPending()) {
+    if (queuedBeforeClear) {
+      speakImmediate(queuedBeforeClear, { inGesture: true });
+    }
+    return Boolean(queuedBeforeClear);
+  }
+
+  const text = PRACTICE_FLIP_VOICE_PHRASE;
+  practiceFlipDelivering = true;
+  practiceFlipSpeechLockUntil = Date.now() + 2200;
+  void pufflySpeak(
+    text,
+    {
+      onstart: () => {
+        lastSpokenAt = Date.now();
+        lastSpokenPhrase = text;
+        practiceFlipUtteranceHeard = true;
+        practiceFlipDelivering = false;
+        cancelPracticeFlipVoiceTimers();
+        console.info("[puffly] voice started:", text);
+      },
+      onend: () => {
+        practiceFlipDelivering = false;
+        stopSpeechResumePump();
+      },
+      onerror: (event) => {
+        practiceFlipDelivering = false;
+        practiceFlipSpeechLockUntil = 0;
+        stopSpeechResumePump();
+        console.warn("[puffly] voice error:", event?.error || event);
+      },
+    },
+    { immediate: true },
+  );
+  return true;
+}
+
+/** iOS friend Start / explicit gesture speaks — no cancel() (that silences Mac Chrome). */
+function speakInUserGesture(text, options = {}) {
+  if (!text || !audioEnabled || typeof window === "undefined" || !window.speechSynthesis) {
+    return false;
+  }
+  const isFriendMode = Boolean(options.friendMode);
+  const syn = window.speechSynthesis;
+  speechUnlocked = true;
+  speechGesturePrimed = true;
+  syn.resume();
+  syn.getVoices();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-US";
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  const voices = syn.getVoices();
+  if (voices.length > 0) {
+    utterance.voice =
+      voices.find((voice) => voice.lang && voice.lang.startsWith("en")) || voices[0];
+  }
+  utterance.onstart = () => {
+    lastSpokenAt = Date.now();
+    lastSpokenPhrase = text;
+    if (isFriendMode) {
+      lastTurnSpoken = text;
+      friendTurnSpeechPending = "";
+    }
+  };
+  utterance.onend = () => {
+    if (isFriendMode) {
+      friendSpeechPlaying = false;
+      drainFriendSpeechQueue();
+    }
+  };
+  utterance.onerror = () => {
+    if (isFriendMode) {
+      friendSpeechPlaying = false;
+      drainFriendSpeechQueue();
+    }
+  };
+  if (isFriendMode) {
+    friendSpeechPlaying = true;
+    armFriendSpeechWatchdog();
+  }
+  syn.speak(utterance);
+  return true;
+}
+
+function speakImmediate(text, options = {}) {
+  const isPracticeFlipPhrase = text === PRACTICE_FLIP_VOICE_PHRASE;
+  const isFriendMode = playMode === "friend";
+  const inGesture = Boolean(options.inGesture);
+  if (!text) {
+    if (isPracticeFlipPhrase) {
+      practiceFlipDelivering = false;
+    }
+    return;
+  }
+  if (!canSpeakNow({ inGesture })) {
+    if (!pendingUnlockSpeech || pendingPrioritySpeech === text) {
+      pendingUnlockSpeech = text;
+    }
+    if (isPracticeFlipPhrase) {
+      practiceFlipDelivering = false;
+    }
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  if (inGesture) {
+    if (speakInUserGesture(text, { friendMode: isFriendMode })) {
+      return;
+    }
+  }
+  if (inGesture) {
+    speechUnlocked = true;
+    speechGesturePrimed = true;
+  }
+  const syn = prepareSpeechSynthesisForUtterance({
+    skipCancel: inGesture || playMode === "puffly",
+  });
+  if (!syn) {
+    if (isPracticeFlipPhrase) {
+      practiceFlipDelivering = false;
+    }
+    return;
+  }
+  if (isFriendMode) {
+    friendSpeechPlaying = true;
+    armFriendSpeechWatchdog();
+  }
+  let utteranceStarted = false;
+  const clearUtteranceStallTimer = () => {
+    if (utteranceStallTimer) {
+      window.clearTimeout(utteranceStallTimer);
+      utteranceStallTimer = null;
+    }
+  };
+  let utteranceStallTimer = null;
+  if (isFriendMode) {
+    const stallMs = shouldQueueFriendSpeech() ? 3500 : 4500;
+    utteranceStallTimer = window.setTimeout(() => {
+      utteranceStallTimer = null;
+      if (utteranceStarted || !friendSpeechPlaying) {
+        return;
+      }
+      const stalledSyn = typeof window !== "undefined" ? window.speechSynthesis : null;
+      if (stalledSyn && (stalledSyn.speaking || stalledSyn.pending)) {
+        return;
+      }
+      friendSpeechPlaying = false;
+      drainFriendSpeechQueue();
+    }, stallMs);
+  }
+  const finishSpeech = () => {
+    clearUtteranceStallTimer();
+    if (isFriendMode) {
+      friendSpeechPlaying = false;
+    }
+    if (friendSpeechWatchdog) {
+      window.clearTimeout(friendSpeechWatchdog);
+      friendSpeechWatchdog = null;
+    }
+    if (pendingPrioritySpeech === text) {
+      pendingPrioritySpeech = "";
+    }
+    if (text === PRACTICE_FLIP_VOICE_PHRASE) {
+      practiceFlipUtteranceHeard = true;
+      practiceFlipColdBootActive = false;
+      lastSpokenPhrase = PRACTICE_FLIP_VOICE_PHRASE;
+      practiceFlipDelivering = false;
+    }
+    if (isFriendMode) {
+      drainFriendSpeechQueue();
+    }
+  };
+  const handlers = {
+    onstart: () => {
+      utteranceStarted = true;
+      lastSpokenAt = Date.now();
+      clearUtteranceStallTimer();
+      if (friendSpeechWatchdog) {
+        window.clearTimeout(friendSpeechWatchdog);
+        friendSpeechWatchdog = null;
+      }
+      if (pendingPrioritySpeech === text) {
+        pendingPrioritySpeech = "";
+      }
+      lastSpokenPhrase = text;
+      if (isFriendMode) {
+        lastTurnSpoken = text;
+        friendTurnSpeechPending = "";
+      }
+      if (text === PRACTICE_FLIP_VOICE_PHRASE) {
+        practiceFlipUtteranceHeard = true;
+        practiceFlipColdBootActive = false;
+        lastSpokenPhrase = PRACTICE_FLIP_VOICE_PHRASE;
+        cancelPracticeFlipVoiceTimers();
+      }
+    },
+    onend: finishSpeech,
+    onerror: () => {
+      if (text === PRACTICE_FLIP_VOICE_PHRASE) {
+        practiceFlipDelivering = false;
+        practiceFlipSpeechLockUntil = 0;
+      }
+      finishSpeech();
+    },
+  };
+  if (playMode === "puffly" && !speechNeedsInteractionUnlock) {
+    void pufflySpeak(text, handlers);
+    return;
+  }
+  const utterance = createSpeechUtterance(text, handlers);
+  syn.speak(utterance);
+}
+
+function unlockSpeechIfNeeded() {
+  if (playMode === "friend" && speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    speechGesturePrimed = true;
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  const alreadyPrimed = speechUnlocked && speechGesturePrimed;
+  speechUnlocked = true;
+  updateSpeechUnlockOverlay();
+  if (!(playMode === "friend" && speechNeedsInteractionUnlock)) {
+    speechUnlockOverlay?.classList.add("hidden");
+  }
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.resume();
+  }
+  if (playMode === "puffly" && isStarterFlipPending()) {
+    pendingJoinIntroTeam = "";
+    pendingPrioritySpeech = "";
+    pendingUnlockSpeech = "";
+    practiceFlipColdBootActive = false;
+    speakPracticeFlipPromptOnce({ force: true, inGesture: true });
+    return;
+  }
+  if (alreadyPrimed) {
+    return;
+  }
+  primeSpeechSynthesisFromUserGesture();
+  if (pendingJoinIntroTeam && playMode === "friend") {
     pendingPrioritySpeech = buildJoinIntroPhrase(pendingJoinIntroTeam);
   }
   const queued = pendingPrioritySpeech || pendingUnlockSpeech;
   pendingUnlockSpeech = "";
-  if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.resume();
+  if (!queued) {
+    return;
   }
-  if (queued) {
-    lastSpokenAt = 0;
+  if (playMode !== "friend" && playMode !== "puffly" && typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+  lastSpokenAt = 0;
+  if (playMode !== "friend") {
     lastSpokenPhrase = "";
-    pendingPrioritySpeech = "";
-    pendingJoinIntroTeam = "";
-    speak(queued);
+  }
+  pendingPrioritySpeech = "";
+  pendingJoinIntroTeam = "";
+  speak(queued);
+  if (playMode === "friend") {
     // iPad Safari can drop the very first utterance after unlock.
     window.setTimeout(() => {
       if (typeof window === "undefined" || !window.speechSynthesis) {
@@ -668,58 +2316,64 @@ function unlockSpeechIfNeeded() {
       }
     }, 520);
   }
-  speechUnlockOverlay?.classList.add("hidden");
 }
 
 function speak(text) {
+  const isPracticeFlipPhrase = text === PRACTICE_FLIP_VOICE_PHRASE;
   if (!audioEnabled || typeof window === "undefined" || !window.speechSynthesis) {
+    if (isPracticeFlipPhrase) {
+      practiceFlipDelivering = false;
+    }
     return;
   }
-  if (!speechUnlocked) {
+  if (!canSpeakNow()) {
     if (!pendingUnlockSpeech || pendingPrioritySpeech === text) {
       pendingUnlockSpeech = text;
     }
-    return;
-  }
-  const now = Date.now();
-  if (now - lastSpokenAt < 700) {
-    return;
-  }
-  lastSpokenAt = now;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.95;
-  utterance.pitch = 1;
-  utterance.volume = 0.95;
-  utterance.onstart = () => {
-    if (pendingPrioritySpeech === text) {
-      pendingPrioritySpeech = "";
+    if (isPracticeFlipPhrase) {
+      practiceFlipDelivering = false;
     }
-  };
-  utterance.onend = null;
-  utterance.onerror = null;
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  if (playMode === "friend" && !isPracticeFlipPhrase) {
+    if (shouldQueueFriendSpeech()) {
+      enqueueFriendSpeech(text);
+      return;
+    }
+    speakImmediate(text);
+    return;
+  }
+  speakImmediate(text);
 }
 
 function flushPendingPrioritySpeech() {
-  if (!pendingPrioritySpeech || !speechUnlocked) {
+  if (!pendingPrioritySpeech) {
+    return;
+  }
+  if (playMode === "friend" && speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    return;
+  }
+  if (!canSpeakNow()) {
     return;
   }
   const text = pendingPrioritySpeech;
   pendingPrioritySpeech = "";
   lastSpokenAt = 0;
   lastSpokenPhrase = "";
-  if (typeof window !== "undefined" && window.speechSynthesis) {
+  if (playMode !== "friend" && playMode !== "puffly" && typeof window !== "undefined" && window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
   speak(text);
 }
 
 function speakPhrase(text) {
-  if (!text || text === lastSpokenPhrase) {
+  if (!text || !audioEnabled) {
     return;
   }
-  lastSpokenPhrase = text;
+  if (text === lastSpokenPhrase) {
+    return;
+  }
   speak(text);
 }
 
@@ -742,11 +2396,99 @@ function speakPhraseReliable(text, options = {}) {
 }
 
 function buildJoinIntroPhrase(teamName) {
-  if (playMode === "friend" && remoteSession?.ready && state?.currentPlayer) {
-    const activeTeam = playerDisplayName(state.currentPlayer).toUpperCase();
-    return `You are connected. Welcome to the game room. You are the ${teamName} team. It's ${activeTeam}'s turn.`;
+  const base = `You are connected. Welcome to the game room. You are the ${teamName} team.`;
+  if (playMode === "friend" && remoteSession) {
+    if (!remoteSession.ready) {
+      return `${base} Waiting for your friend to join.`;
+    }
+    if (state?.currentPlayer) {
+      if (isStarterFlipPending()) {
+        const gameTitle = getGameConfig(selectedGameId).title;
+        const flipTeam = playerDisplayName(getFriendFlipperColor());
+        return `${base} Now playing ${gameTitle} with your friend. It's ${flipTeam}'s turn to flip.`;
+      }
+      const activeTeam = playerDisplayName(state.currentPlayer).toUpperCase();
+      return `${base} It's ${activeTeam}'s turn.`;
+    }
   }
-  return `You are connected. Welcome to the game room. You are the ${teamName} team.`;
+  return base;
+}
+
+function announceFriendJoinWelcome(teamName) {
+  if (playMode !== "friend" || !audioEnabled || !remoteSession || friendJoinWelcomeSpoken) {
+    return;
+  }
+  const label = String(teamName || playerDisplayName(remoteSession.color)).toUpperCase();
+  const phrase = buildJoinIntroPhrase(label);
+  pendingJoinIntroTeam = label;
+  friendJoinWelcomeSpoken = true;
+  if (speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    pendingPrioritySpeech = phrase;
+    pendingUnlockSpeech = phrase;
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  speakPhraseReliable(phrase, { forceRepeat: true });
+}
+
+function buildFriendOpponentJoinedPhrase(gameId = selectedGameId) {
+  return `Your friend joined. ${buildFriendGameSwitchVoicePhrase(gameId)}`;
+}
+
+function announceFriendLobbyPrompt() {
+  if (playMode !== "friend" || !audioEnabled || remoteSession) {
+    return;
+  }
+  if (friendLobbyPromptSpoken) {
+    return;
+  }
+  friendLobbyPromptSpoken = true;
+  if (speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    pendingPrioritySpeech = FRIEND_LOBBY_VOICE_PHRASE;
+    pendingUnlockSpeech = FRIEND_LOBBY_VOICE_PHRASE;
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  speakPhraseReliable(FRIEND_LOBBY_VOICE_PHRASE, { forceRepeat: true });
+}
+
+function announceFriendOpponentJoined() {
+  if (playMode !== "friend" || !audioEnabled || !remoteSession?.ready) {
+    return;
+  }
+  const now = Date.now();
+  if (now < friendOpponentJoinedSpeechLockUntil) {
+    return;
+  }
+  friendOpponentJoinedSpeechLockUntil = now + 5000;
+  const phrase = buildFriendOpponentJoinedPhrase();
+  friendSwitchVoiceLockUntil = now + 5000;
+  if (remoteSession?.ready && isStarterFlipPending()) {
+    const flipPhrase = getFriendFlipTurnPhrase(getFriendFlipperColor());
+    friendFlipTurnLastPhrase = flipPhrase;
+    friendFlipTurnSpeechLockUntil = now + 5000;
+    lastTurnSpoken = flipPhrase;
+  }
+  lastSpokenPhrase = "";
+  if (speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    pendingPrioritySpeech = phrase;
+    pendingUnlockSpeech = phrase;
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  speakFriendTurnPhrase(phrase, { force: true });
+}
+
+function dismissFriendVoiceStartOverlay() {
+  friendVoiceStartDismissed = true;
+  speechUnlockOverlay?.classList.add("hidden");
+  updateSpeechUnlockOverlay();
+}
+
+function dismissPracticeVoiceStartOverlay() {
+  practiceVoiceStartDismissed = true;
+  speechUnlockOverlay?.classList.add("hidden");
+  updateSpeechUnlockOverlay();
 }
 
 function squaresEqual(a, b) {
@@ -760,6 +2502,9 @@ function squaresEqual(a, b) {
 }
 
 function boardsEqual(boardA, boardB) {
+  if (!Array.isArray(boardA) || !Array.isArray(boardB)) {
+    return false;
+  }
   for (let row = 0; row < BOARD_SIZE; row += 1) {
     for (let col = 0; col < BOARD_SIZE; col += 1) {
       const a = boardA[row][col];
@@ -783,16 +2528,203 @@ function statesEquivalentForSync(a, b) {
     boardsEqual(a.board, b.board) &&
     a.currentPlayer === b.currentPlayer &&
     (a.winner || null) === (b.winner || null) &&
-    squaresEqual(a.selectedSquare, b.selectedSquare) &&
     squaresEqual(a.forcedPiece, b.forcedPiece)
   );
 }
 
-function inferRemoteMoveFromStates(previousState, nextState) {
-  if (!previousState || !nextState || previousState.currentPlayer === nextState.currentPlayer) {
+function isStarterFlipTransition(previousState, nextState) {
+  return Boolean(previousState && nextState && !previousState.starterFlipDone && nextState.starterFlipDone);
+}
+
+function puzzleRoomStateDigest(stateLike) {
+  if (!stateLike || !Array.isArray(stateLike.pieces)) {
+    return "";
+  }
+  const placedCount = stateLike.pieces.filter((piece) => piece.placed).length;
+  const { rows, cols } = inferPuzzleGridSizeFromState(stateLike);
+  return [
+    rows,
+    cols,
+    stateLike.starterFlipDone ? "1" : "0",
+    stateLike.starterPlayer || "-",
+    stateLike.puzzleFlipTurn || stateLike.currentPlayer || "-",
+    stateLike.pieces.length,
+    placedCount,
+    stateLike.draw ? "1" : "0",
+    stateLike.winner || "-",
+  ].join("|");
+}
+
+function inferGameStateShape(stateLike) {
+  if (!stateLike || typeof stateLike !== "object") {
     return null;
   }
-  const legal = getAllLegalMovesForPlayer(previousState, previousState.currentPlayer);
+  if (Array.isArray(stateLike.pieces) && stateLike.pieces.length > 0) {
+    return "puzzle";
+  }
+  if (Array.isArray(stateLike.grid) && stateLike.grid.length === FOUR_ROWS) {
+    return "fourinarow";
+  }
+  if (Array.isArray(stateLike.board) && stateLike.board.length === BOARD_SIZE) {
+    return "checkers";
+  }
+  return null;
+}
+
+function resetFriendSpeechForGameSwitch() {
+  lastTurnSpoken = "";
+  lastSpokenPhrase = "";
+  lastSpokenAt = 0;
+  pendingPrioritySpeech = "";
+  friendTurnSpeechPending = "";
+  friendFlipTurnLastPhrase = "";
+  friendFlipTurnSpeechLockUntil = 0;
+  friendOpponentJoinedSpeechLockUntil = 0;
+  friendSwitchVoiceLockUntil = 0;
+  friendSpeechQueue.length = 0;
+  friendSpeechPlaying = false;
+  if (friendSpeechWatchdog) {
+    window.clearTimeout(friendSpeechWatchdog);
+    friendSpeechWatchdog = null;
+  }
+}
+
+function announceFriendGameplayVoice() {
+  if (playMode !== "friend" || !remoteSession?.ready) {
+    return;
+  }
+  if (isStarterFlipPending()) {
+    announceFriendFlipTurnVoice();
+    return;
+  }
+  if (state?.winner || state?.draw) {
+    return;
+  }
+  const phrase = getFriendTurnPhrase(state.currentPlayer);
+  if (lastTurnSpoken === phrase) {
+    return;
+  }
+  speakFriendTurnPhrase(phrase);
+}
+
+function announceFriendGameSwitchVoice(gameId = selectedGameId) {
+  if (playMode !== "friend" || !audioEnabled) {
+    return;
+  }
+  const phrase = buildFriendGameSwitchVoicePhrase(gameId);
+  if (!phrase) {
+    return;
+  }
+  const now = Date.now();
+  friendSwitchVoiceLockUntil = now + 5000;
+  if (remoteSession?.ready && isStarterFlipPending()) {
+    const flipPhrase = getFriendFlipTurnPhrase(getFriendFlipperColor());
+    friendFlipTurnLastPhrase = flipPhrase;
+    friendFlipTurnSpeechLockUntil = now + 5000;
+    lastTurnSpoken = flipPhrase;
+  }
+  lastSpokenPhrase = "";
+  if (speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    pendingPrioritySpeech = phrase;
+    pendingUnlockSpeech = phrase;
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  speakFriendTurnPhrase(phrase, { force: true });
+}
+
+function speakFriendSwitchMessage(message) {
+  if (!message || !audioEnabled) {
+    return;
+  }
+  if (speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    pendingPrioritySpeech = message;
+    pendingUnlockSpeech = message;
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  if (speechNeedsInteractionUnlock && !speechUnlocked) {
+    pendingPrioritySpeech = message;
+    pendingUnlockSpeech = message;
+    return;
+  }
+  speakPhraseReliable(message, { forceRepeat: true });
+}
+
+function speakFriendTurnPhrase(phrase, options = {}) {
+  if (!phrase || !audioEnabled) {
+    return;
+  }
+  const forceRepeat = Boolean(options.force);
+  if (!forceRepeat) {
+    if (phrase === lastTurnSpoken || phrase === friendTurnSpeechPending) {
+      return;
+    }
+    if (friendSpeechPlaying && phrase === lastSpokenPhrase) {
+      return;
+    }
+  }
+  friendTurnSpeechPending = phrase;
+  lastTurnSpoken = phrase;
+  ensureAudioContext({ skipSpeechUnlock: true });
+  if (!speechNeedsInteractionUnlock) {
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.resume();
+    }
+    speakPhraseReliable(phrase, { forceRepeat });
+    return;
+  }
+  if (speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    pendingPrioritySpeech = phrase;
+    pendingUnlockSpeech = phrase;
+    updateSpeechUnlockOverlay();
+    return;
+  }
+  if (speechNeedsInteractionUnlock && !speechUnlocked) {
+    pendingPrioritySpeech = phrase;
+    pendingUnlockSpeech = phrase;
+    return;
+  }
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.resume();
+  }
+  speakPhraseReliable(phrase, { forceRepeat });
+}
+
+function roomStateDiffersFromSync(previousState, remoteState) {
+  if (!remoteState) {
+    return false;
+  }
+  const previousShape = inferGameStateShape(previousState);
+  const remoteShape = inferGameStateShape(remoteState);
+  if (previousShape && remoteShape && previousShape !== remoteShape) {
+    return true;
+  }
+  if (selectedGameId === "puzzle") {
+    return puzzleRoomStateDigest(previousState) !== puzzleRoomStateDigest(remoteState);
+  }
+  if (selectedGameId === "fourinarow") {
+    return JSON.stringify(previousState?.grid || []) !== JSON.stringify(remoteState?.grid || [])
+      || previousState?.currentPlayer !== remoteState?.currentPlayer
+      || previousState?.starterFlipDone !== remoteState?.starterFlipDone;
+  }
+  return !statesEquivalentForSync(previousState, remoteState)
+    || previousState?.starterFlipDone !== remoteState?.starterFlipDone;
+}
+
+function getFriendOpponentColor() {
+  return remoteSession?.color === "dark" ? "light" : "dark";
+}
+
+function inferRemoteMoveFromStates(previousState, nextState) {
+  if (!previousState?.board || !nextState?.board) {
+    return null;
+  }
+  const mover = previousState.currentPlayer;
+  if (!mover) {
+    return null;
+  }
+  const legal = getAllLegalMovesForPlayer(previousState, mover);
   for (const move of legal.allMoves) {
     const result = applyMove(previousState, move);
     if (statesEquivalentForSync(result.nextState, nextState)) {
@@ -800,6 +2732,125 @@ function inferRemoteMoveFromStates(previousState, nextState) {
     }
   }
   return null;
+}
+
+function inferRemoteMoveChain(previousState, nextState, maxDepth = 8) {
+  if (!previousState?.board || !nextState?.board) {
+    return null;
+  }
+  const visited = new Set();
+  function dfs(sim, depth) {
+    if (statesEquivalentForSync(sim, nextState)) {
+      return [];
+    }
+    if (depth >= maxDepth) {
+      return null;
+    }
+    const key = checkersUndoStateKey(sim);
+    if (visited.has(key)) {
+      return null;
+    }
+    visited.add(key);
+    const mover = sim.currentPlayer;
+    if (!mover) {
+      return null;
+    }
+    for (const move of getAllLegalMovesForPlayer(sim, mover).allMoves) {
+      const result = applyMove(sim, move);
+      const tail = dfs(result.nextState, depth + 1);
+      if (tail !== null) {
+        return [move, ...tail];
+      }
+    }
+    return null;
+  }
+  return dfs(previousState, 0);
+}
+
+function normalizeCheckersMoveFromLast(lastMove) {
+  if (!lastMove?.from || !lastMove?.to) {
+    return null;
+  }
+  return {
+    from: { row: lastMove.from.row, col: lastMove.from.col },
+    to: { row: lastMove.to.row, col: lastMove.to.col },
+    capture: lastMove.capture ? { row: lastMove.capture.row, col: lastMove.capture.col } : null,
+    isCapture: Boolean(lastMove.capture),
+  };
+}
+
+function extractOpponentMovesForAnimation(previousState, nextState) {
+  if (selectedGameId === "fourinarow") {
+    const remoteDrop = inferRemoteDropFromStates(previousState, nextState);
+    return remoteDrop ? [{ kind: "drop", drop: remoteDrop }] : [];
+  }
+  if (previousState.currentPlayer !== getFriendOpponentColor()) {
+    return [];
+  }
+  const chain = inferRemoteMoveChain(previousState, nextState);
+  if (chain?.length) {
+    return chain.map((move) => ({ kind: "checkers", move }));
+  }
+  const fromLast = normalizeCheckersMoveFromLast(nextState.lastMove);
+  if (fromLast) {
+    return [{ kind: "checkers", move: fromLast }];
+  }
+  const single = inferRemoteMoveFromStates(previousState, nextState);
+  return single ? [{ kind: "checkers", move: single }] : [];
+}
+
+function shouldAnimateFriendOpponentMove(previousState, nextState, didVersionChange) {
+  if (!FRIEND_ANIMATE_OPPONENT_MOVES) {
+    return false;
+  }
+  if (playMode !== "friend" || !remoteSession?.ready || selectedGameId === "puzzle") {
+    return false;
+  }
+  if (!previousState || !nextState) {
+    return false;
+  }
+  if (statesEquivalentForSync(previousState, nextState)) {
+    return false;
+  }
+  if (!didVersionChange) {
+    return false;
+  }
+  return previousState.currentPlayer === getFriendOpponentColor();
+}
+
+async function waitForBoardPaint() {
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+}
+
+async function playFriendOpponentMoveAnimation(previousState, nextState, message) {
+  const steps = extractOpponentMovesForAnimation(previousState, nextState);
+  if (!steps.length) {
+    return false;
+  }
+  let simState = clone(previousState);
+  for (const step of steps) {
+    state = clone(simState);
+    render(message);
+    await waitForBoardPaint();
+    if (step.kind === "drop") {
+      await sleep(140);
+      await animateFourDrop(step.drop.player, step.drop.row, step.drop.col, AI_MOVE_ANIMATION_MS);
+      playMoveAudio(step.drop.player, { isCapture: false });
+      const dropResult = applyFourInARowDrop(simState, step.drop.col);
+      if (dropResult.ok) {
+        simState = dropResult.nextState;
+      }
+      continue;
+    }
+    await sleep(120);
+    const mover = simState.currentPlayer;
+    await animateHumanMove(step.move);
+    const result = applyMove(simState, step.move);
+    playMoveAudio(mover, step.move);
+    simState = result.nextState;
+  }
+  return true;
 }
 
 function inferRemoteDropFromStates(previousState, nextState) {
@@ -1028,6 +3079,22 @@ function inferUndoPuzzlePlacement(currentState, targetState) {
 }
 
 function speakFromStatus(statusMessage) {
+  if (playMode === "friend") {
+    const silentFriendStatus =
+      !statusMessage ||
+      statusMessage === "Make your move." ||
+      statusMessage === "Room synchronized." ||
+      statusMessage === "Opponent connected." ||
+      statusMessage === "Remote room connected." ||
+      statusMessage.startsWith("Waiting for opponent") ||
+      statusMessage.startsWith("Waiting for your friend") ||
+      statusMessage.startsWith("Friend mode:") ||
+      statusMessage.includes("wins the flip and goes first") ||
+      statusMessage.startsWith("Now playing ");
+    if (silentFriendStatus) {
+      return;
+    }
+  }
   let phrase = "";
   if (statusMessage === "Puffly is thinking...") {
     phrase = "Puffly is thinking.";
@@ -1046,8 +3113,11 @@ function speakFromStatus(statusMessage) {
     phrase = "No hint available.";
   } else if (statusMessage.startsWith("Hint:")) {
     phrase = "Hint ready.";
-  } else if (statusMessage.startsWith("Difficulty set to")) {
-    phrase = `Difficulty ${difficulty}.`;
+  } else if (statusMessage.startsWith("Difficulty set to") || statusMessage.startsWith("Puzzle size set to")) {
+    phrase =
+      playMode === "puffly" && isStarterFlipPending()
+        ? PRACTICE_FLIP_VOICE_PHRASE
+        : `${getDifficultyLabel(difficulty, selectedGameId)}.`;
   } else if (statusMessage.includes("Continue capturing with the same piece")) {
     phrase = "Capture required. Keep jumping with the same piece.";
   } else if (statusMessage === "New game started. Puffly opens.") {
@@ -1055,8 +3125,19 @@ function speakFromStatus(statusMessage) {
   } else if (statusMessage === "Puffly opens the game.") {
     phrase = "Puffly starts the game.";
   } else if (statusMessage === "Flip to see who goes first.") {
+    if (
+      playMode === "puffly" &&
+      (practiceFlipUtteranceHeard || Date.now() < practiceFlipSpeechLockUntil)
+    ) {
+      return;
+    }
     phrase = "Flip to see who goes first.";
   } else if (statusMessage.includes("wins the flip and goes first")) {
+    const starter = state?.starterPlayer || state?.currentPlayer;
+    if (playMode === "puffly" && starter) {
+      speakPracticeFlipResultOnce(starter);
+      return;
+    }
     phrase = statusMessage.replace("wins the flip and goes first", "goes first");
   } else if (statusMessage === "Move closer to the matching slot to snap.") {
     phrase = "Move closer to the matching slot.";
@@ -1201,12 +3282,112 @@ function createPuzzlePieceElement(piece) {
   return pieceEl;
 }
 
+function purgePuzzleTrayIndexForContainer(container) {
+  if (!container) {
+    return;
+  }
+  for (const [pieceId, pieceEl] of puzzleTrayPieceById.entries()) {
+    if (pieceEl.parentElement === container) {
+      puzzleTrayPieceById.delete(pieceId);
+    }
+  }
+}
+
+function shouldHandleTrayTap() {
+  const now = Date.now();
+  if (now - lastTrayTapAt < 24) {
+    return false;
+  }
+  lastTrayTapAt = now;
+  return true;
+}
+
+function shouldHandleBoardTap() {
+  const now = Date.now();
+  if (now - lastBoardTapAt < 24) {
+    return false;
+  }
+  lastBoardTapAt = now;
+  return true;
+}
+
+function commitPuzzleTapFlashPaint(el) {
+  if (!(el instanceof HTMLElement)) {
+    return;
+  }
+  void el.offsetWidth;
+}
+
+function armPuzzleTapFlash(el) {
+  if (!(el instanceof HTMLElement)) {
+    return;
+  }
+  el.classList.add("puzzle-tap-flash");
+  commitPuzzleTapFlashPaint(el);
+  const clear = () => {
+    el.classList.remove("puzzle-tap-flash");
+  };
+  el.addEventListener("pointerup", clear, { once: true });
+  el.addEventListener("pointercancel", clear, { once: true });
+  window.setTimeout(clear, speechNeedsInteractionUnlock ? 180 : 320);
+}
+
+function runAfterPuzzleTapPaint(fn) {
+  if (speechNeedsInteractionUnlock) {
+    requestAnimationFrame(() => fn());
+    return;
+  }
+  fn();
+}
+
+function handlePuzzleTouchFlash(event) {
+  const trayPiece = event.target.closest(".puzzle-tray .puzzle-piece");
+  if (trayPiece instanceof HTMLElement) {
+    armPuzzleTapFlash(trayPiece);
+    return;
+  }
+  if (!selectedPuzzlePieceId) {
+    return;
+  }
+  const cell = event.target.closest(".puzzle-cell");
+  if (cell instanceof HTMLElement) {
+    armPuzzleTapFlash(cell);
+  }
+}
+
+function registerPuzzleTrayPieceElement(pieceId, pieceEl) {
+  if (pieceId && pieceEl) {
+    puzzleTrayPieceById.set(pieceId, pieceEl);
+  }
+}
+
+function applyPuzzleTraySelection(pieceId) {
+  if (!pieceId) {
+    return;
+  }
+  if (lastTraySelectedPieceId && lastTraySelectedPieceId !== pieceId) {
+    puzzleTrayPieceById.get(lastTraySelectedPieceId)?.classList.remove("selected");
+  }
+  puzzleTrayPieceById.get(pieceId)?.classList.add("selected");
+  lastTraySelectedPieceId = pieceId;
+  selectedPuzzlePieceId = pieceId;
+}
+
+function clearPuzzleTraySelection() {
+  if (lastTraySelectedPieceId) {
+    puzzleTrayPieceById.get(lastTraySelectedPieceId)?.classList.remove("selected");
+  }
+  lastTraySelectedPieceId = "";
+  selectedPuzzlePieceId = "";
+}
+
 function renderPuzzleTray(container, owner) {
   if (!container) {
     return;
   }
-  container.innerHTML = "";
   const pending = getPuzzleRemainingByOwner(state, owner);
+  purgePuzzleTrayIndexForContainer(container);
+  container.innerHTML = "";
   if (pending.length === 0) {
     const done = document.createElement("span");
     done.className = "captured-empty";
@@ -1216,7 +3397,13 @@ function renderPuzzleTray(container, owner) {
   }
   container.classList.add("puzzle-tray");
   for (const piece of pending) {
-    container.appendChild(createPuzzlePieceElement(piece));
+    const pieceEl = createPuzzlePieceElement(piece);
+    container.appendChild(pieceEl);
+    registerPuzzleTrayPieceElement(piece.id, pieceEl);
+    if (piece.id === selectedPuzzlePieceId) {
+      pieceEl.classList.add("selected");
+      lastTraySelectedPieceId = piece.id;
+    }
   }
 }
 
@@ -1224,11 +3411,12 @@ function renderCapturedPiles() {
   blueCapturedPile?.classList.remove("puzzle-tray");
   greenCapturedPile?.classList.remove("puzzle-tray");
   if (selectedGameId === "puzzle") {
+    const myTrayColor = playMode === "friend" && remoteSession ? remoteSession.color : null;
     if (blueCapturedLabel) {
-      blueCapturedLabel.textContent = "BLUE Tray";
+      blueCapturedLabel.textContent = myTrayColor === "dark" ? "BLUE (You)" : "BLUE Tray";
     }
     if (greenCapturedLabel) {
-      greenCapturedLabel.textContent = "GREEN Tray";
+      greenCapturedLabel.textContent = myTrayColor === "light" ? "GREEN (You)" : "GREEN Tray";
     }
     renderPuzzleTray(blueCapturedPile, "dark");
     renderPuzzleTray(greenCapturedPile, "light");
@@ -1255,7 +3443,62 @@ function renderCapturedPiles() {
   renderCapturedPile(greenCapturedPile, Math.max(0, CHECKERS_STARTING_PIECES - countCheckersPieces("light")), "green");
 }
 
+function getDifficultyLabelsForGame(gameId = selectedGameId) {
+  return gameId === "puzzle" ? PRACTICE_DIFFICULTY_LABELS.puzzle : PRACTICE_DIFFICULTY_LABELS.checkers;
+}
+
+function getDifficultyLabel(level = difficulty, gameId = selectedGameId) {
+  return getDifficultyLabelsForGame(gameId)[level] || level;
+}
+
+function syncPuzzleDifficultyFromRemote(stateLike, puzzleDifficulty) {
+  if (selectedGameId !== "puzzle") {
+    return;
+  }
+  let next = null;
+  const normalized = String(puzzleDifficulty || "").trim().toLowerCase();
+  if (normalized === "easy" || normalized === "medium" || normalized === "hard") {
+    next = normalized;
+  } else if (stateLike) {
+    next = puzzleDifficultyFromGridSize(inferPuzzleGridSizeFromState(stateLike).rows);
+  }
+  if (!next || next === difficulty) {
+    return;
+  }
+  difficulty = next;
+  updateDifficultyButtons();
+  updateFriendDifficultyButtons();
+}
+
+async function postFriendPuzzleSize(nextDifficulty) {
+  const payload = {
+    roomCode: remoteSession.roomCode,
+    playerId: remoteSession.playerId,
+    puzzleDifficulty: nextDifficulty,
+  };
+  try {
+    return await apiPost("/api/rooms/puzzle-size", payload);
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (!message.includes("404") && !message.includes("not found")) {
+      throw error;
+    }
+    return apiPost("/api/rooms/restart", payload);
+  }
+}
+
+function updateDifficultyButtonLabels() {
+  const labels = getDifficultyLabelsForGame(selectedGameId);
+  for (const button of difficultyButtons) {
+    const level = button.dataset.difficulty;
+    if (level && labels[level]) {
+      button.textContent = labels[level];
+    }
+  }
+}
+
 function updateDifficultyButtons() {
+  updateDifficultyButtonLabels();
   for (const button of difficultyButtons) {
     const level = button.dataset.difficulty;
     button.classList.toggle("active", level === difficulty);
@@ -1263,12 +3506,71 @@ function updateDifficultyButtons() {
   }
 }
 
-function updateAudioButtons() {
-  for (const button of audioButtons) {
-    const value = button.dataset.audio;
-    button.classList.toggle("active", (value === "on") === audioEnabled);
+function updateFriendDifficultyButtons() {
+  for (const button of friendDifficultyButtons) {
+    const level = button.dataset.difficulty;
+    const isSelected = level === difficulty;
+    button.classList.toggle("is-on", isSelected);
+    button.classList.toggle("is-off", !isSelected);
+    const inFriendPuzzle = playMode === "friend" && selectedGameId === "puzzle";
+    const isHost = !remoteSession || remoteSession.color === "dark";
+    const canChange = inFriendPuzzle && isHost && isStarterFlipPending();
+    button.classList.toggle("is-locked", inFriendPuzzle && !canChange);
     button.disabled = busy;
+    button.setAttribute("aria-disabled", inFriendPuzzle && !canChange ? "true" : "false");
   }
+}
+
+function updateFriendPuzzleDifficultyPanel() {
+  const show = playMode === "friend" && selectedGameId === "puzzle";
+  friendPuzzleDifficultyPanel?.classList.toggle("hidden", !show);
+  if (show) {
+    updateFriendDifficultyButtons();
+  }
+}
+
+function updateCreateInviteButtonLabel() {
+  if (!createRoomButton) {
+    return;
+  }
+  if (pendingInviteShareRoomCode && remoteSession) {
+    createRoomButton.textContent = "Share Invite";
+    return;
+  }
+  createRoomButton.textContent = remoteSession ? "Share Invite" : "Create & Invite";
+}
+
+function prefersCompactChrome() {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(hover: hover) and (pointer: fine)").matches
+  );
+}
+
+function updateFriendRoomButtons() {
+  const inRoom = Boolean(remoteSession);
+  const inFriendUi = isFriendModeUiActive();
+  const createActive = inRoom || (inFriendUi && !inRoom);
+  createRoomButton?.classList.toggle("is-on", createActive);
+  createRoomButton?.classList.toggle("is-off", !createActive);
+  joinRoomButton?.classList.toggle("is-on", inFriendUi);
+  joinRoomButton?.classList.toggle("is-off", !inFriendUi);
+  leaveRoomButton?.classList.toggle("is-on", inRoom);
+  leaveRoomButton?.classList.toggle("is-off", !inRoom);
+  if (typeof document !== "undefined") {
+    document.body.classList.toggle("friend-room-active", inRoom);
+  }
+  updateCreateInviteButtonLabel();
+}
+
+function updateAudioToggle() {
+  if (!audioToggleButton) {
+    return;
+  }
+  audioToggleButton.classList.toggle("is-on", audioEnabled);
+  audioToggleButton.classList.toggle("is-off", !audioEnabled);
+  audioToggleButton.setAttribute("aria-pressed", audioEnabled ? "true" : "false");
+  audioToggleButton.disabled = busy;
 }
 
 function renderHistory() {
@@ -1322,15 +3624,29 @@ function showCelebration() {
   celebrationOverlay.classList.remove("hidden");
   playWinFx(state.winner === humanPlayer);
   playCelebrationAudio();
-  if (playMode === "friend") {
-    speakPhrase(`${playerDisplayName(state.winner).toUpperCase()} WINS`);
-  } else {
-    speakPhrase(state.winner === humanPlayer ? "You win." : "Puffly wins.");
+  const humanWon = state.winner === humanPlayer;
+  const endgamePhrase =
+    playMode === "friend"
+      ? `${playerDisplayName(state.winner).toUpperCase()} wins!`
+      : getPracticeEndgamePhrase(humanWon);
+  void pufflySpeak(endgamePhrase, {
+    onstart: () => {
+      lastSpokenPhrase = endgamePhrase;
+      lastTurnSpoken = "";
+    },
+  });
+}
+
+function dismissPuzzleCompletionCelebration() {
+  hideCelebration();
+  if (isPuzzleComplete()) {
+    winnerAnnounced = "puzzle-complete";
   }
+  releasePuzzleInteractionLocks();
 }
 
 function showPuzzleCompletionCelebration() {
-  if (!state.winner || winnerAnnounced === "puzzle-complete") {
+  if (!isPuzzleComplete() || winnerAnnounced === "puzzle-complete") {
     return;
   }
   winnerAnnounced = "puzzle-complete";
@@ -1339,7 +3655,47 @@ function showPuzzleCompletionCelebration() {
   celebrationOverlay.classList.remove("hidden");
   playWinFx(true);
   playCelebrationAudio();
-  speakPhrase("Puzzle complete! Great job!");
+  void pufflySpeak("Puzzle complete! Great job!", {
+    onstart: () => {
+      lastSpokenPhrase = "Puzzle complete! Great job!";
+      lastTurnSpoken = "";
+    },
+  });
+}
+
+function maybeShowPuzzleCompletion(statusMessage = "Puzzle complete!") {
+  if (!isPuzzleComplete()) {
+    return false;
+  }
+  if (winnerAnnounced === "puzzle-complete") {
+    return false;
+  }
+  lastStatusMessage = statusMessage;
+  showPuzzleCompletionCelebration();
+  setPufflyState("celebrate", "🧩 Puzzle complete!");
+  return true;
+}
+
+function isPuzzleRestartTransition(previousState, nextState) {
+  return isPuzzleComplete(previousState) && !isPuzzleComplete(nextState);
+}
+
+function resetPuzzleSessionAfterRestart() {
+  winnerAnnounced = null;
+  puzzleTrayBootstrapAttempted = false;
+  deferRoomSyncUntilIdle = false;
+  lastSpokenPhrase = "";
+  lastTurnSpoken = "";
+  hideCelebration();
+}
+
+function refreshPuzzleCelebrationFlags() {
+  if (!isPuzzleComplete()) {
+    if (winnerAnnounced === "puzzle-complete") {
+      winnerAnnounced = null;
+    }
+    hideCelebration();
+  }
 }
 
 function hideCelebration() {
@@ -1432,65 +3788,187 @@ function showRulesPanel() {
   }, 30000);
 }
 
+function isFriendStatusAlert(text) {
+  return /could not|unable|timed out|denied|invalid|error|failed|slow down|not found|unavailable|switch to friend|tap play/i.test(
+    String(text || ""),
+  );
+}
+
 function setFriendStatus(text) {
-  if (friendStatusLabel) {
-    friendStatusLabel.textContent = text;
+  const label = friendStatusLabel || document.getElementById("friend-status");
+  if (label) {
+    label.textContent = text;
+    label.classList.toggle("friend-status-alert", isFriendStatusAlert(text));
+  }
+  if (typeof window !== "undefined" && typeof window.pufflySetFriendStatus === "function") {
+    window.pufflySetFriendStatus(text);
   }
 }
 
-function clearJoinCodeFromUrl() {
+function clearInviteParamsFromUrl() {
   if (typeof window === "undefined" || !window.history?.replaceState) {
     return;
   }
   const url = new URL(window.location.href);
-  if (!url.searchParams.has("join")) {
+  const hadInvite =
+    url.searchParams.has("join") ||
+    url.searchParams.has("game") ||
+    url.searchParams.has("mode") ||
+    url.searchParams.has("puzzleSize") ||
+    Boolean(url.hash);
+  if (!hadInvite) {
     return;
   }
   url.searchParams.delete("join");
-  const trimmed = `${url.pathname}${url.search}${url.hash}`;
+  url.searchParams.delete("game");
+  url.searchParams.delete("mode");
+  url.searchParams.delete("puzzleSize");
+  url.searchParams.delete("puzzleDifficulty");
+  url.hash = "";
+  const trimmed = `${url.pathname}${url.search}`;
   window.history.replaceState({}, "", trimmed);
+}
+
+function getInviteGameIdForLink() {
+  if (remoteSession?.gameType && isKnownGame(remoteSession.gameType)) {
+    return normalizeGameId(remoteSession.gameType);
+  }
+  return selectedGameId;
 }
 
 function buildInviteLink(roomCode) {
   if (typeof window === "undefined") {
     return roomCode;
   }
+  const gameId = getInviteGameIdForLink();
   const url = new URL(window.location.href);
   url.searchParams.set("join", roomCode);
-  url.searchParams.set("game", selectedGameId);
+  url.searchParams.set("game", gameId);
+  url.searchParams.set("mode", "friend");
+  if (gameId === "puzzle") {
+    url.searchParams.set("puzzleSize", difficulty);
+  } else {
+    url.searchParams.delete("puzzleSize");
+    url.searchParams.delete("puzzleDifficulty");
+  }
+  const hashParams = new URLSearchParams();
+  hashParams.set("join", roomCode);
+  hashParams.set("game", gameId);
+  hashParams.set("mode", "friend");
+  if (gameId === "puzzle") {
+    hashParams.set("puzzleSize", difficulty);
+  }
+  url.hash = hashParams.toString();
   return url.toString();
 }
 
-async function shareInviteLink(roomCode) {
+function updateInvitePanel(roomCode) {
+  if (!roomCode) {
+    friendInvitePanel?.classList.add("hidden");
+    if (friendRoomCodeLabel) {
+      friendRoomCodeLabel.textContent = "";
+    }
+    if (friendInviteLink) {
+      friendInviteLink.textContent = "";
+      friendInviteLink.removeAttribute("href");
+    }
+    return;
+  }
   const inviteUrl = buildInviteLink(roomCode);
-  const shareText = `Join my Puffly Checkers room (${roomCode}): ${inviteUrl}`;
-  if (navigator.share) {
+  friendInvitePanel?.classList.remove("hidden");
+  if (friendRoomCodeLabel) {
+    friendRoomCodeLabel.textContent = roomCode;
+  }
+  if (friendInviteLink) {
+    friendInviteLink.href = inviteUrl;
+    friendInviteLink.textContent = inviteUrl;
+  }
+}
+
+async function copyInviteLinkToClipboard(roomCode) {
+  const inviteUrl = buildInviteLink(roomCode);
+  if (navigator.clipboard?.writeText) {
     try {
-      await navigator.share({
-        title: "Puffly Checkers Invite",
-        text: shareText,
-        url: inviteUrl,
-      });
-      setFriendStatus("Invite sent.");
+      await navigator.clipboard.writeText(inviteUrl);
       return true;
-    } catch (error) {
-      if (error?.name === "AbortError") {
-        setFriendStatus("Invite canceled.");
+    } catch {
+      // Fall through to manual selection fallback.
+    }
+  }
+  if (friendInviteLink) {
+    friendInviteLink.focus?.();
+    const selection = window.getSelection?.();
+    const range = document.createRange?.();
+    if (selection && range) {
+      range.selectNodeContents(friendInviteLink);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      try {
+        if (document.execCommand("copy")) {
+          selection.removeAllRanges();
+          return true;
+        }
+      } catch {
+        // Ignore and let the visible link be the fallback.
+      }
+      selection.removeAllRanges();
+    }
+  }
+  return false;
+}
+
+function revealInviteFallback(roomCode, statusMessage) {
+  updateInvitePanel(roomCode);
+  setFriendStatus(statusMessage);
+}
+
+async function shareInviteLink(roomCode, options = {}) {
+  const inviteUrl = buildInviteLink(roomCode);
+  const gameTitle = getGameConfig(getInviteGameIdForLink()).title;
+  const shareText = `Join my Puffly ${gameTitle} room (${roomCode}): ${inviteUrl}`;
+
+  updateInvitePanel(roomCode);
+  pendingInviteShareRoomCode = "";
+  updateCreateInviteButtonLabel();
+
+  if (navigator.share) {
+    const sharePayloads = [
+      { url: inviteUrl },
+      { title: `Puffly ${gameTitle} Invite`, url: inviteUrl },
+      { text: shareText },
+      { title: `Puffly ${gameTitle} Invite`, text: shareText, url: inviteUrl },
+    ];
+    for (const sharePayload of sharePayloads) {
+      try {
+        if (navigator.canShare && !navigator.canShare(sharePayload)) {
+          continue;
+        }
+        await navigator.share(sharePayload);
+        setFriendStatus(`Room ${roomCode} ready. Invite shared.`);
         return true;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          if (!options.silentCancel) {
+            setFriendStatus(`Room ${roomCode} ready. Tap Share Invite to open Messages.`);
+          }
+          return false;
+        }
+        if (error?.name === "NotAllowedError") {
+          break;
+        }
       }
     }
   }
-  try {
-    await navigator.clipboard.writeText(inviteUrl);
-    setFriendStatus(`Invite copied with code ${roomCode}. Send it to your friend.`);
-    return true;
-  } catch {
-    if (typeof window !== "undefined") {
-      window.prompt(`Copy this invite link for room ${roomCode}:`, inviteUrl);
-    }
-    setFriendStatus(`Room ${roomCode} ready. Share the invite link shown in the prompt.`);
-    return false;
+
+  const copied = await copyInviteLinkToClipboard(roomCode);
+  if (!options.silentFallback) {
+    setFriendStatus(
+      copied
+        ? `Room ${roomCode} ready. Link copied — tap Share Invite to open Messages.`
+        : `Room ${roomCode} ready. Tap Share Invite or Copy Invite Link below.`,
+    );
   }
+  return false;
 }
 
 function setVoiceStatus(text) {
@@ -1520,7 +3998,27 @@ function updateSpeechUnlockOverlay() {
   if (!speechUnlockOverlay) {
     return;
   }
-  const shouldShow = playMode === "friend" && speechNeedsInteractionUnlock && !speechUnlocked;
+  const title = speechUnlockOverlay.querySelector("h2");
+  const blurb = speechUnlockOverlay.querySelector("p");
+  if (playMode === "friend") {
+    if (title) {
+      title.textContent = "Tap Start for Voice";
+    }
+    if (blurb) {
+      blurb.textContent =
+        "Tap Start to turn on voice prompts for your room, flip cues, and turn announcements.";
+    }
+    const shouldShow = speechNeedsInteractionUnlock && !friendVoiceStartDismissed;
+    speechUnlockOverlay.classList.toggle("hidden", !shouldShow);
+    return;
+  }
+  if (title) {
+    title.textContent = "Tap Start for Voice";
+  }
+  if (blurb) {
+    blurb.textContent = "Tap Start to turn on voice prompts and hear the flip cue before you play.";
+  }
+  const shouldShow = playMode === "puffly" && !practiceVoiceStartDismissed;
   speechUnlockOverlay.classList.toggle("hidden", !shouldShow);
 }
 
@@ -1742,7 +4240,7 @@ function updateRulesForMode() {
   }
   if (isPuzzle) {
     ruleLine3.textContent = "Drag a tray piece near its matching slot to snap.";
-    ruleLine4.textContent = "Outer-edge pieces glow yellow for easier starts.";
+    ruleLine4.textContent = "Outer-edge pieces glow cyan for easier starts.";
   } else if (isFour) {
     ruleLine3.textContent = "Tap one of the highlighted slots to drop your piece.";
     ruleLine4.textContent = "Connect 4 in any direction to win.";
@@ -1752,19 +4250,55 @@ function updateRulesForMode() {
   }
 }
 
+function getFriendCreateRoomHint() {
+  const gameTitle = getGameConfig(selectedGameId).title;
+  if (prefersCompactChrome()) {
+    if (selectedGameId === "puzzle") {
+      return `Pick size, then Create & Invite (${gameTitle}).`;
+    }
+    return `Create or join a ${gameTitle} room.`;
+  }
+  if (selectedGameId === "puzzle") {
+    return `Choose Mini, Classic, or Mega, then tap Create & Invite for a ${gameTitle} room.`;
+  }
+  return `Tap Create & Invite to start a ${gameTitle} friend room.`;
+}
+
 function getFriendStatusText(session) {
   if (!session) {
-    return "Tap Create & Invite to start a room.";
+    return getFriendCreateRoomHint();
   }
+  const roomGame = normalizeGameId(session.gameType || selectedGameId);
+  const gameTitle = getGameConfig(roomGame).title;
   const count = session.playerCount ?? 1;
-  const base = `Connected players: ${count}/2 · Room ${session.roomCode}`;
+  if (prefersCompactChrome()) {
+    const base = `${count}/2 · ${session.roomCode} · ${gameTitle}`;
+    if (!session.ready) {
+      return `${base} — waiting`;
+    }
+    if (isStarterFlipPending()) {
+      return roomGame === "puzzle" ? `${base} — flip` : `${base} — flip to start`;
+    }
+    return `${base} · ${playerDisplayName(session.color)}`;
+  }
+  const base = `Connected players: ${count}/2 · Room ${session.roomCode} · ${gameTitle}`;
   if (!session.ready) {
     return `${base}. Waiting for opponent...`;
   }
   if (isStarterFlipPending()) {
-    return `${base}. Blue flips to see who goes first.`;
+    const flipMsg =
+      roomGame === "puzzle"
+        ? puzzleFlipPromptText()
+        : `${playerDisplayName(getFriendFlipperColor())} flips to see who goes first.`;
+    return `${base}. ${flipMsg}`;
   }
-  return `${base}. You are ${playerDisplayName(session.color).toUpperCase()}.`;
+  if (roomGame === "puzzle") {
+    if (session.color === "light") {
+      return `${base}. You are GREEN 🐸 — pieces from the GREEN tray (right).`;
+    }
+    return `${base}. You are BLUE 🐻 — pieces from the BLUE tray (left).`;
+  }
+  return `${base}. You are ${playerDisplayName(session.color).toUpperCase()} Team.`;
 }
 
 function updatePuzzleDebugStrip(statusMessage) {
@@ -1784,7 +4318,7 @@ function updatePuzzleDebugStrip(statusMessage) {
   const domBlue = blueCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
   const domGreen = greenCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
   const total = (state?.pieces || []).length;
-  const flip = isStarterFlipPending() ? "pending" : "done";
+  const flip = isStarterFlipPending() ? `pending:${getPuzzleFlipTurn()}` : "done";
   puzzleDebugStrip.textContent =
     `DBG puzzle | mode:${playMode} | flip:${flip} | state(B:${stateBlue},G:${stateGreen},total:${total}) | dom(B:${domBlue},G:${domGreen}) | sel:${selectedPuzzlePieceId || "-"} | msg:${statusMessage}`;
   puzzleDebugStrip.classList.remove("hidden");
@@ -1809,9 +4343,72 @@ function resetSessionForModeSwitch() {
   closeVoiceConnection();
   remoteSession = null;
   pendingJoinIntroTeam = "";
+  pendingInviteShareRoomCode = "";
   if (roomCodeInput) {
     roomCodeInput.value = "";
   }
+  updateCreateInviteButtonLabel();
+}
+
+/** Keep the multiplayer room alive while the user plays solo practice. */
+function pauseFriendRoomForPractice() {
+  if (!remoteSession) {
+    stopRoomPolling();
+    closeVoiceConnection();
+    return;
+  }
+  const pausedSession = {
+    roomCode: remoteSession.roomCode,
+    playerId: remoteSession.playerId,
+    gameType: remoteSession.gameType,
+    color: remoteSession.color,
+    version: remoteSession.version,
+    playerCount: remoteSession.playerCount,
+    ready: remoteSession.ready,
+    puzzleFlipTurn: remoteSession.puzzleFlipTurn,
+  };
+  writeStoredFriendSession(pausedSession);
+  stopRoomPolling();
+  if (voiceJoined) {
+    apiPost("/api/rooms/voice/leave", {
+      roomCode: pausedSession.roomCode,
+      playerId: pausedSession.playerId,
+    }).catch(() => {});
+  }
+  closeVoiceConnection();
+  pendingJoinIntroTeam = "";
+  pendingInviteShareRoomCode = pausedSession.roomCode;
+  if (roomCodeInput) {
+    roomCodeInput.value = pausedSession.roomCode;
+  }
+  remoteSession = null;
+  updateCreateInviteButtonLabel();
+  updateFriendRoomButtons();
+}
+
+async function resumeFriendRoomIfPaused() {
+  if (remoteSession) {
+    updateInvitePanel(remoteSession.roomCode);
+    updateFriendRoomButtons();
+    updateFriendLockOverlay();
+    setFriendStatus(getFriendStatusText(remoteSession));
+    return true;
+  }
+  if (!readStoredFriendSession()) {
+    return false;
+  }
+  triedStoredFriendReconnect = false;
+  setFriendStatus("Reconnecting to your friend room...");
+  await tryReconnectStoredFriendSession({ force: true });
+  if (remoteSession) {
+    updateInvitePanel(remoteSession.roomCode);
+    updateFriendRoomButtons();
+    updateFriendLockOverlay();
+    setFriendStatus(getFriendStatusText(remoteSession));
+    render("Reconnected to your friend room.");
+    return true;
+  }
+  return false;
 }
 
 function resetFriendLocalState(message = "Tap Create & Invite to start a room.") {
@@ -1826,7 +4423,17 @@ function resetFriendLocalState(message = "Tap Create & Invite to start a room.")
   closeVoiceConnection();
   remoteSession = null;
   clearStoredFriendSession();
+  speechGesturePrimed = !speechNeedsInteractionUnlock;
+  speechUnlocked = !speechNeedsInteractionUnlock;
+  friendVoiceStartDismissed = !speechNeedsInteractionUnlock;
+  friendJoinWelcomeSpoken = false;
+  friendFlipTurnLastPhrase = "";
+  friendFlipTurnSpeechLockUntil = 0;
+  friendOpponentJoinedSpeechLockUntil = 0;
+  friendSwitchVoiceLockUntil = 0;
+  friendLobbyPromptSpoken = false;
   pendingJoinIntroTeam = "";
+  pendingInviteShareRoomCode = "";
   roomChatMessages = [];
   setChatUnreadCount(0);
   state = createStateForGame(selectedGameId);
@@ -1838,17 +4445,51 @@ function resetFriendLocalState(message = "Tap Create & Invite to start a room.")
     roomCodeInput.value = "";
   }
   setFriendStatus(message);
+  updateInvitePanel(null);
+  updateFriendRoomButtons();
+  updateFriendPuzzleDifficultyPanel();
+  updateFriendLockOverlay();
   updateRulesForMode();
   renderRoomChat(true);
   render("Friend mode: connect to a room.");
 }
 
-async function apiPost(path, payload) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+async function apiPost(path, payload, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer =
+    controller && typeof window !== "undefined"
+      ? window.setTimeout(() => controller.abort(), timeoutMs)
+      : null;
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller?.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(
+        "Friend server timed out. Run: python3 multiplayer_server.py 8002 and check the Cloudflare tunnel.",
+      );
+    }
+    throw error;
+  } finally {
+    if (timer) {
+      window.clearTimeout(timer);
+    }
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    if (response.status === 401 || response.status === 403 || response.status === 302) {
+      throw new Error("Sign in at dev.playpuffly.org, then reload and try Friend mode again.");
+    }
+    throw new Error(
+      `Friend server unavailable (HTTP ${response.status}). Run: python3 multiplayer_server.py 8002`,
+    );
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || `Request failed (${response.status})`);
@@ -1858,7 +4499,7 @@ async function apiPost(path, payload) {
 
 async function tryReconnectStoredFriendSession(options = {}) {
   const force = Boolean(options.force);
-  if (AUTO_JOIN_ROOM_CODE && !force) {
+  if (!force) {
     return;
   }
   if (
@@ -2075,38 +4716,72 @@ async function leaveVoiceConnection() {
   closeVoiceConnection();
 }
 
-async function syncRoomState() {
+async function fetchFriendRoomState() {
+  if (!remoteSession) {
+    return { response: null, data: {} };
+  }
+  const params = new URLSearchParams({
+    roomCode: remoteSession.roomCode,
+    _: String(Date.now()),
+  });
+  const response = await fetch(`/api/rooms/state?${params.toString()}`, { cache: "no-store" });
+  const data = await response.json().catch(() => ({}));
+  return { response, data };
+}
+
+async function syncRoomState(options = {}) {
   if (!remoteSession || applyingRemoteSync) {
     return;
+  }
+  const force = Boolean(options.force);
+  const ourTurn = state?.currentPlayer === remoteSession.color;
+  if (
+    !force &&
+    busy &&
+    ourTurn &&
+    !(selectedGameId === "puzzle" && isStarterFlipPending())
+  ) {
+    deferRoomSyncUntilIdle = true;
+    return;
+  }
+  if (selectedGameId === "puzzle" && isStarterFlipPending()) {
+    busy = false;
+    puzzlePlaceInFlight = false;
   }
   applyingRemoteSync = true;
   try {
   const oldVersion = remoteSession.version;
   const oldReady = remoteSession.ready;
   const oldCount = remoteSession.playerCount;
-  const previousCurrentPlayer = state.currentPlayer;
   const previousState = clone(state);
-  const params = new URLSearchParams({ roomCode: remoteSession.roomCode });
-  const response = await fetch(`/api/rooms/state?${params.toString()}`);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
+  const { response, data } = await fetchFriendRoomState();
+  if (!response?.ok) {
     throw new Error(data.error || "Unable to read room state.");
   }
-  if (typeof data.version === "number") {
-    remoteSession.version = data.version;
-  }
+  const snapshotVersion = typeof data.version === "number" ? data.version : null;
+  const isStaleSnapshot = snapshotVersion !== null && snapshotVersion < oldVersion;
   if (typeof data.playerCount === "number") {
     remoteSession.playerCount = data.playerCount;
     remoteSession.ready = data.playerCount >= 2;
     setFriendStatus(getFriendStatusText(remoteSession));
   }
-  if (typeof data.gameType === "string" && isKnownGame(data.gameType)) {
-      remoteSession.gameType = normalizeGameId(data.gameType);
-    if (selectedGameId !== normalizeGameId(data.gameType)) {
-        selectedGameId = normalizeGameId(data.gameType);
-      updateGameButtons();
-      updateAppTitle();
-    }
+  if (isStaleSnapshot) {
+    syncRoomChatFromPayload(data);
+    return;
+  }
+  if (snapshotVersion !== null) {
+    remoteSession.version = snapshotVersion;
+  }
+  const remoteGameType =
+    typeof data.gameType === "string" && isKnownGame(data.gameType)
+      ? normalizeGameId(data.gameType)
+      : remoteSession.gameType;
+  const didRoomGameTypeChange =
+    isKnownGame(remoteSession.gameType) && remoteGameType !== normalizeGameId(remoteSession.gameType);
+  remoteSession.gameType = remoteGameType;
+  const didLocalGameTypeChange = syncLocalGameTypeFromRoom(remoteGameType);
+  if (didLocalGameTypeChange) {
+    writeStoredFriendSession(remoteSession);
   }
   if (data.voiceParticipants && voiceJoined) {
     const bothVoiceReady = data.voiceParticipants.dark && data.voiceParticipants.light;
@@ -2115,45 +4790,81 @@ async function syncRoomState() {
     }
   }
   syncRoomChatFromPayload(data);
+  if (selectedGameId === "puzzle") {
+    syncPuzzleFlipTurnFromPayload(data);
+    if (data.state) {
+      syncPuzzleDifficultyFromRemote(data.state, data.puzzleDifficulty);
+    }
+  }
   const didVersionChange = typeof data.version === "number" && data.version !== oldVersion;
   const didReadyChange =
     remoteSession.ready !== oldReady || remoteSession.playerCount !== oldCount;
-  if (data.state && (didVersionChange || didReadyChange)) {
-    const shouldAnimateForOpponent =
-      didVersionChange &&
-      playMode === "friend" &&
-      remoteSession.ready &&
-      previousCurrentPlayer &&
-      previousCurrentPlayer !== remoteSession.color;
-    if (shouldAnimateForOpponent) {
-      if (selectedGameId === "fourinarow") {
-        const remoteDrop = inferRemoteDropFromStates(previousState, data.state);
-        if (remoteDrop) {
-          await sleep(140);
-          await animateFourDrop(remoteDrop.player, remoteDrop.row, remoteDrop.col, AI_MOVE_ANIMATION_MS);
-          playMoveAudio(remoteDrop.player, { isCapture: false });
+  if (data.state) {
+    const normalizedRemote = normalizeStateForGame(data.state, selectedGameId);
+    const boardChanged = roomStateDiffersFromSync(previousState, normalizedRemote);
+    const shouldApplyRemoteState =
+      boardChanged ||
+      didVersionChange ||
+      didReadyChange ||
+      didRoomGameTypeChange ||
+      didLocalGameTypeChange;
+    if (shouldApplyRemoteState) {
+      const flipJustCompleted = isStarterFlipTransition(previousState, normalizedRemote);
+      const puzzleJustCompleted =
+        selectedGameId === "puzzle" && isPuzzleComplete(normalizedRemote) && !isPuzzleComplete(previousState);
+      const puzzleJustRestarted =
+        selectedGameId === "puzzle" && isPuzzleRestartTransition(previousState, normalizedRemote);
+      if (didRoomGameTypeChange || didLocalGameTypeChange) {
+        lastTurnSpoken = "";
+        lastSpokenPhrase = "";
+      }
+      if (didReadyChange && remoteSession.ready && !oldReady) {
+        if (!friendJoinWelcomeSpoken) {
+          announceFriendJoinWelcome(playerDisplayName(remoteSession.color).toUpperCase());
         } else {
-          await sleep(FRIEND_MOVE_DELAY_MS);
+          announceFriendOpponentJoined();
         }
+      }
+      const message = isPuzzleComplete(normalizedRemote)
+        ? "Puzzle complete!"
+        : didRoomGameTypeChange || didLocalGameTypeChange
+          ? `Now playing ${getGameConfig(selectedGameId).title} with your friend.`
+          : remoteSession.ready
+            ? flipJustCompleted
+              ? `${starterLabel(normalizedRemote.starterPlayer || normalizedRemote.currentPlayer)} wins the flip and goes first.`
+              : didVersionChange
+                ? "Room synchronized."
+                : "Opponent connected."
+            : "Waiting for opponent...";
+      const willAnimateOpponent = shouldAnimateFriendOpponentMove(
+        previousState,
+        normalizedRemote,
+        didVersionChange,
+      );
+      if (willAnimateOpponent) {
+        try {
+          await playFriendOpponentMoveAnimation(previousState, normalizedRemote, message);
+        } catch (error) {
+          console.warn("[FriendSync] Remote animation skipped:", error);
+        }
+      }
+      applyRemoteRoomState(data, { statusMessage: message });
+      if (didRoomGameTypeChange || didLocalGameTypeChange) {
+        updateStarterFlipButton();
+        announceFriendGameSwitchVoice();
+        refreshFriendGameUi(message);
       } else {
-        const remoteMove = inferRemoteMoveFromStates(previousState, data.state);
-        if (remoteMove) {
-          await sleep(140);
-          await animateComputerMove(remoteMove);
-          playMoveAudio(previousCurrentPlayer, remoteMove);
-        } else {
-          await sleep(FRIEND_MOVE_DELAY_MS);
+        if (puzzleJustRestarted) {
+          resetPuzzleSessionAfterRestart();
+          puzzleTrayBootstrapAttempted = false;
+        } else if (selectedGameId === "puzzle") {
+          refreshPuzzleCelebrationFlags();
+        }
+        if (puzzleJustCompleted) {
+          maybeShowPuzzleCompletion("Puzzle complete!");
         }
       }
     }
-    state = normalizeStateForGame(data.state, selectedGameId);
-    selectedPuzzlePieceId = "";
-    const message = remoteSession.ready
-      ? didVersionChange
-        ? "Room synchronized."
-        : "Opponent connected."
-      : "Waiting for opponent...";
-    render(message);
   }
   } finally {
     applyingRemoteSync = false;
@@ -2163,30 +4874,82 @@ async function syncRoomState() {
 function startRoomPolling() {
   stopRoomPolling();
   roomPollTimer = window.setInterval(() => {
-    if (!remoteSession || busy) {
+    if (!remoteSession || applyingRemoteSync || busy) {
       return;
     }
-    syncRoomState().catch(() => {});
-  }, 900);
+    syncRoomState().catch((error) => {
+      console.warn("[FriendSync] Poll failed:", error);
+    });
+  }, remoteSession ? FRIEND_ROOM_POLL_MS : 900);
 }
 
-function hydrateRoomSession(data) {
+function syncLocalGameTypeFromRoom(gameType) {
+  const normalized = normalizeGameId(gameType);
+  if (!isKnownGame(normalized)) {
+    return false;
+  }
+  const changed = selectedGameId !== normalized;
+  if (!changed) {
+    return false;
+  }
+  const previousGame = selectedGameId;
+  selectedGameId = normalized;
+  updateGameButtons();
+  updateAppTitle();
+  updateRulesForMode();
+  updateFriendPuzzleDifficultyPanel();
+  if (previousGame === "puzzle" && normalized !== "puzzle") {
+    clearPuzzleDrag();
+    releasePuzzleInteractionLocks();
+    selectedPuzzlePieceId = "";
+    puzzleTrayBootstrapAttempted = false;
+  }
+  winnerAnnounced = null;
+  hideCelebration();
+  resetFriendSpeechForGameSwitch();
+  return true;
+}
+
+function refreshFriendGameUi(statusMessage = lastStatusMessage) {
+  updateFriendRoomButtons();
+  updateFriendLockOverlay();
+  updateFriendPuzzleDifficultyPanel();
+  updateRulesForMode();
+  updateStarterFlipButton();
+  render(statusMessage);
+}
+
+function hydrateRoomSession(data, options = {}) {
+  if (!data?.roomCode) {
+    setFriendStatus("Server response missing room code.");
+    return false;
+  }
+  playMode = "friend";
+  if (typeof window !== "undefined") {
+    window.__pufflyUserChosePufflyMode = false;
+    window.__pufflyPendingPlayMode = "friend";
+    if (typeof window.pufflyApplyPlayModeChrome === "function") {
+      window.pufflyApplyPlayModeChrome("friend");
+    }
+  }
+  syncPlayModeChrome();
+  const announceJoinVoice = options.announceJoinVoice !== false;
   remoteSession = {
     roomCode: data.roomCode,
     gameType: normalizeGameId(data.gameType || selectedGameId),
     playerId: data.playerId,
     color: data.color,
-    version: data.version,
+    version: typeof data.version === "number" ? data.version : 0,
     playerCount: data.playerCount ?? 1,
     ready: (data.playerCount ?? 1) >= 2,
+    puzzleFlipTurn:
+      data.puzzleFlipTurn === "light" || data.puzzleFlipTurn === "dark" ? data.puzzleFlipTurn : undefined,
   };
   writeStoredFriendSession(remoteSession);
-  if (isKnownGame(remoteSession.gameType) && selectedGameId !== remoteSession.gameType) {
-    selectedGameId = remoteSession.gameType;
-    updateGameButtons();
-    updateAppTitle();
-  }
+  syncLocalGameTypeFromRoom(remoteSession.gameType);
   state = normalizeStateForGame(data.state, selectedGameId);
+  applyPuzzleFlipTurnFromRemote(state, data);
+  syncPuzzleDifficultyFromRemote(state, data.puzzleDifficulty);
   selectedPuzzlePieceId = "";
   moveHistory = [];
   undoSnapshots = [];
@@ -2196,25 +4959,83 @@ function hydrateRoomSession(data) {
     roomCodeInput.value = data.roomCode;
   }
   setFriendStatus(getFriendStatusText(remoteSession));
+  updateInvitePanel(data.roomCode);
+  updateFriendRoomButtons();
+  updateFriendLockOverlay();
+  updateFriendPuzzleDifficultyPanel();
   updateRulesForMode();
   syncRoomChatFromPayload(data, true);
   setChatUnreadCount(0);
   const teamName = playerDisplayName(data.color).toUpperCase();
-  pendingJoinIntroTeam = teamName;
-  const joinIntroPhrase = buildJoinIntroPhrase(teamName);
-  speakPhraseReliable(joinIntroPhrase);
-  if (remoteSession.ready && state?.currentPlayer) {
-    const openingTurnPhrase = `${playerDisplayName(state.currentPlayer).toUpperCase()}'S TURN`;
-    // Prevent immediate duplicate turn announcement on the same render cycle.
-    lastTurnSpoken = openingTurnPhrase;
+  if (announceJoinVoice) {
+    friendJoinWelcomeSpoken = false;
+    announceFriendJoinWelcome(teamName);
   } else {
-    lastTurnSpoken = "Welcome to the game room.";
+    pendingJoinIntroTeam = "";
+    lastTurnSpoken = "";
+    lastSpokenPhrase = "";
   }
   startRoomPolling();
-  if (speechNeedsInteractionUnlock && !speechUnlocked) {
-    setFriendStatus("Tap Start to enable voice on this iPad.");
+  if (options.deferRender) {
+    return true;
   }
-  render("Remote room connected.");
+  try {
+    render(options.statusMessage || "Remote room connected.");
+  } catch (error) {
+    console.error("[hydrateRoomSession] render failed", error);
+    setFriendStatus(getFriendStatusText(remoteSession));
+  }
+  if (speechNeedsInteractionUnlock && playMode === "friend" && !friendVoiceStartDismissed) {
+    updateSpeechUnlockOverlay();
+    if (remoteSession?.ready) {
+      setFriendStatus("Room connected. Tap Start above the board for voice prompts.");
+    } else {
+      setFriendStatus(`${getFriendStatusText(remoteSession)} Tap Start above the board for voice.`);
+    }
+  }
+  return true;
+}
+
+function applyCreateRoomResponse(data) {
+  const roomCode = String(data?.roomCode || "").trim().toUpperCase();
+  if (!roomCode) {
+    throw new Error("Server did not return a room code.");
+  }
+  ensureFriendPlayModeSynced();
+  ensureAudioContext();
+  primeSpeechEngine();
+  pendingInviteShareRoomCode = "";
+  const roomLabel =
+    selectedGameId === "puzzle"
+      ? getDifficultyLabel(difficulty, "puzzle")
+      : getGameConfig(selectedGameId).title;
+  if (roomCodeInput) {
+    roomCodeInput.value = roomCode;
+  }
+  updateInvitePanel(roomCode);
+  updateFriendRoomButtons();
+  setFriendStatus(`Room ${roomCode} created (${roomLabel}). Waiting for your friend (1/2).`);
+  try {
+    hydrateRoomSession(data, { announceJoinVoice: true });
+  } catch (error) {
+    console.error("[applyCreateRoomResponse] hydrate failed", error);
+    remoteSession = {
+      roomCode,
+      gameType: normalizeGameId(data.gameType || selectedGameId),
+      playerId: data.playerId,
+      color: data.color,
+      version: data.version ?? 0,
+      playerCount: data.playerCount ?? 1,
+      ready: (data.playerCount ?? 1) >= 2,
+    };
+    writeStoredFriendSession(remoteSession);
+    startRoomPolling();
+    try {
+      render("Friend room ready.");
+    } catch {
+      // Status line already shows the room code.
+    }
+  }
 }
 
 async function joinRoomWithCode(roomCode, options = {}) {
@@ -2224,17 +5045,33 @@ async function joinRoomWithCode(roomCode, options = {}) {
     setFriendStatus("Enter a room code first.");
     return false;
   }
+  ensureFriendPlayModeSynced();
   if (remoteSession) {
     setFriendStatus(
       `Already connected to room ${remoteSession.roomCode} as ${playerDisplayName(remoteSession.color).toUpperCase()}. Use the second device to join.`,
     );
     return false;
   }
+  if (fromInvite) {
+    applyInviteLandingConfig();
+    if (!options.skipModeSetup) {
+      if (playMode !== "friend") {
+        enterFriendLobbyChrome({ joiningCode: normalizedCode });
+      }
+      clearStoredFriendSession();
+    } else {
+      clearStoredFriendSession();
+    }
+  }
   try {
-    const data = await apiPost("/api/rooms/join", { roomCode: normalizedCode, gameType: selectedGameId });
+    const joinPayload = { roomCode: normalizedCode };
+    if (!fromInvite) {
+      joinPayload.gameType = selectedGameId;
+    }
+    const data = await apiPost("/api/rooms/join", joinPayload);
     hydrateRoomSession(data);
     if (fromInvite) {
-      clearJoinCodeFromUrl();
+      clearInviteParamsFromUrl();
     }
     return true;
   } catch (error) {
@@ -2246,7 +5083,7 @@ async function joinRoomWithCode(roomCode, options = {}) {
       await tryReconnectStoredFriendSession({ force: true });
       if (remoteSession) {
         if (fromInvite) {
-          clearJoinCodeFromUrl();
+          clearInviteParamsFromUrl();
         }
         return true;
       }
@@ -2260,48 +5097,96 @@ async function joinRoomWithCode(roomCode, options = {}) {
   }
 }
 
-function setPlayMode(mode) {
+function syncPlayModeChrome() {
+  if (typeof window !== "undefined" && typeof window.pufflyApplyPlayModeChrome === "function") {
+    window.pufflyApplyPlayModeChrome(playMode);
+  }
+  document.body.classList.toggle("friend-mode", playMode === "friend");
+  updateSpeechUnlockOverlay();
+  const pufflyPanel = document.getElementById("puffly-controls");
+  const friendPanel = document.getElementById("friend-controls");
+  const pufflyBtn = document.getElementById("play-puffly-btn");
+  const friendBtn = document.getElementById("play-friend-btn");
+  const chatPanel = document.getElementById("friend-chat-panel");
+  pufflyPanel?.classList.toggle("hidden", playMode !== "puffly");
+  friendPanel?.classList.toggle("hidden", playMode !== "friend");
+  pufflyBtn?.classList.toggle("active", playMode === "puffly");
+  friendBtn?.classList.toggle("active", playMode === "friend");
+  chatPanel?.classList.toggle("hidden", playMode !== "friend");
+}
+
+function setPlayMode(mode, options = {}) {
   playMode = mode;
-  document.body.classList.toggle("friend-mode", mode === "friend");
-  playPufflyButton?.classList.toggle("active", mode === "puffly");
-  playFriendButton?.classList.toggle("active", mode === "friend");
-  pufflyControls?.classList.toggle("hidden", mode !== "puffly");
-  friendControls?.classList.toggle("hidden", mode !== "friend");
-  friendChatPanel?.classList.toggle("hidden", mode !== "friend");
+  if (mode === "puffly" && typeof window !== "undefined") {
+    window.__pufflyUserChosePufflyMode = true;
+  } else if (mode === "friend" && typeof window !== "undefined") {
+    window.__pufflyUserChosePufflyMode = false;
+  }
+  syncPlayModeChrome();
   if (mode !== "friend") {
     setVoiceStatus("Voice not connected.");
   } else {
     setVoiceStatus("Voice not connected.");
-    if (speechNeedsInteractionUnlock && !speechUnlocked) {
-      setFriendStatus("Tap Start to enable voice on this iPad.");
-    }
   }
   updateVoiceButtons();
   updateSpeechUnlockOverlay();
+  updateFriendPuzzleDifficultyPanel();
   hideRulesPanel();
-  resetSessionForModeSwitch();
+  if (mode === "puffly") {
+    pauseFriendRoomForPractice();
+  } else {
+    resetSessionForModeSwitch();
+  }
   puzzleTrayBootstrapAttempted = false;
-  state = createStateForGame(selectedGameId);
   selectedPuzzlePieceId = "";
   winnerAnnounced = null;
-  lastSpokenPhrase = "";
-  lastTurnSpoken = "";
   hideCelebration();
   if (mode === "friend") {
+    abortPracticeInteractionForModeSwitch();
+    initDesktopSpeechDefaults();
+    if (!speechNeedsInteractionUnlock) {
+      speechUnlocked = true;
+      speechGesturePrimed = true;
+      friendVoiceStartDismissed = true;
+    } else if (!friendVoiceStartDismissed) {
+      speechUnlocked = false;
+      speechGesturePrimed = false;
+    }
+    updateSpeechUnlockOverlay();
+    state = createStateForGame(selectedGameId);
+    lastSpokenPhrase = "";
+    lastTurnSpoken = "";
     moveHistory = [];
     undoSnapshots = [];
     roomChatMessages = [];
     setChatUnreadCount(0);
-    setFriendStatus(
-      speechNeedsInteractionUnlock && !speechUnlocked
-        ? "Tap Start to enable voice on this iPad."
-        : "Tap Create & Invite to start a room.",
-    );
+    updateFriendRoomButtons();
+    updateFriendPuzzleDifficultyPanel();
+    updateFriendLockOverlay();
     updateRulesForMode();
     renderRoomChat(true);
-    render("Friend mode: connect to a room.");
     triedStoredFriendReconnect = false;
-    tryReconnectStoredFriendSession().catch(() => {});
+    if (!options.skipReconnect) {
+      void resumeFriendRoomIfPaused().then((reconnected) => {
+        if (!reconnected && !options.keepFriendStatus) {
+          setFriendStatus(getFriendCreateRoomHint());
+          setPufflyState("idle", "🤝 Tap Create & Invite above to start.");
+          updateInvitePanel(null);
+          render("Friend mode: connect to a room.");
+          if (!remoteSession) {
+            announceFriendLobbyPrompt();
+          }
+        }
+      });
+    } else if (!options.keepFriendStatus) {
+      setFriendStatus(getFriendCreateRoomHint());
+      setPufflyState("idle", "🤝 Tap Create & Invite above to start.");
+      updateInvitePanel(null);
+      render("Friend mode: connect to a room.");
+      if (!remoteSession) {
+        announceFriendLobbyPrompt();
+      }
+    }
     return;
   }
   moveHistory = [];
@@ -2310,28 +5195,30 @@ function setPlayMode(mode) {
   setChatUnreadCount(0);
   renderRoomChat(true);
   updateRulesForMode();
-  render("Flip to see who goes first.");
+  beginPracticeFlipRound();
 }
 
 function setPufflyLookAtPoint(clientX, clientY) {
-  if (!pufflyFace) {
+  const mascotFace = getActiveMascotFace();
+  if (!mascotFace) {
     return;
   }
-  const rect = pufflyFace.getBoundingClientRect();
+  const rect = mascotFace.getBoundingClientRect();
   const centerX = rect.left + rect.width / 2;
   const centerY = rect.top + rect.height / 2;
   const dx = clamp((clientX - centerX) / 18, -3.6, 3.6);
   const dy = clamp((clientY - centerY) / 22, -2.6, 2.6);
-  pufflyFace.style.setProperty("--pupil-x", `${dx.toFixed(2)}px`);
-  pufflyFace.style.setProperty("--pupil-y", `${dy.toFixed(2)}px`);
+  mascotFace.style.setProperty("--pupil-x", `${dx.toFixed(2)}px`);
+  mascotFace.style.setProperty("--pupil-y", `${dy.toFixed(2)}px`);
 }
 
 function setPufflyEyeOffset(offsetX, offsetY = 0) {
-  if (!pufflyFace) {
+  const mascotFace = getActiveMascotFace();
+  if (!mascotFace) {
     return;
   }
-  pufflyFace.style.setProperty("--pupil-x", `${offsetX.toFixed(2)}px`);
-  pufflyFace.style.setProperty("--pupil-y", `${offsetY.toFixed(2)}px`);
+  mascotFace.style.setProperty("--pupil-x", `${offsetX.toFixed(2)}px`);
+  mascotFace.style.setProperty("--pupil-y", `${offsetY.toFixed(2)}px`);
 }
 
 function setPufflyLookToBoard() {
@@ -2356,7 +5243,7 @@ function getMoveDirection(move) {
 }
 
 async function animatePufflyEyeCue(direction) {
-  if (!pufflyFace) {
+  if (!getActiveMascotFace()) {
     return;
   }
   if (direction === "left") {
@@ -2387,8 +5274,14 @@ function triggerPufflyCaptureCheer() {
 }
 
 async function flipStarter() {
-  ensurePuzzleStateReady();
-  if (busy || !isStarterFlipPending()) {
+  forcePuzzleUiRecoverable();
+  if (busy) {
+    return;
+  }
+  if (!(playMode === "friend" && remoteSession?.ready)) {
+    ensurePuzzleStateReady();
+  }
+  if (!isStarterFlipPending()) {
     return;
   }
   if (playMode === "friend") {
@@ -2400,8 +5293,10 @@ async function flipStarter() {
       render("Waiting for opponent to join.");
       return;
     }
-    if (remoteSession.color !== "dark") {
-      render("Blue flips to see who goes first.");
+    if (remoteSession.color !== getFriendFlipperColor()) {
+      render(
+        selectedGameId === "puzzle" ? puzzleFlipPromptText() : `${playerDisplayName(getFriendFlipperColor())} flips to start.`,
+      );
       return;
     }
   }
@@ -2409,46 +5304,51 @@ async function flipStarter() {
   ensureAudioContext();
   busy = true;
   updateStarterFlipButton();
-  starterCoin?.classList.add("flipping");
-  render("Flipping to see who goes first...");
-  await sleep(STARTER_FLIP_ANIMATION_MS);
-
   const winner = Math.random() < 0.5 ? "dark" : "light";
-  const nextState = normalizeStateForGame(
-    {
-      ...state,
-      currentPlayer: winner,
-      starterFlipDone: true,
-      starterPlayer: winner,
-      preFlipSetupReady: false,
-      selectedSquare: null,
-      forcedPiece: null,
-      lastMove: null,
-    },
-    selectedGameId,
-  );
-  if (selectedGameId === "fourinarow") {
-    nextState.winner = null;
-    nextState.draw = false;
-    nextState.winningLine = [];
-  }
   const statusText = `${starterLabel(winner)} wins the flip and goes first.`;
-
-  if (playMode === "friend") {
-    try {
-      await submitRemoteMove(nextState);
+  render("Flipping to see who goes first...");
+  try {
+    if (playMode === "friend") {
+      await submitFriendStarterFlip(winner);
+      starterCoin?.classList.add("flipping");
+      await sleep(STARTER_FLIP_ANIMATION_MS);
+      starterCoin?.classList.remove("flipping");
       render(statusText);
-    } catch (error) {
-      await syncRoomState().catch(() => {});
-      render(error?.message || "Flip sync failed.");
+    } else {
+      starterCoin?.classList.add("flipping");
+      await sleep(STARTER_FLIP_ANIMATION_MS);
+      const nextState = normalizeStateForGame(
+        {
+          ...state,
+          currentPlayer: winner,
+          starterFlipDone: true,
+          starterPlayer: winner,
+          preFlipSetupReady: false,
+          selectedSquare: null,
+          forcedPiece: null,
+          lastMove: null,
+        },
+        selectedGameId,
+      );
+      if (selectedGameId === "fourinarow") {
+        nextState.winner = null;
+        nextState.draw = false;
+        nextState.winningLine = [];
+      }
+      state = nextState;
+      render(statusText);
     }
-  } else {
-    state = nextState;
-    render(statusText);
+  } catch (error) {
+    await syncRoomState({ force: true }).catch(() => {});
+    render(error?.message || "Flip sync failed.");
+  } finally {
+    busy = false;
+    starterCoin?.classList.remove("flipping");
+    updateStarterFlipButton();
+    if (playMode !== "friend" || !isStarterFlipPending()) {
+      render(lastStatusMessage, { suppressStatusVoice: true });
+    }
   }
-  busy = false;
-  starterCoin?.classList.remove("flipping");
-  render(lastStatusMessage);
   if (playMode === "puffly" && state.currentPlayer === computerPlayer) {
     await runComputerTurn();
   }
@@ -2529,26 +5429,101 @@ function playSnapSound() {
   window.setTimeout(() => beep(310, 0.03, "triangle", 0.04), 52);
 }
 
-function selectPuzzlePiece(pieceId) {
+function updatePuzzleSelectionUi(statusMessage = lastStatusMessage, options = {}) {
+  lastStatusMessage = statusMessage;
+  if (!options.skipTrayHighlight && selectedPuzzlePieceId) {
+    applyPuzzleTraySelection(selectedPuzzlePieceId);
+  }
+  if (options.visualOnly) {
+    return;
+  }
+  const refreshMascot = () => {
+    if (playMode === "friend" && remoteSession) {
+      setPufflyState(
+        state.currentPlayer === remoteSession.color ? "idle" : "thinking",
+        friendMascotThoughtForTurn(),
+      );
+    } else if (state.currentPlayer === humanPlayer) {
+      setPufflyState("idle", "🧩 Tap the matching slot.");
+    }
+  };
+  if (options.deferMascot) {
+    window.requestAnimationFrame(refreshMascot);
+  } else {
+    refreshMascot();
+  }
+}
+
+function renderPuzzleAfterLocalMove(statusMessage = lastStatusMessage) {
+  lastStatusMessage = statusMessage;
+  renderCapturedPiles();
+  renderPuzzleBoard();
+  updatePuzzleSelectionUi(statusMessage);
+  updateTeamMascot();
+  if (maybeShowPuzzleCompletion(statusMessage)) {
+    return;
+  }
+  if (playMode === "friend" && remoteSession) {
+    setPufflyState(
+      state.currentPlayer === remoteSession.color ? "idle" : "thinking",
+      friendMascotThoughtForTurn(),
+    );
+    announceGameplayTurnVoice(statusMessage);
+  }
+}
+
+function getPuzzleTrayPileSelector(owner) {
+  return owner === "dark" ? "#blue-captured-pile" : "#green-captured-pile";
+}
+
+function findPuzzleTrayPieceElement(pieceId, owner) {
+  return document.querySelector(`${getPuzzleTrayPileSelector(owner)} .puzzle-piece[data-piece-id="${pieceId}"]`);
+}
+
+function commitPuzzlePlacementDom(pieceId, row, col) {
+  const piece = getPuzzlePiece(state, pieceId);
+  if (!piece) {
+    return;
+  }
+  findPuzzleTrayPieceElement(pieceId, piece.owner)?.remove();
+  const cell = boardElement.querySelector(`.puzzle-cell[data-row="${row}"][data-col="${col}"]`);
+  if (cell) {
+    cell.classList.add("locked");
+    cell.replaceChildren(createPuzzlePieceElement(piece));
+  }
+  clearPuzzleTraySelection();
+}
+
+function selectPuzzlePiece(pieceId, options = {}) {
   if (busy || selectedGameId !== "puzzle" || isStarterFlipPending()) {
+    if (!options.fromPointerDown) {
+      clearPuzzleTraySelection();
+    }
     return;
   }
   const piece = getPuzzlePiece(state, pieceId);
   if (!piece || piece.placed) {
+    clearPuzzleTraySelection();
     return;
   }
   if (playMode === "friend" && (!remoteSession || state.currentPlayer !== remoteSession.color)) {
-    render("Waiting for your friend...");
+    clearPuzzleTraySelection();
+    lastStatusMessage = "Waiting for your friend...";
+    updatePuzzleSelectionUi(lastStatusMessage, { visualOnly: true, skipTrayHighlight: true });
     return;
   }
   if (piece.owner !== state.currentPlayer) {
-    playInvalidAudio();
-    speakPhraseReliable("Not your piece.", { forceRepeat: true });
-    render(`Select a ${playerDisplayName(state.currentPlayer).toUpperCase()} tray piece.`);
+    clearPuzzleTraySelection();
+    window.setTimeout(() => {
+      playInvalidAudio();
+      speakPhraseReliable("Not your piece.", { forceRepeat: true });
+    }, 0);
+    lastStatusMessage = `Select a ${playerDisplayName(state.currentPlayer)} tray piece.`;
+    updatePuzzleSelectionUi(lastStatusMessage, { deferMascot: true, skipTrayHighlight: true });
     return;
   }
-  selectedPuzzlePieceId = piece.id;
-  render("Piece selected. Tap its matching slot.");
+  applyPuzzleTraySelection(piece.id);
+  updatePuzzleSelectionUi("Piece selected. Tap its matching slot.", { deferMascot: true, skipTrayHighlight: true });
 }
 
 function puzzleCellCenter(row, col) {
@@ -2587,35 +5562,56 @@ async function submitPuzzlePlacement(pieceId, row, col, options = {}) {
     return;
   }
 
+  if (busy && !options.fromComputer) {
+    return;
+  }
+  if (playMode === "friend") {
+    const canPlace = await ensureFriendTurnSyncedBeforeMove();
+    if (!canPlace) {
+      render("Waiting for your friend...");
+      return;
+    }
+  }
   busy = true;
   if (!options.skipAnimation) {
-    await animatePuzzleUserPlacement(pieceId, row, col);
+    await animatePuzzleUserPlacement(pieceId, row, col, options.placeMetrics || null);
   }
+  lockBoardGeometry();
   const result = applyPuzzlePlacement(state, pieceId, row, col);
   if (!result.ok) {
     busy = false;
     render(result.message || "That puzzle move is not valid.");
     return;
   }
-  selectedPuzzlePieceId = "";
-  const targetCell = boardElement.querySelector(`.puzzle-cell[data-row="${row}"][data-col="${col}"]`);
-  await animateDestinationBounce(targetCell);
-  recordPuzzlePlacement(state.currentPlayer, piece, row, col);
+  const nextState = finalizePuzzleCompletionState(result.nextState);
+  recordPuzzlePlacement(piece.owner, piece, row, col);
   playSnapSound();
   if (playMode === "friend") {
     try {
-      await submitRemoteMove(result.nextState);
-      render(result.message);
+      await submitRemoteMove(nextState, { puzzlePlacement: { pieceId, row, col } });
+      state = nextState;
+      commitPuzzlePlacementDom(pieceId, row, col);
+      const targetCell = boardElement.querySelector(`.puzzle-cell[data-row="${row}"][data-col="${col}"]`);
+      await animateDestinationBounce(targetCell);
+      renderPuzzleAfterLocalMove(result.message);
     } catch (error) {
-      await syncRoomState().catch(() => {});
+      await syncRoomState({ force: true }).catch(() => {});
       render(error?.message || "Move sync failed.");
+    } finally {
+      busy = false;
+      flushDeferredRoomSync();
     }
-  } else {
-    state = result.nextState;
-    render(result.message);
+    return;
   }
+  state = nextState;
+  commitPuzzlePlacementDom(pieceId, row, col);
+  const targetCell = boardElement.querySelector(`.puzzle-cell[data-row="${row}"][data-col="${col}"]`);
+  await animateDestinationBounce(targetCell);
   busy = false;
-  render(lastStatusMessage);
+  if (maybeShowPuzzleCompletion(result.message)) {
+    return;
+  }
+  render(result.message);
   if (playMode === "puffly") {
     await runComputerTurn();
   }
@@ -2675,44 +5671,142 @@ async function animatePuzzleAutoPlacement(pieceId, row, col) {
   ghost.remove();
 }
 
-async function animatePuzzleUserPlacement(pieceId, row, col) {
+function getPuzzleUserPlaceDurationMs() {
+  return speechNeedsInteractionUnlock ? 920 : Math.max(460, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.65));
+}
+
+async function runPuzzleFlyAnimation(flyEl, fromRect, toCenter, durationMs) {
+  const width = Math.max(56, fromRect.width);
+  const height = Math.max(56, fromRect.height || fromRect.width);
+  const startLeft = fromRect.left + fromRect.width / 2 - width / 2;
+  const startTop = fromRect.top + fromRect.height / 2 - height / 2;
+  const endLeft = toCenter.x - width / 2;
+  const endTop = toCenter.y - height / 2;
+  const deltaX = endLeft - startLeft;
+  const deltaY = endTop - startTop;
+
+  flyEl.classList.add("puzzle-fly-piece");
+  flyEl.classList.remove("selected");
+  flyEl.style.width = `${width}px`;
+  flyEl.style.height = `${height}px`;
+  flyEl.style.left = `${startLeft}px`;
+  flyEl.style.top = `${startTop}px`;
+  flyEl.style.right = "auto";
+  flyEl.style.bottom = "auto";
+  flyEl.style.margin = "0";
+  flyEl.style.transform = "translate3d(0, 0, 0)";
+  flyEl.style.transition = "none";
+  if (flyEl.parentElement !== document.body) {
+    document.body.appendChild(flyEl);
+  }
+
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+
+  const timing = {
+    duration: durationMs,
+    easing: "cubic-bezier(0.2, 0.9, 0.25, 1)",
+    fill: "forwards",
+  };
+
+  try {
+    const animation = flyEl.animate(
+      [
+        { transform: "translate3d(0px, 0px, 0)", left: `${startLeft}px`, top: `${startTop}px` },
+        { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`, left: `${startLeft}px`, top: `${startTop}px` },
+      ],
+      timing,
+    );
+    await animation.finished;
+  } catch {
+    flyEl.style.transition = `transform ${durationMs}ms ease-out`;
+    flyEl.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
+    await sleep(durationMs + 60);
+  }
+
+  if (flyEl.parentElement === document.body) {
+    flyEl.remove();
+  }
+}
+
+function capturePuzzlePlaceMetrics(cell, pieceId = selectedPuzzlePieceId) {
+  if (!cell || !pieceId) {
+    return null;
+  }
+  const row = Number(cell.dataset.row);
+  const col = Number(cell.dataset.col);
+  if (!Number.isFinite(row) || !Number.isFinite(col)) {
+    return null;
+  }
+  const sourcePiece = puzzleTrayPieceById.get(pieceId) || findPuzzleTrayPieceElement(pieceId, getPuzzlePiece(state, pieceId)?.owner);
+  if (!(sourcePiece instanceof HTMLElement)) {
+    return null;
+  }
+  const sourceRect = sourcePiece.getBoundingClientRect();
+  if (sourceRect.width < 4 || sourceRect.height < 4) {
+    return null;
+  }
+  const boardRect = boardElement.getBoundingClientRect();
+  const cols = Number(state?.cols) || getPuzzleGridSizeFromState().cols;
+  const cellSize = boardRect.width / cols;
+  return {
+    row,
+    col,
+    sourcePiece,
+    sourceRect,
+    center: {
+      x: boardRect.left + (col + 0.5) * cellSize,
+      y: boardRect.top + (row + 0.5) * cellSize,
+      cellSize,
+    },
+  };
+}
+
+async function animatePuzzleUserPlacement(pieceId, row, col, placeMetrics = null) {
   const piece = getPuzzlePiece(state, pieceId);
   if (!piece) {
-    return;
+    return false;
   }
-  const center = puzzleCellCenter(row, col);
-  const sourcePiece = document.querySelector(
-    `${piece.owner === "dark" ? "#blue-captured-pile" : "#green-captured-pile"} .puzzle-piece[data-piece-id="${pieceId}"]`,
-  );
-  const sourceRect = sourcePiece instanceof HTMLElement
-    ? sourcePiece.getBoundingClientRect()
-    : (piece.owner === "dark" ? blueCapturedTray?.getBoundingClientRect() : greenCapturedTray?.getBoundingClientRect());
-  if (!sourceRect) {
-    return;
+
+  const sourcePiece =
+    placeMetrics?.sourcePiece || puzzleTrayPieceById.get(pieceId) || findPuzzleTrayPieceElement(pieceId, piece.owner);
+  if (!(sourcePiece instanceof HTMLElement)) {
+    return false;
   }
-  const ghost = sourcePiece instanceof HTMLElement ? sourcePiece.cloneNode(true) : createPuzzlePieceElement(piece);
-  ghost.classList.add("drag-ghost");
-  const ghostSize = Math.max(64, Math.min(sourceRect.width, sourceRect.height || sourceRect.width));
-  ghost.style.width = `${ghostSize}px`;
-  ghost.style.height = `${ghostSize}px`;
-  const startLeft = sourceRect.left + sourceRect.width / 2 - ghostSize / 2;
-  const startTop = sourceRect.top + sourceRect.height / 2 - ghostSize / 2;
-  ghost.style.left = `${startLeft}px`;
-  ghost.style.top = `${startTop}px`;
-  ghost.style.transition = `transform ${Math.max(460, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.65))}ms ease-in-out`;
-  document.body.appendChild(ghost);
-  if (sourcePiece instanceof HTMLElement) {
-    sourcePiece.style.opacity = "0.25";
+
+  let sourceRect = placeMetrics?.sourceRect;
+  let center = placeMetrics?.center;
+  if (!sourceRect || !center) {
+    lockBoardGeometry();
+    sourceRect = sourcePiece.getBoundingClientRect();
+    center = puzzleCellCenter(row, col);
   }
-  await new Promise((resolve) => window.requestAnimationFrame(resolve));
-  const dx = center.x - startLeft - ghostSize / 2;
-  const dy = center.y - startTop - ghostSize / 2;
-  ghost.style.transform = `translate(${dx}px, ${dy}px)`;
-  await sleep(Math.max(460, Math.floor(PUFFLY_PUZZLE_PLACE_MS * 0.65)));
-  if (sourcePiece instanceof HTMLElement) {
+  if (sourceRect.width < 4 || sourceRect.height < 4) {
+    return false;
+  }
+
+  const durationMs = getPuzzleUserPlaceDurationMs();
+  const trayParent = sourcePiece.parentElement;
+  const placeholder = document.createElement("span");
+  placeholder.className = "puzzle-fly-placeholder";
+  placeholder.style.width = `${sourceRect.width}px`;
+  placeholder.style.height = `${sourceRect.height}px`;
+  if (trayParent) {
+    trayParent.insertBefore(placeholder, sourcePiece);
+  }
+
+  const flyPiece =
+    sourcePiece instanceof HTMLElement ? sourcePiece.cloneNode(true) : createPuzzlePieceElement(piece);
+  sourcePiece.style.opacity = "0.15";
+  try {
+    await runPuzzleFlyAnimation(flyPiece, sourceRect, center, durationMs);
+    return true;
+  } catch (error) {
+    console.warn("[PuzzleFly] animation failed:", error);
+    return false;
+  } finally {
     sourcePiece.style.opacity = "";
+    placeholder.remove();
   }
-  ghost.remove();
 }
 
 function beginPuzzleDrag(pieceId, source, event) {
@@ -2721,13 +5815,39 @@ function beginPuzzleDrag(pieceId, source, event) {
   selectPuzzlePiece(pieceId);
 }
 
-function render(statusMessage = "Make your move.") {
+function render(statusMessage = "Make your move.", options = {}) {
+  try {
+    updateFriendLockOverlay();
+    renderUi(statusMessage, options);
+  } catch (error) {
+    console.error("[render] recover after error", error);
+    state = createStateForGame(selectedGameId);
+    releasePuzzleInteractionLocks();
+    busy = false;
+    try {
+      renderUi(statusMessage, options);
+    } catch (retryError) {
+      console.error("[render] fatal", retryError);
+      if (pufflyThought) {
+        pufflyThought.textContent = "⚠️ Reload the page to continue.";
+      }
+    }
+  }
+}
+
+function renderUi(statusMessage = "Make your move.", options = {}) {
+  const suppressStatusVoice = Boolean(options.suppressStatusVoice);
+  updateTeamMascot();
   lastStatusMessage = statusMessage;
+  updatePuzzleDebugStrip(statusMessage);
   const isPuzzleGame = selectedGameId === "puzzle";
   undoButton?.classList.toggle("hidden", isPuzzleGame);
   controlsPanel?.classList.toggle("puzzle-no-undo", isPuzzleGame);
   document.body.classList.toggle("puzzle-game", selectedGameId === "puzzle");
-  ensurePuzzleStateReady();
+  ensureRenderableGameState();
+  if (!boardElement) {
+    return;
+  }
   lockBoardGeometry();
   boardElement.classList.toggle("fourinarow", selectedGameId === "fourinarow");
   boardElement.classList.toggle("puzzle-board", selectedGameId === "puzzle");
@@ -2736,7 +5856,14 @@ function render(statusMessage = "Make your move.") {
     selectedGameId === "fourinarow" ? "Four-in-a-Row board" : selectedGameId === "puzzle" ? "Puzzle board" : "Checkers board",
   );
   if (selectedGameId === "puzzle") {
+    releasePuzzleInteractionLocks();
     const isPreFlip = isStarterFlipPending();
+    if (isPreFlip) {
+      hideCelebration();
+      winnerAnnounced = null;
+    }
+    recoverBrokenPuzzleStateIfNeeded();
+    refreshPuzzleCelebrationFlags();
     if (!isPreFlip) {
       puzzlePreFlipGeometryRefreshScheduled = false;
     }
@@ -2747,25 +5874,30 @@ function render(statusMessage = "Make your move.") {
       const pieceCount = getPuzzlePieceCountForGrid(rows);
       const expectedDark = Math.floor(pieceCount / 2);
       const expectedLight = pieceCount - expectedDark;
-      if (darkRemaining !== expectedDark || lightRemaining !== expectedLight) {
-        state = createStateForGame("puzzle");
-        selectedPuzzlePieceId = "";
+      if (
+        (darkRemaining !== expectedDark || lightRemaining !== expectedLight) &&
+        !(playMode === "friend" && remoteSession)
+      ) {
+        rebuildPuzzleStateKeepingFlipTurn();
       }
     }
     renderPuzzleBoard();
     schedulePuzzlePreFlipGeometryRefresh();
     renderCapturedPiles();
+    updatePuzzleSelectionUi(statusMessage);
     updatePuzzleDebugStrip(statusMessage);
     if (isPreFlip) {
       let domBlueCount = blueCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
       let domGreenCount = greenCapturedPile?.querySelectorAll(".puzzle-piece").length || 0;
       const stateBlueRemaining = getPuzzleRemainingByOwner(state, "dark").length;
       const stateGreenRemaining = getPuzzleRemainingByOwner(state, "light").length;
-      if ((domBlueCount !== stateBlueRemaining || domGreenCount !== stateGreenRemaining) && !puzzleTrayBootstrapAttempted) {
+      if (
+        (domBlueCount !== stateBlueRemaining || domGreenCount !== stateGreenRemaining) &&
+        !puzzleTrayBootstrapAttempted &&
+        !(playMode === "friend" && remoteSession)
+      ) {
         puzzleTrayBootstrapAttempted = true;
-        // One-pass hard bootstrap without recursive render calls.
-        state = createStateForGame("puzzle");
-        selectedPuzzlePieceId = "";
+        rebuildPuzzleStateKeepingFlipTurn();
         renderPuzzleBoard();
         renderCapturedPiles();
         updatePuzzleDebugStrip(statusMessage);
@@ -2780,12 +5912,8 @@ function render(statusMessage = "Make your move.") {
       puzzleTrayBootstrapAttempted = false;
     }
     const totalRemaining = (state.pieces || []).filter((piece) => !piece.placed).length;
-    if (totalRemaining === 0 && !state.winner && !puzzleTrayBootstrapAttempted) {
-      puzzleTrayBootstrapAttempted = true;
-      state = createStateForGame("puzzle");
-      selectedPuzzlePieceId = "";
-      render("Flip to see who goes first.");
-      return;
+    if (totalRemaining === 0 && !isPuzzleComplete()) {
+      recoverBrokenPuzzleStateIfNeeded();
     }
     if (totalRemaining > 0) {
       puzzleTrayBootstrapAttempted = false;
@@ -2793,29 +5921,38 @@ function render(statusMessage = "Make your move.") {
     undoButton.disabled = busy || undoSnapshots.length === 0;
     rulesButton.disabled = busy;
     updateDifficultyButtons();
-    updateAudioButtons();
+    updateFriendDifficultyButtons();
+    updateFriendPuzzleDifficultyPanel();
+    updateAudioToggle();
     updateStarterFlipButton();
     friendLockOverlay?.classList.add("hidden");
-    if (state.winner) {
-      showPuzzleCompletionCelebration();
-      setPufflyState("celebrate", "🧩 Puzzle complete!");
+    if (maybeShowPuzzleCompletion("Puzzle complete!")) {
       return;
     }
     if (isStarterFlipPending()) {
       setPufflyState("thinking", "🪙 Flip to choose who starts.");
-      speakFromStatus("Flip to see who goes first.");
+      if (playMode === "friend") {
+        announceFriendFlipTurnVoice();
+      } else {
+        announcePracticeFlipVoice();
+      }
       return;
     }
     if (playMode === "friend" && remoteSession) {
-      const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
-      setPufflyState("idle", `🤝 Puzzle - ${activeColor}'s placement`);
+      setPufflyState(
+        state.currentPlayer === remoteSession.color ? "idle" : "thinking",
+        friendMascotThoughtForTurn(),
+      );
     } else if (playMode === "puffly" && state.currentPlayer === computerPlayer) {
       setPufflyState("thinking", "🧩 Puffly placing piece...");
     } else {
       setPufflyState("idle", "🧩 Place a matching piece.");
     }
     setPufflyLookToBoard();
-    speakFromStatus(statusMessage);
+    announceGameplayTurnVoice(statusMessage);
+    if (!suppressStatusVoice) {
+      speakFromStatus(statusMessage);
+    }
     return;
   }
   if (selectedGameId === "fourinarow") {
@@ -2825,7 +5962,7 @@ function render(statusMessage = "Make your move.") {
     undoButton.disabled = busy || undoSnapshots.length === 0;
     rulesButton.disabled = busy;
     updateDifficultyButtons();
-    updateAudioButtons();
+    updateAudioToggle();
     updateStarterFlipButton();
     friendLockOverlay?.classList.add("hidden");
     if (state.winner) {
@@ -2853,36 +5990,25 @@ function render(statusMessage = "Make your move.") {
       lastTurnSpoken = "";
       setPufflyState("thinking", "🪙 Flip to choose who starts.");
       setPufflyLookToBoard();
-      speakFromStatus(statusMessage);
+      if (playMode === "friend") {
+        announceFriendFlipTurnVoice();
+      } else {
+        announcePracticeFlipVoice();
+      }
       return;
     }
     hideCelebration();
-    const suppressTurnVoice = statusMessage === "Undoing move...";
-    let currentTurnPhrase;
-    if (playMode === "friend" && remoteSession) {
-      if (!remoteSession.ready) {
-        currentTurnPhrase = "Welcome to the game room.";
-      } else {
-        const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
-        currentTurnPhrase = `${activeColor}'S TURN`;
-      }
-    } else if (playMode === "friend") {
-      currentTurnPhrase = "Welcome to the game room.";
-    } else {
-      currentTurnPhrase = state.currentPlayer === humanPlayer ? "Your turn." : "Puffly's turn.";
-    }
-    if (!suppressTurnVoice && lastTurnSpoken !== currentTurnPhrase) {
-      lastTurnSpoken = currentTurnPhrase;
-      speakPhrase(currentTurnPhrase);
-    }
+    announceGameplayTurnVoice(statusMessage);
     if (playMode === "friend") {
       if (!remoteSession) {
         setPufflyState("idle", "🤝 Friend mode");
       } else if (!remoteSession.ready) {
         setPufflyState("thinking", "⏳ Waiting...");
       } else {
-        const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
-        setPufflyState("idle", `🤝 Friend Mode - ${activeColor}'s Turn`);
+        setPufflyState(
+          state.currentPlayer === remoteSession.color ? "idle" : "thinking",
+          friendMascotThoughtForTurn(),
+        );
       }
     } else if (state.currentPlayer === computerPlayer) {
       setPufflyState("thinking", "💭 My move...");
@@ -2890,7 +6016,52 @@ function render(statusMessage = "Make your move.") {
       setPufflyState("idle", "👀 Your turn!");
     }
     setPufflyLookToBoard();
-    speakFromStatus(statusMessage);
+    if (!suppressStatusVoice) {
+      speakFromStatus(statusMessage);
+    }
+    return;
+  }
+  if (isStarterFlipPending()) {
+    hideCelebration();
+    lastTurnSpoken = "";
+    setPufflyState("thinking", "🪙 Flip to choose who starts.");
+    updateStarterFlipButton();
+    friendLockOverlay?.classList.add("hidden");
+    boardElement.innerHTML = "";
+    for (let row = 0; row < BOARD_SIZE; row += 1) {
+      for (let col = 0; col < BOARD_SIZE; col += 1) {
+        const square = document.createElement("div");
+        square.className = `square ${isDarkSquare(row, col) ? "dark" : "light"}`;
+        square.dataset.row = String(row);
+        square.dataset.col = String(col);
+        const piece = state.board[row][col];
+        if (piece) {
+          const pieceEl = document.createElement("button");
+          pieceEl.type = "button";
+          pieceEl.className = `piece ${piece.player}`;
+          pieceEl.dataset.row = String(row);
+          pieceEl.dataset.col = String(col);
+          pieceEl.textContent = piece.player === "dark" ? (piece.king ? "🧢" : "🐻") : piece.king ? "👑" : "🐸";
+          square.appendChild(pieceEl);
+        }
+        boardElement.appendChild(square);
+      }
+    }
+    renderHistory();
+    renderCapturedPiles();
+    undoButton.disabled = busy || undoSnapshots.length === 0;
+    rulesButton.disabled = busy;
+    updateDifficultyButtons();
+    updateFriendDifficultyButtons();
+    updateFriendPuzzleDifficultyPanel();
+    updateFriendRoomButtons();
+    updateAudioToggle();
+    setPufflyLookToBoard();
+    if (playMode === "friend") {
+      announceFriendFlipTurnVoice();
+    } else {
+      announcePracticeFlipVoice();
+    }
     return;
   }
   const legalForCurrent = getAllLegalMovesForPlayer(state, state.currentPlayer);
@@ -2936,7 +6107,10 @@ function render(statusMessage = "Make your move.") {
   undoButton.disabled = busy || undoSnapshots.length === 0;
   rulesButton.disabled = busy;
   updateDifficultyButtons();
-  updateAudioButtons();
+  updateFriendDifficultyButtons();
+  updateFriendPuzzleDifficultyPanel();
+  updateFriendRoomButtons();
+  updateAudioToggle();
   updateStarterFlipButton();
   friendLockOverlay?.classList.add("hidden");
 
@@ -2950,42 +6124,18 @@ function render(statusMessage = "Make your move.") {
     showCelebration();
     return;
   }
-  if (isStarterFlipPending()) {
-    hideCelebration();
-    lastTurnSpoken = "";
-    setPufflyState("thinking", "🪙 Flip to choose who starts.");
-    setPufflyLookToBoard();
-    speakFromStatus(statusMessage);
-    return;
-  }
   hideCelebration();
-  const suppressTurnVoice = statusMessage === "Undoing move...";
-  let currentTurnPhrase;
-  if (playMode === "friend" && remoteSession) {
-    if (!remoteSession.ready) {
-      currentTurnPhrase = "Welcome to the game room.";
-    } else {
-      const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
-      currentTurnPhrase = `${activeColor}'S TURN`;
-    }
-  } else if (playMode === "friend") {
-    currentTurnPhrase = "Welcome to the game room.";
-  } else {
-    currentTurnPhrase =
-      state.currentPlayer === humanPlayer ? "Your turn." : playMode === "puffly" ? "Puffly's turn." : "Friend turn.";
-  }
-  if (!suppressTurnVoice && lastTurnSpoken !== currentTurnPhrase) {
-    lastTurnSpoken = currentTurnPhrase;
-    speakPhrase(currentTurnPhrase);
-  }
+  announceGameplayTurnVoice(statusMessage);
   if (playMode === "friend") {
     if (!remoteSession) {
       setPufflyState("idle", "🤝 Friend mode");
     } else if (!remoteSession.ready) {
       setPufflyState("thinking", "⏳ Waiting...");
     } else {
-      const activeColor = playerDisplayName(state.currentPlayer).toUpperCase();
-      setPufflyState("idle", `🤝 Friend Mode - ${activeColor}'s Turn`);
+      setPufflyState(
+        state.currentPlayer === remoteSession.color ? "idle" : "thinking",
+        friendMascotThoughtForTurn(),
+      );
     }
   } else if (state.currentPlayer === computerPlayer) {
     setPufflyState("thinking", "💭 My move...");
@@ -2993,7 +6143,9 @@ function render(statusMessage = "Make your move.") {
     setPufflyState("idle", "👀 Your turn!");
   }
   setPufflyLookToBoard();
-  speakFromStatus(statusMessage);
+  if (!suppressStatusVoice) {
+    speakFromStatus(statusMessage);
+  }
   updatePuzzleDebugStrip(statusMessage);
 }
 
@@ -3012,7 +6164,9 @@ async function animateDestinationBounce(square) {
 }
 
 async function animateHumanMove(move) {
-  await animatePufflyEyeCue(getMoveDirection(move));
+  if (playMode === "puffly") {
+    await animatePufflyEyeCue(getMoveDirection(move));
+  }
   const fromSquare = findSquareElement(move.from.row, move.from.col);
   const toSquare = findSquareElement(move.to.row, move.to.col);
   const captureSquare = move.capture ? findSquareElement(move.capture.row, move.capture.col) : null;
@@ -3278,17 +6432,15 @@ function fourInARowStatus(result) {
   return `${playerDisplayName(result.nextState.currentPlayer).toUpperCase()}'S turn.`;
 }
 
-async function submitRemoteMove(nextState) {
+async function submitFriendStarterFlip(winner) {
   if (!remoteSession) {
     throw new Error("Not connected to a room.");
   }
-  const payload = {
+  const data = await apiPost("/api/rooms/flip", {
     roomCode: remoteSession.roomCode,
     playerId: remoteSession.playerId,
-    expectedVersion: remoteSession.version,
-    nextState,
-  };
-  const data = await apiPost("/api/rooms/move", payload);
+    winner,
+  });
   remoteSession.version = data.version;
   if (typeof data.playerCount === "number") {
     remoteSession.playerCount = data.playerCount;
@@ -3296,38 +6448,176 @@ async function submitRemoteMove(nextState) {
     setFriendStatus(getFriendStatusText(remoteSession));
   }
   syncRoomChatFromPayload(data);
-  state = normalizeStateForGame(data.state, selectedGameId);
+  const flipLabel = starterLabel(winner);
+  applyRemoteRoomState(data, { statusMessage: `${flipLabel} wins the flip and goes first.` });
+}
+
+async function fetchRemoteRoomSnapshot() {
+  if (!remoteSession) {
+    return null;
+  }
+  const { response, data } = await fetchFriendRoomState();
+  if (!response?.ok) {
+    throw new Error(data.error || "Unable to read room state.");
+  }
+  if (typeof data.version === "number") {
+    remoteSession.version = data.version;
+  }
+  if (typeof data.playerCount === "number") {
+    remoteSession.playerCount = data.playerCount;
+    remoteSession.ready = data.playerCount >= 2;
+  }
+  if (typeof data.gameType === "string" && isKnownGame(data.gameType)) {
+    remoteSession.gameType = normalizeGameId(data.gameType);
+  }
+  return data;
+}
+
+async function ensureFriendTurnSyncedBeforeMove() {
+  if (!remoteSession || playMode !== "friend") {
+    return false;
+  }
+  await syncRoomState({ force: true });
+  return state.currentPlayer === remoteSession.color && !isStarterFlipPending();
+}
+
+async function submitRemoteMove(nextState, options = {}) {
+  if (!remoteSession) {
+    throw new Error("Not connected to a room.");
+  }
+  if (typeof remoteSession.version !== "number") {
+    await syncRoomState({ force: true });
+  }
+  if (typeof remoteSession.version !== "number") {
+    remoteSession.version = 0;
+  }
+  // Local commit* flows apply the move first, so state.currentPlayer is already the opponent.
+  // The server validates turn against the room snapshot before applying nextState.
+  const payload = {
+    roomCode: remoteSession.roomCode,
+    playerId: remoteSession.playerId,
+    expectedVersion: remoteSession.version,
+    nextState: clone(nextState),
+  };
+  try {
+    const data = await apiPost("/api/rooms/move", payload);
+    remoteSession.version = data.version;
+    if (typeof data.playerCount === "number") {
+      remoteSession.playerCount = data.playerCount;
+      remoteSession.ready = data.playerCount >= 2;
+      setFriendStatus(getFriendStatusText(remoteSession));
+    }
+    syncRoomChatFromPayload(data);
+    applyRemoteRoomState(data);
+    return data;
+  } catch (error) {
+    const message = error?.message || "";
+    if (!options.retried && /version|resync|not your turn/i.test(message)) {
+      await syncRoomState({ force: true });
+      if (state.currentPlayer !== remoteSession.color) {
+        throw new Error("It's not your turn yet.");
+      }
+      if (typeof options.fourCol === "number") {
+        const retryDrop = applyFourInARowDrop(state, options.fourCol);
+        if (!retryDrop.ok) {
+          throw error;
+        }
+        return submitRemoteMove(retryDrop.nextState, { retried: true, fourCol: options.fourCol });
+      }
+      if (options.move) {
+        const retryResult = applyMove(state, options.move);
+        if (retryResult.nextState === state) {
+          throw error;
+        }
+        return submitRemoteMove(retryResult.nextState, { retried: true, move: options.move });
+      }
+      if (options.puzzlePlacement) {
+        const { pieceId, row, col } = options.puzzlePlacement;
+        const retryResult = applyPuzzlePlacement(state, pieceId, row, col);
+        if (!retryResult.ok) {
+          throw error;
+        }
+        const retryState = finalizePuzzleCompletionState(retryResult.nextState);
+        return submitRemoteMove(retryState, {
+          retried: true,
+          puzzlePlacement: options.puzzlePlacement,
+        });
+      }
+    }
+    throw error;
+  }
+}
+
+function applyRemoteRoomState(data, options = {}) {
+  if (!data?.state) {
+    return;
+  }
+  if (typeof data.version === "number" && remoteSession) {
+    remoteSession.version = data.version;
+    writeStoredFriendSession(remoteSession);
+  }
+  const normalizedRemote = normalizeStateForGame(data.state, selectedGameId);
+  state = normalizedRemote;
+  syncPuzzleDifficultyFromRemote(normalizedRemote, data.puzzleDifficulty);
+  applyPuzzleFlipTurnFromRemote(state, data);
+  selectedPuzzlePieceId = "";
+  if (selectedGameId === "puzzle") {
+    state = finalizePuzzleCompletionState(state);
+    if (playMode === "friend" && isPuzzleComplete(state)) {
+      maybeShowPuzzleCompletion("Puzzle complete!");
+    }
+  }
+  render(options.statusMessage || lastStatusMessage || "Make your move.");
 }
 
 async function commitMove(move) {
   maybeStoreUndoBeforeMove();
-  busy = true;
   if (playMode === "friend") {
-    await sleep(FRIEND_MOVE_DELAY_MS);
-  }
-  await animateHumanMove(move);
-  const mover = state.currentPlayer;
-  const result = applyMove(state, move);
-  recordMove(mover, move);
-  playMoveAudio(mover, move);
-  if (playMode === "friend") {
-    try {
-      await submitRemoteMove(result.nextState);
-      render("Move synced with friend.");
-    } catch (error) {
-      await syncRoomState().catch(() => {});
-      render(error?.message || "Move sync failed.");
+    const canMove = await ensureFriendTurnSyncedBeforeMove();
+    if (!canMove) {
+      render(isStarterFlipPending() ? "Flip to see who goes first." : "Waiting for your friend...");
+      return;
     }
-  } else {
+    if (state.currentPlayer !== remoteSession.color) {
+      render("Waiting for your friend...");
+      return;
+    }
+  }
+  busy = true;
+  try {
+    if (playMode === "friend") {
+      await sleep(FRIEND_MOVE_DELAY_MS);
+    }
+    await animateHumanMove(move);
+    const mover = state.currentPlayer;
+    const result = applyMove(state, move);
+    if (result.nextState === state) {
+      render(result.status || "That move is not legal.");
+      return;
+    }
+    recordMove(mover, move);
+    playMoveAudio(mover, move);
+    if (playMode === "friend") {
+      state = result.nextState;
+      render(result.status);
+      try {
+        await submitRemoteMove(result.nextState, { move });
+      } catch (error) {
+        await syncRoomState().catch(() => {});
+        render(error?.message || "Move sync failed.");
+      }
+      return;
+    }
     state = result.nextState;
     render(result.status);
-  }
-  busy = false;
-  if (playMode === "friend") {
-    render(lastStatusMessage);
-  }
-  if (playMode === "puffly") {
-    await runComputerTurn();
+    if (playMode === "puffly") {
+      await runComputerTurn();
+    }
+  } finally {
+    busy = false;
+    if (playMode === "friend") {
+      flushDeferredRoomSync();
+    }
   }
 }
 
@@ -3339,6 +6629,13 @@ async function commitFourDrop(col) {
     return;
   }
   maybeStoreUndoBeforeMove();
+  if (playMode === "friend") {
+    const canMove = await ensureFriendTurnSyncedBeforeMove();
+    if (!canMove) {
+      render("Waiting for your friend...");
+      return;
+    }
+  }
   busy = true;
   if (playMode === "friend") {
     await sleep(FRIEND_MOVE_DELAY_MS);
@@ -3355,21 +6652,21 @@ async function commitFourDrop(col) {
   playMoveAudio(mover, { isCapture: false });
   const status = fourInARowStatus(result);
   if (playMode === "friend") {
+    state = result.nextState;
+    render(status);
     try {
-      await submitRemoteMove(result.nextState);
-      render("Move synced with friend.");
+      await submitRemoteMove(result.nextState, { fourCol: col });
     } catch (error) {
       await syncRoomState().catch(() => {});
       render(error?.message || "Move sync failed.");
     }
-  } else {
-    state = result.nextState;
-    render(status);
+    busy = false;
+    flushDeferredRoomSync();
+    return;
   }
+  state = result.nextState;
+  render(status);
   busy = false;
-  if (playMode === "friend") {
-    render(lastStatusMessage);
-  }
   if (playMode === "puffly") {
     await runComputerTurn();
   }
@@ -3380,17 +6677,27 @@ async function runComputerTurn() {
     return;
   }
   if (selectedGameId === "puzzle") {
-    busy = true;
-    render("Puffly is placing a piece...");
-    setPufflyState("thinking", "🧩 My turn.");
-    await sleep(900);
-    const placement = choosePuzzleComputerPlacement(state, computerPlayer);
-    if (placement) {
-      await animatePuzzleAutoPlacement(placement.pieceId, placement.row, placement.col);
-      await submitPuzzlePlacement(placement.pieceId, placement.row, placement.col, { skipAnimation: true });
+    if (busy) {
+      return;
     }
-    busy = false;
-    render(lastStatusMessage);
+    busy = true;
+    try {
+      render("Puffly is placing a piece...");
+      setPufflyState("thinking", "🧩 My turn.");
+      await sleep(900);
+      const placement = choosePuzzleComputerPlacement(state, computerPlayer);
+      if (!placement) {
+        render("Puffly has no puzzle pieces left to place.");
+        return;
+      }
+      await animatePuzzleAutoPlacement(placement.pieceId, placement.row, placement.col);
+      await submitPuzzlePlacement(placement.pieceId, placement.row, placement.col, {
+        skipAnimation: true,
+        fromComputer: true,
+      });
+    } finally {
+      busy = false;
+    }
     return;
   }
   if (selectedGameId === "fourinarow") {
@@ -3414,7 +6721,7 @@ async function runComputerTurn() {
   busy = true;
   render("Puffly is thinking...");
   let isFirstComputerMoveThisTurn = true;
-  while (!state.winner && state.currentPlayer === computerPlayer) {
+  while (playMode === "puffly" && !state.winner && state.currentPlayer === computerPlayer) {
     if (isFirstComputerMoveThisTurn) {
       setPufflyState("thinking", "🧠 My turn.");
       await sleep(360);
@@ -3444,32 +6751,185 @@ async function runComputerTurn() {
   render(lastStatusMessage);
 }
 
-function handlePuzzlePiecePointerDown(event) {
-  void event;
+function handlePuzzleTrayTap(event) {
+  releasePuzzleInteractionLocks();
+  const pieceEl = event.target.closest(".puzzle-piece");
+  if (pieceEl instanceof HTMLElement) {
+    armPuzzleTapFlash(pieceEl);
+  }
+  if (!shouldHandleTrayTap()) {
+    return;
+  }
+  const pieceId = pieceEl?.dataset?.pieceId;
+  if (!pieceId || busy || selectedGameId !== "puzzle" || isStarterFlipPending()) {
+    return;
+  }
+  event.preventDefault();
+  const piece = getPuzzlePiece(state, pieceId);
+  const canSelect =
+    piece &&
+    !piece.placed &&
+    piece.owner === state.currentPlayer &&
+    (playMode !== "friend" || !remoteSession || state.currentPlayer === remoteSession.color);
+  if (canSelect) {
+    registerPuzzleTrayPieceElement(pieceId, pieceEl);
+    if (lastTraySelectedPieceId && lastTraySelectedPieceId !== pieceId) {
+      puzzleTrayPieceById.get(lastTraySelectedPieceId)?.classList.remove("selected");
+    }
+    pieceEl.classList.add("selected");
+    lastTraySelectedPieceId = pieceId;
+    selectedPuzzlePieceId = pieceId;
+  }
+  runAfterPuzzleTapPaint(() => {
+    selectPuzzlePiece(pieceId, { fromPointerDown: true });
+    scheduleAudioUnlockFromGesture();
+  });
 }
 
-blueCapturedPile?.addEventListener("pointerdown", handlePuzzlePiecePointerDown);
-greenCapturedPile?.addEventListener("pointerdown", handlePuzzlePiecePointerDown);
-boardElement.addEventListener("pointerdown", handlePuzzlePiecePointerDown);
-blueCapturedPile?.addEventListener("click", (event) => {
-  const pieceEl = event.target.closest(".puzzle-piece");
-  if (!pieceEl) {
+function handlePuzzleBoardTap(event) {
+  releasePuzzleInteractionLocks();
+  if (!shouldHandleBoardTap()) {
     return;
   }
-  ensureAudioContext();
-  selectPuzzlePiece(pieceEl.dataset.pieceId);
-});
-greenCapturedPile?.addEventListener("click", (event) => {
-  const pieceEl = event.target.closest(".puzzle-piece");
-  if (!pieceEl) {
+  if (selectedGameId !== "puzzle" || !selectedPuzzlePieceId) {
     return;
   }
-  ensureAudioContext();
-  selectPuzzlePiece(pieceEl.dataset.pieceId);
-});
+  const cell = event.target.closest(".puzzle-cell");
+  if (!cell) {
+    return;
+  }
+  event.preventDefault();
+  armPuzzleTapFlash(cell);
+  runAfterPuzzleTapPaint(() => {
+    const placeMetrics = capturePuzzlePlaceMetrics(cell, selectedPuzzlePieceId);
+    cell.classList.add("puzzle-slot-placing");
+    void handlePuzzleBoardPlace(cell, placeMetrics);
+  });
+}
+
+async function handlePuzzleBoardPlace(square, placeMetrics = null) {
+  if (!square || busy || puzzlePlaceInFlight) {
+    return;
+  }
+  puzzlePlaceInFlight = true;
+  const targetCell =
+    square ||
+    boardElement.querySelector(
+      `.puzzle-cell[data-row="${placeMetrics?.row ?? square.dataset.row}"][data-col="${placeMetrics?.col ?? square.dataset.col}"]`,
+    );
+  try {
+    if (selectedGameId !== "puzzle" || isStarterFlipPending() || state.winner || state.draw) {
+      return;
+    }
+    const row = Number(placeMetrics?.row ?? square.dataset.row);
+    const col = Number(placeMetrics?.col ?? square.dataset.col);
+    if (!Number.isFinite(row) || !Number.isFinite(col)) {
+      return;
+    }
+    if (playMode === "puffly" && state.currentPlayer !== humanPlayer) {
+      render("Puffly is thinking...");
+      return;
+    }
+    if (playMode === "friend" && !remoteSession) {
+      const hasSession = await ensureFriendSessionBeforeMove();
+      if (!hasSession || !remoteSession) {
+        render("Connect to a room first.");
+        return;
+      }
+    }
+    if (playMode === "friend" && remoteSession && state.currentPlayer !== remoteSession.color) {
+      lastStatusMessage = "Waiting for your friend...";
+      updatePuzzleSelectionUi(lastStatusMessage, { visualOnly: true });
+      return;
+    }
+    if (!selectedPuzzlePieceId) {
+      return;
+    }
+    await submitPuzzlePlacement(selectedPuzzlePieceId, row, col, { placeMetrics });
+  } finally {
+    targetCell?.classList.remove("puzzle-slot-placing");
+    puzzlePlaceInFlight = false;
+  }
+}
+
+async function handlePuzzleBoardActivate(event) {
+  const square = event.target.closest(".puzzle-cell");
+  if (!square) {
+    return;
+  }
+  event.preventDefault();
+  scheduleAudioUnlockFromGesture();
+  if (busy || selectedGameId !== "puzzle" || isStarterFlipPending() || state.winner || state.draw) {
+    return;
+  }
+  if (selectedPuzzlePieceId) {
+    return;
+  }
+  const row = Number(square.dataset.row);
+  const col = Number(square.dataset.col);
+  if (playMode === "puffly" && state.currentPlayer !== humanPlayer) {
+    render("Puffly is thinking...");
+    return;
+  }
+  if (playMode === "friend" && !remoteSession) {
+    const hasSession = await ensureFriendSessionBeforeMove();
+    if (!hasSession || !remoteSession) {
+      render("Connect to a room first.");
+      return;
+    }
+  }
+  if (playMode === "friend" && remoteSession && state.currentPlayer !== remoteSession.color) {
+    lastStatusMessage = "Waiting for your friend...";
+    updatePuzzleSelectionUi(lastStatusMessage);
+    return;
+  }
+  if (!selectedPuzzlePieceId) {
+    lastStatusMessage = "Tap a tray piece, then tap its matching slot.";
+    updatePuzzleSelectionUi(lastStatusMessage);
+    return;
+  }
+  await submitPuzzlePlacement(selectedPuzzlePieceId, row, col);
+}
+
+function primePuzzleTrayInput(target) {
+  target?.addEventListener("pointerdown", handlePuzzleTrayTap, { passive: false, capture: true });
+  if (speechNeedsInteractionUnlock) {
+    target?.addEventListener("touchstart", handlePuzzleTouchFlash, { passive: true, capture: true });
+  }
+}
+
+primePuzzleTrayInput(blueCapturedPile);
+primePuzzleTrayInput(greenCapturedPile);
+
+boardElement.addEventListener("pointerdown", handlePuzzleBoardTap, { passive: false, capture: true });
+if (speechNeedsInteractionUnlock) {
+  boardElement.addEventListener("touchstart", handlePuzzleTouchFlash, { passive: true, capture: true });
+}
+
+function handlePuzzleBoardPointerActivate(event) {
+  if (selectedGameId !== "puzzle" || selectedPuzzlePieceId) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastPuzzleBoardActivateAt < 50) {
+    return;
+  }
+  lastPuzzleBoardActivateAt = now;
+  void handlePuzzleBoardActivate(event);
+}
+
+boardElement.addEventListener("pointerup", handlePuzzleBoardPointerActivate);
 
 boardElement.addEventListener("click", async (event) => {
+  if (selectedGameId === "puzzle") {
+    return;
+  }
   ensureAudioContext();
+  if (playMode === "puffly" && isStarterFlipPending() && practiceVoiceStartDismissed) {
+    speakPracticeFlipPromptOnce({ inGesture: true });
+  } else {
+    primeSpeechSynthesisFromUserGesture();
+  }
   if (busy) {
     return;
   }
@@ -3492,24 +6952,17 @@ boardElement.addEventListener("click", async (event) => {
     return;
   }
   if (playMode === "friend") {
-    const hasSession = await ensureFriendSessionBeforeMove();
-    if (!hasSession || !remoteSession) {
-      render("Connect to a room first.");
-      return;
+    if (!remoteSession) {
+      const hasSession = await ensureFriendSessionBeforeMove();
+      if (!hasSession || !remoteSession) {
+        render("Connect to a room first.");
+        return;
+      }
     }
     if (state.currentPlayer !== remoteSession.color) {
-      // Show turn hint, but allow attempting a move; server still enforces turn ownership.
       render("Waiting for your friend...");
-    }
-  }
-
-  if (selectedGameId === "puzzle") {
-    if (!selectedPuzzlePieceId) {
-      render("Tap a tray piece, then tap its matching slot.");
       return;
     }
-    await submitPuzzlePlacement(selectedPuzzlePieceId, row, col);
-    return;
   }
 
   if (selectedGameId === "fourinarow") {
@@ -3556,9 +7009,7 @@ boardElement.addEventListener("click", async (event) => {
 });
 
 restartButton.addEventListener("click", async () => {
-  if (busy) {
-    return;
-  }
+  forcePuzzleUiRecoverable();
   ensureAudioContext();
   if (playMode === "friend") {
     if (!remoteSession) {
@@ -3570,7 +7021,9 @@ restartButton.addEventListener("click", async () => {
         roomCode: remoteSession.roomCode,
         playerId: remoteSession.playerId,
       });
+      syncPuzzleFlipTurnFromPayload(data);
       state = normalizeStateForGame(data.state, selectedGameId);
+      applyPuzzleFlipTurnFromRemote(state, data);
       selectedPuzzlePieceId = "";
       remoteSession.version = data.version;
       if (typeof data.playerCount === "number") {
@@ -3581,71 +7034,152 @@ restartButton.addEventListener("click", async () => {
       syncRoomChatFromPayload(data);
       moveHistory = [];
       undoSnapshots = [];
-      winnerAnnounced = null;
-      hideCelebration();
-      render("Room restarted.");
+      resetPuzzleSessionAfterRestart();
+      refreshFriendGameUi(
+        selectedGameId === "puzzle" ? puzzleFlipPromptText() : "Room restarted.",
+      );
     } catch (error) {
       render(error?.message || "Unable to restart room.");
     }
     return;
   }
-  state = createStateForGame(selectedGameId);
-  selectedPuzzlePieceId = "";
-  moveHistory = [];
-  undoSnapshots = [];
-  winnerAnnounced = null;
-  lastSpokenPhrase = "";
-  lastTurnSpoken = "";
-  hideCelebration();
-  render("Flip to see who goes first.");
+  beginPracticeFlipRound({ togglePuzzleFlip: selectedGameId === "puzzle" });
 });
+
+async function applyDifficultyChange(nextDifficulty, options = {}) {
+  if (!nextDifficulty || nextDifficulty === difficulty) {
+    return;
+  }
+
+  if (playMode === "friend" && selectedGameId === "puzzle") {
+    if (remoteSession) {
+      if (!options.fromFriendPanel) {
+        return;
+      }
+      if (remoteSession.color !== "dark") {
+        setFriendStatus("Only Blue can change puzzle size.");
+        return;
+      }
+      if (!isStarterFlipPending()) {
+        setFriendStatus("Puzzle size is locked after the flip.");
+        return;
+      }
+      const previousDifficulty = difficulty;
+      difficulty = nextDifficulty;
+      updateDifficultyButtons();
+      updateFriendDifficultyButtons();
+      busy = true;
+      try {
+        const data = await postFriendPuzzleSize(difficulty);
+        remoteSession.version = data.version;
+        if (typeof data.playerCount === "number") {
+          remoteSession.playerCount = data.playerCount;
+          remoteSession.ready = data.playerCount >= 2;
+          setFriendStatus(getFriendStatusText(remoteSession));
+        }
+        state = normalizeStateForGame(data.state, "puzzle");
+        syncPuzzleDifficultyFromRemote(state, data.puzzleDifficulty);
+        selectedPuzzlePieceId = "";
+        moveHistory = [];
+        undoSnapshots = [];
+        winnerAnnounced = null;
+        hideCelebration();
+        syncRoomChatFromPayload(data);
+        render(`Puzzle size set to ${getDifficultyLabel(difficulty, "puzzle")}.`);
+      } catch (error) {
+        difficulty = previousDifficulty;
+        updateDifficultyButtons();
+        updateFriendDifficultyButtons();
+        render(error?.message || "Could not update puzzle size.");
+      } finally {
+        busy = false;
+        render(lastStatusMessage);
+      }
+      return;
+    }
+    difficulty = nextDifficulty;
+    updateDifficultyButtons();
+    updateFriendDifficultyButtons();
+    beginPracticeFlipRound();
+    return;
+  }
+
+  difficulty = nextDifficulty;
+  updateDifficultyButtons();
+  updateFriendDifficultyButtons();
+  beginPracticeFlipRound();
+}
 
 for (const button of difficultyButtons) {
   button.addEventListener("click", () => {
     if (busy || playMode !== "puffly") {
       return;
     }
-    const nextDifficulty = button.dataset.difficulty;
-    if (!nextDifficulty || nextDifficulty === difficulty) {
-      return;
-    }
-    difficulty = nextDifficulty;
-    if (selectedGameId === "puzzle") {
-      state = createStateForGame("puzzle");
-      selectedPuzzlePieceId = "";
-      moveHistory = [];
-      undoSnapshots = [];
-      winnerAnnounced = null;
-      hideCelebration();
-      render(`Puzzle difficulty set to ${difficulty}. Flip to see who goes first.`);
-      return;
-    }
-    render(`Difficulty set to ${difficulty}.`);
+    ensureAudioContext();
+    applyDifficultyChange(button.dataset.difficulty).catch(() => {});
   });
 }
 
-for (const button of audioButtons) {
+for (const button of friendDifficultyButtons) {
   button.addEventListener("click", () => {
-    if (busy) {
+    if (busy || playMode !== "friend" || selectedGameId !== "puzzle") {
       return;
     }
-    audioEnabled = button.dataset.audio === "on";
-    updateAudioButtons();
-    if (audioEnabled) {
-      ensureAudioContext();
-      lastSpokenPhrase = "";
-      speakPhrase("Audio on.");
-    } else if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      lastSpokenPhrase = "";
-    }
-    render(audioEnabled ? "Audio feedback enabled." : "Audio feedback muted.");
+    applyDifficultyChange(button.dataset.difficulty, { fromFriendPanel: true }).catch(() => {});
   });
 }
 
-starterFlipButton?.addEventListener("click", async () => {
-  await flipStarter();
+audioToggleButton?.addEventListener("click", () => {
+  if (busy) {
+    return;
+  }
+  audioEnabled = !audioEnabled;
+  updateAudioToggle();
+  if (audioEnabled) {
+    ensureAudioContext();
+    lastSpokenPhrase = "";
+    void pufflySpeak("Audio on.", {
+      onstart: () => {
+        lastSpokenPhrase = "Audio on.";
+      },
+    });
+  } else if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+    lastSpokenPhrase = "";
+  }
+  render(audioEnabled ? "Audio feedback enabled." : "Audio feedback muted.");
 });
+
+let starterFlipTapInFlight = false;
+
+function handleStarterFlipTap(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  if (starterFlipTapInFlight || starterFlipButton?.disabled || busy) {
+    if (playMode === "friend" && isStarterFlipPending() && remoteSession?.ready) {
+      const flipper = getFriendFlipperColor();
+      if (remoteSession.color !== flipper) {
+        render(`${playerDisplayName(flipper)} flips to start.`);
+      }
+    }
+    return;
+  }
+  starterFlipTapInFlight = true;
+  ensureAudioContext();
+  if (playMode === "puffly" && isStarterFlipPending()) {
+    speakPracticeFlipPromptOnce({ inGesture: true });
+  } else {
+    primeSpeechSynthesisFromUserGesture();
+  }
+  void flipStarter().finally(() => {
+    starterFlipTapInFlight = false;
+  });
+}
+
+starterFlipButton?.addEventListener("pointerdown", handleStarterFlipTap, { passive: false });
+starterFlipButton?.addEventListener("click", handleStarterFlipTap);
 
 undoButton.addEventListener("click", async () => {
   if (busy || undoSnapshots.length === 0) {
@@ -3726,79 +7260,379 @@ function switchGame(nextGameId) {
   if (!isKnownGame(nextGameId) || nextGameId === selectedGameId) {
     return;
   }
+  if (remoteSession) {
+    void switchFriendRoomGame(nextGameId);
+    return;
+  }
   selectedGameId = nextGameId;
   updateGameButtons();
   updateAppTitle();
-  resetSessionForModeSwitch();
+  if (playMode !== "friend") {
+    resetSessionForModeSwitch();
+  }
   puzzleTrayBootstrapAttempted = false;
-  state = createStateForGame(selectedGameId);
   selectedPuzzlePieceId = "";
   moveHistory = [];
   undoSnapshots = [];
   winnerAnnounced = null;
   hideCelebration();
-  lastSpokenPhrase = "";
-  lastTurnSpoken = "";
   updateRulesForMode();
   updateDifficultyButtons();
+  updateFriendPuzzleDifficultyPanel();
   if (playMode === "friend") {
+    state = createStateForGame(selectedGameId);
+    lastSpokenPhrase = "";
+    lastTurnSpoken = "";
+    setFriendStatus(getFriendCreateRoomHint());
     render("Friend mode: connect to a room.");
     return;
   }
-  render("Flip to see who goes first.");
+  beginPracticeFlipRound();
+}
+
+async function switchFriendRoomGame(nextGameId) {
+  const normalized = normalizeGameId(nextGameId);
+  if (!isKnownGame(normalized)) {
+    return;
+  }
+  ensureFriendPlayModeSynced();
+  if (!remoteSession) {
+    await tryReconnectStoredFriendSession({ force: true });
+  }
+  if (!remoteSession) {
+    switchGame(normalized);
+    return;
+  }
+  const roomGame = normalizeGameId(remoteSession.gameType || selectedGameId);
+  if (normalized === roomGame && normalized === selectedGameId) {
+    return;
+  }
+  busy = true;
+  let switchStatusMessage = "";
+  try {
+    const payload = {
+      roomCode: remoteSession.roomCode,
+      playerId: remoteSession.playerId,
+      gameType: normalized,
+    };
+    if (normalized === "puzzle") {
+      payload.puzzleDifficulty = difficulty;
+    }
+    const data = await apiPost("/api/rooms/change-game", payload);
+    hydrateRoomSession(data, { announceJoinVoice: false, deferRender: true });
+    updateInvitePanel(remoteSession.roomCode);
+    const gameTitle = getGameConfig(normalized).title;
+    const switcherLabel = playerDisplayName(remoteSession.color);
+    switchStatusMessage =
+      normalized === "puzzle" ? puzzleFlipPromptText() : "Flip to see who goes first.";
+    setFriendStatus(`${switcherLabel} switched the room to ${gameTitle}. Waiting for FLIP.`);
+  } catch (error) {
+    updateGameButtons();
+    setFriendStatus(error?.message || "Could not change the room game.");
+    switchStatusMessage = lastStatusMessage;
+  } finally {
+    busy = false;
+    flushDeferredRoomSync();
+    if (remoteSession && !roomPollTimer) {
+      startRoomPolling();
+    }
+    if (remoteSession) {
+      announceFriendGameSwitchVoice(normalized);
+      refreshFriendGameUi(switchStatusMessage || lastStatusMessage);
+    }
+  }
 }
 
 for (const button of gameButtons) {
   button.addEventListener("click", () => {
-    if (busy) {
+    if (busy && !isFriendModeUiActive() && !isFriendChromeVisible()) {
       return;
     }
-    switchGame(normalizeGameId(button.dataset.game || DEFAULT_GAME_ID));
+    if (busy && (isFriendModeUiActive() || isFriendChromeVisible())) {
+      busy = false;
+    }
+    ensureAudioContext();
+    scheduleAudioUnlockFromGesture();
+    const nextGameId = normalizeGameId(button.dataset.game || DEFAULT_GAME_ID);
+    const friendUiActive = isFriendModeUiActive() || isFriendChromeVisible();
+    if (friendUiActive) {
+      ensureFriendPlayModeSynced();
+      if (remoteSession || readStoredFriendSession()) {
+        switchFriendRoomGame(nextGameId).catch((error) => {
+          setFriendStatus(error?.message || "Could not change the room game.");
+        });
+        return;
+      }
+      selectedGameId = nextGameId;
+      updateGameButtons();
+      updateAppTitle();
+      switchGame(nextGameId);
+      return;
+    }
+    switchGame(nextGameId);
   });
 }
 
-playPufflyButton?.addEventListener("click", () => {
-  if (busy || playMode === "puffly") {
+function activatePufflyMode() {
+  initDesktopSpeechDefaults();
+  if (typeof window !== "undefined") {
+    window.__pufflyUserChosePufflyMode = true;
+    window.__pufflyPendingInviteJoin = "";
+    window.__pufflyInviteJoinInFlight = false;
+    window.__pufflyPendingPlayMode = "puffly";
+  }
+  clearInviteParamsFromUrl();
+  if (typeof window !== "undefined" && typeof window.pufflyApplyPlayModeChrome === "function") {
+    window.pufflyApplyPlayModeChrome("puffly");
+  }
+  abortPracticeInteractionForModeSwitch();
+  pauseFriendRoomForPractice();
+  if (playMode === "puffly" && !remoteSession) {
+    syncPlayModeChrome();
+    beginPracticeFlipRound({ force: true });
+    ensureAudioContext({ skipSpeechUnlock: true });
+    updateSpeechUnlockOverlay();
     return;
   }
   setPlayMode("puffly");
-});
+  ensureAudioContext({ skipSpeechUnlock: true });
+  updateSpeechUnlockOverlay();
+}
 
-playFriendButton?.addEventListener("click", () => {
-  if (busy || playMode === "friend") {
+function activateFriendMode() {
+  initDesktopSpeechDefaults();
+  if (typeof window !== "undefined") {
+    window.__pufflyUserChosePufflyMode = false;
+    window.__pufflyPendingPlayMode = "friend";
+  }
+  if (!speechNeedsInteractionUnlock) {
+    speechUnlocked = true;
+    speechGesturePrimed = true;
+    friendVoiceStartDismissed = true;
+  }
+  updateSpeechUnlockOverlay();
+  primeSpeechSynthesisFromUserGesture();
+  if (typeof window !== "undefined" && typeof window.pufflyApplyPlayModeChrome === "function") {
+    window.pufflyApplyPlayModeChrome("friend");
+  }
+  if (playMode === "friend") {
+    syncPlayModeChrome();
+    updateFriendLockOverlay();
+    void resumeFriendRoomIfPaused().then((reconnected) => {
+      if (!reconnected && !getJoinCodeFromUrl()) {
+        setFriendStatus(getFriendCreateRoomHint());
+        render("Friend mode: connect to a room.");
+        if (!remoteSession) {
+          announceFriendLobbyPrompt();
+        }
+      }
+      if (getJoinCodeFromUrl() && !remoteSession) {
+        maybeAutoJoinFromInviteLink();
+      }
+    });
     return;
   }
+  abortPracticeInteractionForModeSwitch();
   setPlayMode("friend");
-});
-
-createRoomButton?.addEventListener("click", async () => {
-  if (busy || playMode !== "friend") {
-    return;
-  }
-  if (remoteSession) {
-    await shareInviteLink(remoteSession.roomCode);
-    return;
-  }
-  try {
-    const data = await apiPost("/api/rooms/create", { gameType: selectedGameId });
-    hydrateRoomSession(data);
-    setFriendStatus(`Room ${data.roomCode} created. Preparing invite...`);
-    const didShare = await shareInviteLink(data.roomCode);
-    if (!didShare) {
-      setFriendStatus(`Room ${data.roomCode} created. Tap Create & Invite again to open sharing.`);
+  ensureAudioContext({ skipSpeechUnlock: true });
+  void resumeFriendRoomIfPaused().then((reconnected) => {
+    if (!reconnected && getJoinCodeFromUrl() && !remoteSession) {
+      maybeAutoJoinFromInviteLink();
     }
+  });
+}
+
+function installPlayModeTapRouting() {
+  const chrome = document.querySelector(".app-chrome");
+  if (!chrome || chrome.dataset.playModeRouting === "1") {
+    return;
+  }
+  chrome.dataset.playModeRouting = "1";
+  const route = (event) => {
+    const modeButton = event.target.closest("[data-play-mode]");
+    if (!modeButton) {
+      return;
+    }
+    event.preventDefault();
+    const mode = modeButton.getAttribute("data-play-mode");
+    if (mode === "friend") {
+      activateFriendMode();
+      return;
+    }
+    if (mode === "puffly") {
+      activatePufflyMode();
+    }
+  };
+  chrome.addEventListener("click", route);
+}
+
+friendControls?.addEventListener(
+  "pointerdown",
+  () => {
+    ensureAudioContext();
+  },
+  { capture: true },
+);
+
+function isCreateInviteNewRoomTap() {
+  const label = (createRoomButton?.textContent || "").trim().toLowerCase();
+  return !label.includes("share");
+}
+
+function clearFriendRoomForNewCreate() {
+  stopRoomPolling();
+  const leaving = remoteSession;
+  remoteSession = null;
+  speechGesturePrimed = false;
+  pendingInviteShareRoomCode = "";
+  clearStoredFriendSession();
+  if (leaving) {
+    apiPost("/api/rooms/leave", {
+      roomCode: leaving.roomCode,
+      playerId: leaving.playerId,
+    }).catch(() => {});
+  }
+  updateFriendRoomButtons();
+  updateInvitePanel(null);
+}
+
+async function createFriendRoom() {
+  if (typeof window !== "undefined" && window.__pufflyCreateInFlight) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastCreateRoomTapAt < 700) {
+    return;
+  }
+  lastCreateRoomTapAt = now;
+  if (typeof window !== "undefined") {
+    window.__pufflyCreateInFlight = true;
+    window.__pufflyUserChosePufflyMode = false;
+    window.__pufflyPendingPlayMode = "friend";
+    window.__pufflyRoomActionInFlight = true;
+    if (typeof window.pufflyApplyPlayModeChrome === "function") {
+      window.pufflyApplyPlayModeChrome("friend");
+    }
+  }
+  pendingInviteShareRoomCode = "";
+  setFriendStatus("Creating room… contacting server");
+  releaseStaleBusyForFriendAction();
+  busy = false;
+  ensureAudioContext();
+  primeSpeechSynthesisFromUserGesture();
+
+  try {
+    if (!ensureFriendPlayModeSynced()) {
+      setFriendStatus("Tap Play with a Friend above, then try Create & Invite again.");
+      return;
+    }
+
+    const wantsNewRoom = isCreateInviteNewRoomTap();
+    if (wantsNewRoom) {
+      clearFriendRoomForNewCreate();
+    } else if (remoteSession?.roomCode) {
+      const roomCode = remoteSession.roomCode;
+      setFriendStatus(`Room ${roomCode} ready. Tap again to share the invite link.`);
+      updateInvitePanel(roomCode);
+      void shareInviteLink(roomCode, { silentCancel: true, silentFallback: true });
+      return;
+    }
+
+    const createPayload = { gameType: selectedGameId };
+    if (selectedGameId === "puzzle") {
+      createPayload.puzzleDifficulty = difficulty;
+    }
+    const data = await apiPost("/api/rooms/create", createPayload, { timeoutMs: 15000 });
+    setFriendStatus("Creating room… applying room");
+    applyCreateRoomResponse(data);
+    if (selectedGameId === "puzzle") {
+      syncPuzzleDifficultyFromRemote(state, data.puzzleDifficulty);
+    }
+    void copyInviteLinkToClipboard(data.roomCode);
+    void shareInviteLink(data.roomCode, { silentCancel: true, silentFallback: true });
   } catch (error) {
     setFriendStatus(error?.message || "Could not create room.");
+  } finally {
+    if (typeof window !== "undefined") {
+      window.__pufflyCreateInFlight = false;
+      window.__pufflyRoomActionInFlight = false;
+    }
+    busy = false;
   }
-});
+}
 
-joinRoomButton?.addEventListener("click", async () => {
-  if (busy || playMode !== "friend") {
+function installFriendActionButtonHandlers() {
+  const wire = (button, handler) => {
+    if (!button || button.dataset.friendActionWired === "1") {
+      return;
+    }
+    button.dataset.friendActionWired = "1";
+    const run = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void handler();
+    };
+    button.addEventListener("click", run, { capture: true });
+  };
+  wire(document.getElementById("create-room-btn"), createFriendRoom);
+  wire(document.getElementById("join-room-btn"), joinFriendRoom);
+}
+
+installFriendActionButtonHandlers();
+
+copyInviteButton?.addEventListener("click", async () => {
+  if (!remoteSession?.roomCode) {
+    setFriendStatus("Create a room first to copy an invite link.");
     return;
   }
-  const roomCode = roomCodeInput?.value.trim().toUpperCase();
-  await joinRoomWithCode(roomCode);
+  updateInvitePanel(remoteSession.roomCode);
+  const copied = await copyInviteLinkToClipboard(remoteSession.roomCode);
+  setFriendStatus(
+    copied
+      ? `Invite link copied for room ${remoteSession.roomCode}.`
+      : `Select the invite link below, then copy it manually.`,
+  );
 });
+
+async function joinFriendRoom() {
+  const now = Date.now();
+  if (now - lastJoinRoomTapAt < 700) {
+    return;
+  }
+  lastJoinRoomTapAt = now;
+  if (typeof window !== "undefined") {
+    window.__pufflyUserChosePufflyMode = false;
+    if (typeof window.pufflyApplyPlayModeChrome === "function") {
+      window.pufflyApplyPlayModeChrome("friend");
+    }
+  }
+  releaseStaleBusyForFriendAction();
+  if (!ensureFriendPlayModeSynced()) {
+    setFriendStatus("Tap Play with a Friend above, then try Join Room again.");
+    return;
+  }
+  ensureAudioContext({ skipSpeechUnlock: true });
+  if (speechNeedsInteractionUnlock) {
+    primeFriendGestureOnly();
+  } else {
+    primeSpeechSynthesisFromUserGesture();
+  }
+  const roomCode = (roomCodeInput?.value || "").trim().toUpperCase();
+  if (!roomCode) {
+    setFriendStatus("Enter a room code, then tap Join Room.");
+    return;
+  }
+  setFriendStatus(`Joining room ${roomCode}...`);
+  const joined = await joinRoomWithCode(roomCode);
+  if (!joined) {
+    render(lastStatusMessage);
+    return;
+  }
+  if (speechNeedsInteractionUnlock && !friendVoiceStartDismissed) {
+    updateSpeechUnlockOverlay();
+    setFriendStatus("Joined. Tap Start above the board for voice prompts.");
+  }
+}
 
 copyRoomButton?.addEventListener("click", async () => {
   const roomCode = remoteSession?.roomCode || roomCodeInput?.value.trim().toUpperCase();
@@ -3887,12 +7721,48 @@ voiceSpeakerButton?.addEventListener("click", () => {
   updateVoiceButtons();
 });
 
-speechUnlockButton?.addEventListener("click", () => {
-  unlockSpeechIfNeeded();
-  setFriendStatus("Voice prompts enabled.");
-  speakPhraseReliable("Voice prompts enabled.");
-  render(lastStatusMessage);
-});
+function installSpeechStartButton() {
+  const btn = document.getElementById("speech-unlock-btn");
+  if (!btn || btn.dataset.pufflySpeechWired === "1") {
+    return;
+  }
+  btn.dataset.pufflySpeechWired = "1";
+  btn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handleSpeechUnlockFromUserGesture();
+  });
+}
+
+function handleSpeechUnlockFromUserGesture() {
+  const now = Date.now();
+  if (now - speechUnlockGestureHandledAt < 300) {
+    return;
+  }
+  speechUnlockGestureHandledAt = now;
+  ensureAudioContext({ skipSpeechUnlock: true });
+  if (playMode === "friend") {
+    const queued =
+      pendingUnlockSpeech ||
+      pendingPrioritySpeech ||
+      (pendingJoinIntroTeam ? buildJoinIntroPhrase(pendingJoinIntroTeam) : "");
+    pendingUnlockSpeech = "";
+    pendingPrioritySpeech = "";
+    const phrase = queued || "Voice prompts enabled.";
+    speakInUserGesture(phrase, { friendMode: true });
+    dismissFriendVoiceStartOverlay();
+    window.setTimeout(() => {
+      if (playMode !== "friend" || !audioEnabled) {
+        return;
+      }
+      announceFriendGameplayVoice();
+      render(lastStatusMessage);
+    }, queued ? 700 : 0);
+    return;
+  }
+  deliverPracticeVoiceOnStartTap();
+  dismissPracticeVoiceStartOverlay();
+}
 
 leaveRoomButton?.addEventListener("click", async () => {
   if (busy || playMode !== "friend") {
@@ -3914,7 +7784,13 @@ leaveRoomButton?.addEventListener("click", async () => {
 });
 
 celebrationClose.addEventListener("click", () => {
-  hideCelebration();
+  if (selectedGameId === "puzzle" && isPuzzleComplete()) {
+    dismissPuzzleCompletionCelebration();
+  } else {
+    hideCelebration();
+    forcePuzzleUiRecoverable();
+  }
+  render(lastStatusMessage);
 });
 
 if (typeof window !== "undefined") {
@@ -3922,24 +7798,136 @@ if (typeof window !== "undefined") {
     lockBoardGeometry();
     render(lastStatusMessage);
   });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted || readInviteParamsFromUrl().join) {
+      return;
+    }
+    prepareFreshAppLoad();
+    if (playMode === "friend" && remoteSession) {
+      resetFriendLocalState("Fresh game loaded. Tap Create & Invite to start a room.");
+      render(lastStatusMessage);
+    } else if (playMode === "puffly") {
+      resetLocalGameState(selectedGameId);
+      render("Flip to see who goes first.");
+    }
+  });
 }
 
-updateChatMuteButton();
-updateSpeechUnlockOverlay();
-renderRoomChat(true);
-selectedGameId = AUTO_GAME_ID;
-updateGameButtons();
-updateAppTitle();
-state = createStateForGame(selectedGameId);
-selectedPuzzlePieceId = "";
-updateRulesForMode();
-if (AUTO_JOIN_ROOM_CODE) {
-  setPlayMode("friend");
-  if (roomCodeInput) {
-    roomCodeInput.value = AUTO_JOIN_ROOM_CODE;
+function bootstrapApp() {
+  installSpeechStartButton();
+  initDesktopSpeechDefaults();
+  if (typeof window !== "undefined" && window.__pufflyInlineSpeechPrimed) {
+    speechUnlocked = true;
+    speechGesturePrimed = true;
+    practiceVoiceStartDismissed = true;
+    friendVoiceStartDismissed = true;
+    speechUnlockOverlay?.classList.add("hidden");
   }
-  setFriendStatus(`Joining invite room ${AUTO_JOIN_ROOM_CODE}...`);
-  joinRoomWithCode(AUTO_JOIN_ROOM_CODE, { fromInvite: true }).catch(() => {});
-} else {
-  render("Flip to see who goes first.");
+  if (typeof window !== "undefined" && window.__pufflyPracticeVoiceStartDismissed) {
+    practiceVoiceStartDismissed = true;
+  }
+  preloadVoiceClips();
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    refreshSpeechVoiceCache();
+    window.speechSynthesis.addEventListener("voiceschanged", () => {
+      refreshSpeechVoiceCache();
+      primeSpeechEngine();
+    });
+    primeSpeechEngine();
+  }
+  installPlayModeTapRouting();
+  installFriendActionButtonHandlers();
+  installFriendSpeechPrimeOnGesture();
+  prepareFreshAppLoad();
+  updateChatMuteButton();
+  updateSpeechUnlockOverlay();
+  renderRoomChat(true);
+  const inviteJoinCode =
+    getJoinCodeFromUrl() ||
+    (typeof window !== "undefined" ? String(window.__pufflyPendingInviteJoin || "").trim().toUpperCase() : "");
+  if (inviteJoinCode) {
+    void bootstrapInviteJoin(inviteJoinCode);
+    return;
+  }
+  const invite = readInviteParamsFromUrl();
+  if (invite.mode === "friend") {
+    applyInviteLandingConfig();
+    updateGameButtons();
+    updateDifficultyButtonLabels();
+    updateFriendDifficultyButtons();
+    updateAppTitle();
+    enterFriendLobbyChrome();
+    flushPendingPlayModeTap();
+    return;
+  }
+  selectedGameId = AUTO_GAME_ID;
+  if (AUTO_PUZZLE_SIZE && selectedGameId === "puzzle") {
+    difficulty = AUTO_PUZZLE_SIZE;
+  }
+  updateGameButtons();
+  updateDifficultyButtonLabels();
+  updateFriendDifficultyButtons();
+  updateAppTitle();
+  resetLocalGameState(selectedGameId);
+  updateRulesForMode();
+  const pendingFriend =
+    typeof window !== "undefined" &&
+    window.__pufflyPendingPlayMode === "friend" &&
+    !window.__pufflyUserChosePufflyMode;
+  if (pendingFriend) {
+    setPlayMode("friend");
+    flushPendingPlayModeTap();
+    return;
+  }
+  playMode = "puffly";
+  syncPlayModeChrome();
+  installPrimePracticeSpeechOnFirstGesture();
+  updateSpeechUnlockOverlay();
+  beginPracticeFlipRound({ coldBoot: true });
+  flushPendingPlayModeTap();
 }
+
+function flushPendingPlayModeTap() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (window.__pufflyInviteJoinInFlight) {
+    window.__pufflyPendingPlayMode = "";
+    window.__pufflyPendingJoinRoom = false;
+    return;
+  }
+  const pendingMode = window.__pufflyPendingPlayMode;
+  window.__pufflyPendingPlayMode = "";
+  if (pendingMode === "friend") {
+    activateFriendMode();
+  } else if (pendingMode === "puffly") {
+    activatePufflyMode();
+  }
+  if (window.__pufflyPendingCreateRoom) {
+    window.__pufflyPendingCreateRoom = false;
+    void createFriendRoom();
+  }
+  if (window.__pufflyPendingJoinRoom) {
+    window.__pufflyPendingJoinRoom = false;
+    void joinFriendRoom();
+  }
+  if (window.__pufflyPendingRoomHydrate) {
+    const payload = window.__pufflyPendingRoomHydrate;
+    window.__pufflyPendingRoomHydrate = null;
+    hydrateRoomSession(payload);
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.pufflyActivateFriendMode = activateFriendMode;
+  window.pufflyActivatePufflyMode = activatePufflyMode;
+  window.pufflyCreateFriendRoom = createFriendRoom;
+  window.pufflyCreateRoomNow = createFriendRoom;
+  window.pufflyJoinFriendRoom = joinFriendRoom;
+  window.pufflyHydrateFriendRoom = (data) => hydrateRoomSession(data);
+  window.pufflyEnsureFriendMode = ensureFriendPlayModeSynced;
+  window.pufflyTryInviteJoinFromUrl = maybeAutoJoinFromInviteLink;
+  window.pufflySpeechStartTap = handleSpeechUnlockFromUserGesture;
+}
+
+bootstrapApp();
