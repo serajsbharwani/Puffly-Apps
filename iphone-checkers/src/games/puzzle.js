@@ -93,6 +93,9 @@ export function normalizePuzzleTurn(state) {
   if (!state || !Array.isArray(state.pieces)) {
     return state;
   }
+  if (!state.starterFlipDone) {
+    return state;
+  }
   if (state.winner || state.draw) {
     return state;
   }
@@ -159,13 +162,13 @@ export function applyPuzzlePlacement(state, pieceId, row, col) {
       col,
       by: state.currentPlayer,
     },
-    winner: allPlaced ? state.currentPlayer : null,
+    winner: null,
     draw: allPlaced,
   };
   return {
     ok: true,
     nextState,
-    message: allPlaced ? "Puzzle complete!" : `${nextTurn === "dark" ? "BLUE" : "GREEN"} to place next.`,
+    message: allPlaced ? "Puzzle complete!" : `${nextTurn === "dark" ? "Blue" : "Green"} to place next.`,
   };
 }
 

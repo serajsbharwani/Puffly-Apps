@@ -573,6 +573,10 @@ body.puzzle-game .board-and-captures {
 }
 
 body.friend-mode #puffly-controls {
+  display: grid !important;
+}
+
+body.friend-mode #puffly-controls .difficulty-buttons {
   display: none !important;
 }
 

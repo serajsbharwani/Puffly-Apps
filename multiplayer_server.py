@@ -53,6 +53,9 @@ def create_initial_state() -> Dict[str, Any]:
     "forcedPiece": None,
     "winner": None,
     "lastMove": None,
+    "starterFlipDone": False,
+    "starterPlayer": None,
+    "preFlipSetupReady": False,
   }
 
 
@@ -67,47 +70,116 @@ def create_fourinarow_initial_state() -> Dict[str, Any]:
     "forcedPiece": None,
     "lastMove": None,
     "winningLine": [],
+    "starterFlipDone": False,
+    "starterPlayer": None,
+    "preFlipSetupReady": False,
   }
 
 
-def create_puzzle_initial_state() -> Dict[str, Any]:
-  piece_indices = list(range(16))
+PUZZLE_DIFFICULTY_GRID = {"easy": 2, "medium": 4, "hard": 5}
+PUZZLE_ALLOWED_GRID_SIZES = {2, 4, 5}
+
+
+def normalize_puzzle_difficulty(difficulty: Optional[str]) -> str:
+  normalized = str(difficulty or "medium").strip().lower()
+  if normalized in PUZZLE_DIFFICULTY_GRID:
+    return normalized
+  return "medium"
+
+
+def create_puzzle_initial_state(difficulty: str = "medium", flip_turn: str = "dark") -> Dict[str, Any]:
+  grid_size = PUZZLE_DIFFICULTY_GRID.get(normalize_puzzle_difficulty(difficulty), 4)
+  if grid_size not in PUZZLE_ALLOWED_GRID_SIZES:
+    grid_size = 4
+  piece_count = grid_size * grid_size
+  dark_count = piece_count // 2
+  piece_indices = list(range(piece_count))
   random.shuffle(piece_indices)
   pieces = []
   for order, idx in enumerate(piece_indices):
     pieces.append(
       {
         "id": f"pz-{idx + 1}",
-        "correctRow": idx // 4,
-        "correctCol": idx % 4,
-        "owner": "dark" if order < 8 else "light",
+        "correctRow": idx // grid_size,
+        "correctCol": idx % grid_size,
+        "owner": "dark" if order < dark_count else "light",
         "placed": False,
         "placedRow": None,
         "placedCol": None,
         "locked": False,
       }
     )
+  normalized_flip = flip_turn if flip_turn in {"dark", "light"} else "dark"
   return {
-    "rows": 4,
-    "cols": 4,
+    "rows": grid_size,
+    "cols": grid_size,
     "pieces": pieces,
-    "currentPlayer": "dark",
+    "currentPlayer": normalized_flip,
+    "puzzleFlipTurn": normalized_flip,
     "selectedSquare": None,
     "forcedPiece": None,
     "winner": None,
     "draw": False,
     "lastMove": None,
+    "starterFlipDone": False,
+    "starterPlayer": None,
+    "preFlipSetupReady": False,
   }
 
 
-def create_initial_state_for_game(game_type: str) -> Dict[str, Any]:
+def puzzle_difficulty_from_state(state: Optional[Dict[str, Any]]) -> str:
+  if not isinstance(state, dict):
+    return "medium"
+  rows = state.get("rows")
+  if rows == 2:
+    return "easy"
+  if rows == 5:
+    return "hard"
+  return "medium"
+
+
+def is_fresh_puzzle_pre_flip_state(state: Optional[Dict[str, Any]]) -> bool:
+  """True when the board is already reset and waiting for the coin flip."""
+  if not isinstance(state, dict) or state.get("starterFlipDone"):
+    return False
+  pieces = state.get("pieces")
+  if not isinstance(pieces, list) or not pieces:
+    return False
+  return all(not piece.get("placed") for piece in pieces)
+
+
+def puzzle_flip_turn_for_round(puzzle_round: int) -> str:
+  """Odd rounds: Blue flips first. Even rounds: Green flips first."""
+  normalized_round = max(1, int(puzzle_round or 1))
+  return "dark" if normalized_round % 2 == 1 else "light"
+
+
+def puzzle_flip_turn_for_room(room: Dict[str, Any]) -> str:
+  stored = room.get("puzzleFlipTurn")
+  if stored in {"dark", "light"}:
+    return stored
+  return puzzle_flip_turn_for_round(room.get("puzzleRound") or 1)
+
+
+def stamp_puzzle_flip_fields(room: Dict[str, Any], state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+  if room.get("gameType") != "puzzle" or not isinstance(state, dict):
+    return state or {}
+  flip_turn = puzzle_flip_turn_for_room(room)
+  stamped = dict(state)
+  stamped["puzzleFlipTurn"] = flip_turn
+  if not stamped.get("starterFlipDone"):
+    stamped["currentPlayer"] = flip_turn
+  return stamped
+
+
+def create_initial_state_for_game(game_type: str, puzzle_difficulty: Optional[str] = None) -> Dict[str, Any]:
   normalized = str(game_type or "checkers").strip().lower()
   if normalized == "connect4":
     normalized = "fourinarow"
   if normalized == "fourinarow":
     return create_fourinarow_initial_state()
   if normalized == "puzzle":
-    return create_puzzle_initial_state()
+    return create_puzzle_initial_state(puzzle_difficulty or "medium")
   return create_initial_state()
 
 
@@ -129,11 +201,16 @@ class Player:
 class RoomStore:
   def _room_meta(self, room: Dict[str, Any]) -> Dict[str, Any]:
     player_count = len(room["players"])
-    return {
+    meta: Dict[str, Any] = {
       "playerCount": player_count,
       "ready": player_count >= 2,
       "voiceParticipants": room["voice"]["participants"],
     }
+    if room.get("gameType") == "puzzle":
+      meta["puzzleDifficulty"] = room.get("puzzleDifficulty") or puzzle_difficulty_from_state(room.get("state"))
+      meta["puzzleFlipTurn"] = puzzle_flip_turn_for_room(room)
+      meta["puzzleRound"] = int(room.get("puzzleRound") or 1)
+    return meta
 
   def __init__(self) -> None:
     self.rooms: Dict[str, Dict[str, Any]] = {}
@@ -147,7 +224,7 @@ class RoomStore:
   def _new_player_id(self) -> str:
     return f"player-{int(now_ts() * 1000)}-{random.randint(1000, 9999)}"
 
-  def create_room(self, game_type: str = "checkers") -> Dict[str, Any]:
+  def create_room(self, game_type: str = "checkers", puzzle_difficulty: Optional[str] = None) -> Dict[str, Any]:
     self._cleanup()
     normalized_game = str(game_type or "checkers").strip().lower()
     if normalized_game == "connect4":
@@ -160,10 +237,19 @@ class RoomStore:
     while room_code in self.rooms:
       room_code = random_code()
     player_id = self._new_player_id()
+    puzzle_level = normalize_puzzle_difficulty(puzzle_difficulty)
+    initial_state = (
+      create_puzzle_initial_state(puzzle_level, flip_turn="dark")
+      if normalized_game == "puzzle"
+      else create_initial_state_for_game(normalized_game)
+    )
     room = {
       "code": room_code,
       "gameType": normalized_game,
-      "state": create_initial_state_for_game(normalized_game),
+      "state": initial_state,
+      "puzzleDifficulty": puzzle_level if normalized_game == "puzzle" else None,
+      "puzzleRound": 1 if normalized_game == "puzzle" else None,
+      "puzzleFlipTurn": "dark" if normalized_game == "puzzle" else None,
       "version": 0,
       "undoStack": [],
       "messages": [],
@@ -220,7 +306,8 @@ class RoomStore:
       room["state"] = create_initial_state_for_game(game_type)
       room["version"] += 1
     if game_type == "puzzle" and not isinstance(room.get("state", {}).get("pieces"), list):
-      room["state"] = create_initial_state_for_game(game_type)
+      flip_turn = puzzle_flip_turn_for_room(room)
+      room["state"] = create_puzzle_initial_state(room.get("puzzleDifficulty", "medium"), flip_turn=flip_turn)
       room["version"] += 1
     if game_type == "checkers" and not isinstance(room.get("state", {}).get("board"), list):
       room["state"] = create_initial_state_for_game(game_type)
@@ -228,7 +315,7 @@ class RoomStore:
     room["updated_at"] = now_ts()
     return {
       "gameType": game_type,
-      "state": room["state"],
+      "state": stamp_puzzle_flip_fields(room, room["state"]),
       "version": room["version"],
       "messages": room["messages"],
       **self._room_meta(room),
@@ -255,7 +342,7 @@ class RoomStore:
     room["undoStack"].append({"state": room["state"], "by": player_id})
     if len(room["undoStack"]) > 20:
       room["undoStack"] = room["undoStack"][-20:]
-    room["state"] = next_state
+    room["state"] = stamp_puzzle_flip_fields(room, next_state)
     room["version"] += 1
     room["updated_at"] = now_ts()
     return {
@@ -265,13 +352,95 @@ class RoomStore:
       **self._room_meta(room),
     }
 
-  def restart_room(self, room_code: str, player_id: str) -> Dict[str, Any]:
+  def flip_starter(self, room_code: str, player_id: str, winner: str) -> Dict[str, Any]:
     room = self.rooms.get(room_code)
     if not room:
       raise ValueError("Room not found.")
     if player_id not in room["players"]:
       raise ValueError("Player is not in this room.")
-    room["state"] = create_initial_state_for_game(room.get("gameType", "checkers"))
+    if len(room["players"]) < 2:
+      raise ValueError("Waiting for opponent to join.")
+    player: Player = room["players"][player_id]
+    game_state = room.get("state") or {}
+    if game_state.get("starterFlipDone"):
+      raise ValueError("Flip already completed.")
+    if room.get("gameType") == "puzzle":
+      flipper = puzzle_flip_turn_for_room(room)
+    else:
+      flipper = "dark"
+    if player.color != flipper:
+      flip_label = "Blue" if flipper == "dark" else "Green"
+      raise ValueError(f"Only {flip_label} can flip to start.")
+    normalized_winner = str(winner or "").strip().lower()
+    if normalized_winner not in {"dark", "light"}:
+      raise ValueError("Invalid flip winner.")
+    game_state["starterFlipDone"] = True
+    game_state["starterPlayer"] = normalized_winner
+    game_state["currentPlayer"] = normalized_winner
+    game_state["preFlipSetupReady"] = False
+    game_state["selectedSquare"] = None
+    game_state["forcedPiece"] = None
+    game_state["lastMove"] = None
+    room["state"] = stamp_puzzle_flip_fields(room, game_state)
+    room["version"] += 1
+    room["updated_at"] = now_ts()
+    return {
+      "state": room["state"],
+      "version": room["version"],
+      "messages": room["messages"],
+      **self._room_meta(room),
+    }
+
+  def set_puzzle_difficulty(self, room_code: str, player_id: str, puzzle_difficulty: str) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    player: Optional[Player] = room["players"].get(player_id)
+    if not player:
+      raise ValueError("Player is not in this room.")
+    if room.get("gameType") != "puzzle":
+      raise ValueError("This room is not a puzzle game.")
+    if player.color != "dark":
+      raise ValueError("Only the room host can change puzzle size.")
+    game_state = room.get("state") or {}
+    if game_state.get("starterFlipDone"):
+      raise ValueError("Puzzle size is locked after the flip.")
+    level = normalize_puzzle_difficulty(puzzle_difficulty)
+    flip_turn = puzzle_flip_turn_for_room(room)
+    room["puzzleDifficulty"] = level
+    room["state"] = create_puzzle_initial_state(level, flip_turn=flip_turn)
+    room["undoStack"] = []
+    room["version"] += 1
+    room["updated_at"] = now_ts()
+    return {
+      "state": room["state"],
+      "version": room["version"],
+      "puzzleDifficulty": level,
+      "messages": room["messages"],
+      **self._room_meta(room),
+    }
+
+  def restart_room(self, room_code: str, player_id: str, puzzle_difficulty: Optional[str] = None) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    if player_id not in room["players"]:
+      raise ValueError("Player is not in this room.")
+    game_type = room.get("gameType", "checkers")
+    if game_type == "puzzle":
+      if puzzle_difficulty:
+        room["puzzleDifficulty"] = normalize_puzzle_difficulty(puzzle_difficulty)
+      game_state = room.get("state") or {}
+      if is_fresh_puzzle_pre_flip_state(game_state):
+        flip_turn = puzzle_flip_turn_for_room(room)
+      else:
+        current_flip = puzzle_flip_turn_for_room(room)
+        flip_turn = "light" if current_flip == "dark" else "dark"
+        room["puzzleRound"] = int(room.get("puzzleRound") or 1) + 1
+      room["puzzleFlipTurn"] = flip_turn
+      room["state"] = create_puzzle_initial_state(room.get("puzzleDifficulty", "medium"), flip_turn=flip_turn)
+    else:
+      room["state"] = create_initial_state_for_game(game_type)
     room["undoStack"] = []
     room["version"] += 1
     room["updated_at"] = now_ts()
@@ -281,6 +450,41 @@ class RoomStore:
       "messages": room["messages"],
       **self._room_meta(room),
     }
+
+  def change_room_game(
+    self,
+    room_code: str,
+    player_id: str,
+    game_type: str,
+    puzzle_difficulty: Optional[str] = None,
+  ) -> Dict[str, Any]:
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    player: Optional[Player] = room["players"].get(player_id)
+    if not player:
+      raise ValueError("Player is not in this room.")
+    normalized = str(game_type or "checkers").strip().lower()
+    if normalized == "connect4":
+      normalized = "fourinarow"
+    if normalized not in SUPPORTED_GAMES:
+      raise ValueError("Unsupported game type.")
+    room["gameType"] = normalized
+    if normalized == "puzzle":
+      level = normalize_puzzle_difficulty(puzzle_difficulty or room.get("puzzleDifficulty"))
+      room["puzzleDifficulty"] = level
+      room["puzzleRound"] = 1
+      room["puzzleFlipTurn"] = "dark"
+      room["state"] = create_puzzle_initial_state(level, flip_turn="dark")
+    else:
+      room["puzzleDifficulty"] = None
+      room["puzzleRound"] = None
+      room["puzzleFlipTurn"] = None
+      room["state"] = create_initial_state_for_game(normalized)
+    room["undoStack"] = []
+    room["version"] += 1
+    room["updated_at"] = now_ts()
+    return self._session_payload(room, player_id)
 
   def undo_room(self, room_code: str, player_id: str) -> Dict[str, Any]:
     room = self.rooms.get(room_code)
@@ -465,7 +669,7 @@ class RoomStore:
       "gameType": room.get("gameType", "checkers"),
       "playerId": player.player_id,
       "color": player.color,
-      "state": room["state"],
+      "state": stamp_puzzle_flip_fields(room, room["state"]),
       "version": room["version"],
       "messages": room["messages"],
       **self._room_meta(room),
@@ -481,6 +685,15 @@ class Handler(SimpleHTTPRequestHandler):
 
   def do_GET(self) -> None:  # noqa: N802
     parsed = urlparse(self.path)
+    if parsed.path == "/api/health":
+      self._json_endpoint(
+        lambda: {
+          "ok": True,
+          "puzzleFlipAlternation": True,
+          "features": ["puzzleFlipTurn", "puzzleRound", "stampPuzzleFlipFields", "changeRoomGame"],
+        }
+      )
+      return
     if parsed.path == "/api/rooms/state":
       params = parse_qs(parsed.query)
       room_code = (params.get("roomCode") or [""])[0].strip().upper()
@@ -510,7 +723,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     if parsed.path == "/api/rooms/create":
       game_type = str(payload.get("gameType", "checkers")).strip().lower()
-      self._json_endpoint(lambda: STORE.create_room(game_type))
+      puzzle_difficulty = payload.get("puzzleDifficulty")
+      self._json_endpoint(lambda: STORE.create_room(game_type, puzzle_difficulty))
       return
     if parsed.path == "/api/rooms/join":
       room_code = str(payload.get("roomCode", "")).strip().upper()
@@ -522,6 +736,12 @@ class Handler(SimpleHTTPRequestHandler):
       room_code = str(payload.get("roomCode", "")).strip().upper()
       player_id = str(payload.get("playerId", "")).strip()
       self._json_endpoint(lambda: STORE.reconnect_room(room_code, player_id))
+      return
+    if parsed.path == "/api/rooms/flip":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      winner = str(payload.get("winner", "")).strip().lower()
+      self._json_endpoint(lambda: STORE.flip_starter(room_code, player_id, winner))
       return
     if parsed.path == "/api/rooms/move":
       room_code = str(payload.get("roomCode", "")).strip().upper()
@@ -540,7 +760,23 @@ class Handler(SimpleHTTPRequestHandler):
     if parsed.path == "/api/rooms/restart":
       room_code = str(payload.get("roomCode", "")).strip().upper()
       player_id = str(payload.get("playerId", "")).strip()
-      self._json_endpoint(lambda: STORE.restart_room(room_code, player_id))
+      puzzle_difficulty = payload.get("puzzleDifficulty")
+      self._json_endpoint(lambda: STORE.restart_room(room_code, player_id, puzzle_difficulty))
+      return
+    if parsed.path == "/api/rooms/change-game":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      game_type = str(payload.get("gameType", "checkers")).strip().lower()
+      puzzle_difficulty = payload.get("puzzleDifficulty")
+      self._json_endpoint(
+        lambda: STORE.change_room_game(room_code, player_id, game_type, puzzle_difficulty)
+      )
+      return
+    if parsed.path == "/api/rooms/puzzle-size":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      player_id = str(payload.get("playerId", "")).strip()
+      puzzle_difficulty = str(payload.get("puzzleDifficulty", "")).strip()
+      self._json_endpoint(lambda: STORE.set_puzzle_difficulty(room_code, player_id, puzzle_difficulty))
       return
     if parsed.path == "/api/rooms/undo":
       room_code = str(payload.get("roomCode", "")).strip().upper()
@@ -604,6 +840,8 @@ class Handler(SimpleHTTPRequestHandler):
     encoded = json.dumps(data).encode("utf-8")
     self.send_response(status)
     self.send_header("Content-Type", "application/json; charset=utf-8")
+    self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+    self.send_header("Pragma", "no-cache")
     self.send_header("Content-Length", str(len(encoded)))
     self.end_headers()
     self.wfile.write(encoded)

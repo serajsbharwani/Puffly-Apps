@@ -68,6 +68,9 @@
             >
               Create & Invite
             </button>
+            <button id="friend-test-voice-btn" class="toggle-btn is-on" type="button">
+              Test Voice
+            </button>
             <button id="leave-room-btn" class="toggle-btn is-off" type="button">Leave Room</button>
           </div>
           <div class="friend-join-row">
@@ -235,6 +238,24 @@
         }
         window.pufflySetFriendStatus = pufflySetFriendStatus;
 
+        /** Plays connected.wav (uses app Web Audio when module is loaded). */
+        window.pufflyPlayConnectedFromTap = function () {
+          if (typeof window.pufflyPlayVoiceClip === "function") {
+            void window.pufflyPlayVoiceClip("connected");
+            return;
+          }
+          try {
+            var audio = new Audio("assets/voice/connected.wav");
+            audio.volume = 1;
+            var played = audio.play();
+            if (played && typeof played.catch === "function") {
+              played.catch(function () {});
+            }
+          } catch (err) {
+            console.warn("[puffly] inline connected chime failed", err);
+          }
+        };
+
         function readInviteJoinCode() {
           var search = new URLSearchParams(window.location.search || "");
           var hashRaw = (window.location.hash || "").replace(/^#/, "");
@@ -257,11 +278,7 @@
           var speechOverlay = document.getElementById("speech-unlock-overlay");
           var friendStatus = document.getElementById("friend-status");
           if (pufflyControls) {
-            if (isFriend) {
-              pufflyControls.classList.add("hidden");
-            } else {
-              pufflyControls.classList.remove("hidden");
-            }
+            pufflyControls.classList.remove("hidden");
           }
           if (friendControls) {
             if (isFriend) {
@@ -309,6 +326,9 @@
           if (window.__pufflyCreateInFlight) {
             return;
           }
+          if (typeof window.pufflyPrimeVoice === "function") {
+            window.pufflyPrimeVoice();
+          }
           if (typeof window.pufflyCreateFriendRoom === "function") {
             try {
               await window.pufflyCreateFriendRoom();
@@ -317,6 +337,7 @@
             }
             return;
           }
+          window.pufflyPlayConnectedFromTap();
           window.__pufflyCreateInFlight = true;
           window.__pufflyRoomActionInFlight = true;
           window.__pufflyUserChosePufflyMode = false;
@@ -402,6 +423,9 @@
             event.preventDefault();
             event.stopPropagation();
           }
+          if (typeof window.pufflyPrimeVoice === "function") {
+            window.pufflyPrimeVoice();
+          }
           pufflySetFriendStatus("Joining room...");
           applyPlayModeChrome("friend");
           window.__pufflyPendingPlayMode = "friend";
@@ -472,6 +496,21 @@
         document.addEventListener("click", routeModeTap, true);
 
         document.addEventListener(
+          "mousedown",
+          function (event) {
+            var btn =
+              event.target && event.target.closest && event.target.closest("[data-friend-action]");
+            if (!btn) {
+              return;
+            }
+            if (typeof window.pufflyPrimeVoice === "function") {
+              window.pufflyPrimeVoice();
+            }
+          },
+          true,
+        );
+
+        document.addEventListener(
           "click",
           function (event) {
             var btn =
@@ -517,6 +556,6 @@
         });
       })();
     </script>
-    <script type="module" src="./src/app.js?v=255"></script>
+    <script type="module" src="./src/app.js?v=283"></script>
   </body>
 </html>
