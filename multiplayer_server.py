@@ -224,6 +224,60 @@ class RoomStore:
   def _new_player_id(self) -> str:
     return f"player-{int(now_ts() * 1000)}-{random.randint(1000, 9999)}"
 
+  def _reset_room_to_waiting(self, room: Dict[str, Any]) -> None:
+    game_type = room.get("gameType", "checkers")
+    puzzle_level = room.get("puzzleDifficulty") if game_type == "puzzle" else None
+    flip_turn = puzzle_flip_turn_for_room(room) if game_type == "puzzle" else "dark"
+    if game_type == "puzzle":
+      room["state"] = create_puzzle_initial_state(puzzle_level or "medium", flip_turn=flip_turn)
+    else:
+      room["state"] = create_initial_state_for_game(game_type)
+    room["undoStack"] = []
+    room["messages"] = []
+    room["nextMessageId"] = 1
+    room["chatRate"] = {}
+    room["voice"] = {
+      "participants": {"dark": False, "light": False},
+      "signals": {"dark": [], "light": []},
+    }
+    room["version"] += 1
+
+  def _prune_players_before_join(self, room: Dict[str, Any], reclaim_host: bool) -> None:
+    players: Dict[str, Player] = room["players"]
+    if not players:
+      return
+    host_id = str(room.get("hostPlayerId") or "")
+    state = room.get("state") or {}
+    if len(players) < 2:
+      if reclaim_host and len(players) == 1:
+        only = next(iter(players.values()))
+        if only.color == "dark" and only.player_id != host_id:
+          only.color = "light"
+      return
+
+    if state.get("starterFlipDone") and not reclaim_host:
+      return
+
+    waiting: Optional[Player] = None
+    for player in players.values():
+      if player.color == "light":
+        waiting = player
+        break
+    if not waiting:
+      for player in players.values():
+        if player.player_id != host_id:
+          waiting = player
+          break
+    if not waiting:
+      waiting = next(iter(players.values()))
+    if waiting.color != "light":
+      waiting.color = "light"
+    room["players"] = {waiting.player_id: waiting}
+    for pid in list(room["chatRate"].keys()):
+      if pid != waiting.player_id:
+        room["chatRate"].pop(pid, None)
+    self._reset_room_to_waiting(room)
+
   def create_room(self, game_type: str = "checkers", puzzle_difficulty: Optional[str] = None) -> Dict[str, Any]:
     self._cleanup()
     normalized_game = str(game_type or "checkers").strip().lower()
@@ -260,16 +314,58 @@ class RoomStore:
         "signals": {"dark": [], "light": []},
       },
       "players": {player_id: Player(player_id=player_id, color="dark")},
+      "hostPlayerId": player_id,
+      "creatorPlayerId": player_id,
+      "hostVacant": False,
       "updated_at": now_ts(),
     }
     self.rooms[room_code] = room
     return self._session_payload(room, player_id)
 
-  def join_room(self, room_code: str, game_type: Optional[str] = None) -> Dict[str, Any]:
+  def _can_undo_for(self, room: Dict[str, Any], player_id: str) -> bool:
+    stack = room.get("undoStack") or []
+    return bool(stack and stack[-1].get("by") == player_id)
+
+  def _ensure_room_host_metadata(self, room: Dict[str, Any]) -> None:
+    if not room.get("creatorPlayerId") and room.get("hostPlayerId"):
+      room["creatorPlayerId"] = room["hostPlayerId"]
+    if "hostVacant" not in room:
+      room["hostVacant"] = False
+
+  def _balance_two_player_colors(self, room: Dict[str, Any]) -> None:
+    """Ensure Blue (dark) + Green (light) when two players are in the room."""
+    if len(room["players"]) != 2:
+      return
+    host_id = str(room.get("hostPlayerId") or room.get("creatorPlayerId") or "")
+    if not host_id:
+      host_id = next(iter(room["players"].keys()), "")
+    by_id = {pid: player for pid, player in room["players"].items()}
+    dark_ids = [pid for pid, player in by_id.items() if player.color == "dark"]
+    light_ids = [pid for pid, player in by_id.items() if player.color == "light"]
+    if len(dark_ids) == 2:
+      for pid in dark_ids:
+        if pid != host_id:
+          by_id[pid].color = "light"
+    elif len(light_ids) == 2:
+      if host_id in by_id:
+        by_id[host_id].color = "dark"
+      for pid in light_ids:
+        if pid != host_id:
+          by_id[pid].color = "light"
+
+  def join_room(
+    self,
+    room_code: str,
+    game_type: Optional[str] = None,
+    reclaim_host: bool = False,
+  ) -> Dict[str, Any]:
     self._cleanup()
     room = self.rooms.get(room_code)
     if not room:
       raise ValueError("Room not found.")
+    self._ensure_room_host_metadata(room)
+    # Only reclaim Blue when the host actually left; ignore client reclaimHost otherwise.
+    reclaim_host = bool(room.get("hostVacant"))
     if game_type:
       normalized_game = str(game_type).strip().lower()
       if normalized_game == "connect4":
@@ -278,28 +374,82 @@ class RoomStore:
         raise ValueError("Unsupported game type.")
       if normalized_game != room.get("gameType", "checkers"):
         raise ValueError("This room is for a different game.")
-    colors = {p.color for p in room["players"].values()}
-    if "light" in colors:
+    state = room.get("state") or {}
+    if len(room["players"]) >= 2:
+      if state.get("starterFlipDone") and not reclaim_host:
+        raise ValueError("Room already has two players.")
+      # Guest reopened the invite after the server already has 2/2 (pre-flip).
+      # Return the existing Green slot instead of pruning and issuing a new player id.
+      if not reclaim_host:
+        for pid, player in room["players"].items():
+          if player.color == "light":
+            self._balance_two_player_colors(room)
+            room["updated_at"] = now_ts()
+            return self._session_payload(room, pid)
+      self._prune_players_before_join(room, reclaim_host=reclaim_host)
+    elif reclaim_host and len(room["players"]) == 1:
+      only = next(iter(room["players"].values()))
+      if only.color == "dark" and room.get("hostVacant"):
+        only.color = "light"
+
+    occupied = {player.color for player in room["players"].values()}
+    if "dark" in occupied and "light" in occupied:
       raise ValueError("Room already has two players.")
+    if reclaim_host:
+      if "dark" in occupied:
+        for pid, player in list(room["players"].items()):
+          if player.color == "dark":
+            room["players"].pop(pid, None)
+            room["chatRate"].pop(pid, None)
+        occupied = {player.color for player in room["players"].values()}
+      new_color = "dark"
+    else:
+      new_color = "light" if "dark" in occupied else "dark"
     player_id = self._new_player_id()
-    room["players"][player_id] = Player(player_id=player_id, color="light")
+    room["players"][player_id] = Player(player_id=player_id, color=new_color)
+    if reclaim_host:
+      room["hostPlayerId"] = player_id
+      room["hostVacant"] = False
+    self._balance_two_player_colors(room)
     room["updated_at"] = now_ts()
     return self._session_payload(room, player_id)
+
+  def reclaim_guest_session(self, room_code: str) -> Dict[str, Any]:
+    self._cleanup()
+    room = self.rooms.get(room_code)
+    if not room:
+      raise ValueError("Room not found.")
+    self._ensure_room_host_metadata(room)
+    for pid, player in room["players"].items():
+      if player.color == "light":
+        self._balance_two_player_colors(room)
+        room["updated_at"] = now_ts()
+        return self._session_payload(room, pid)
+    raise ValueError("No guest in this room yet. Ask your friend to send a new invite.")
 
   def reconnect_room(self, room_code: str, player_id: str) -> Dict[str, Any]:
     self._cleanup()
     room = self.rooms.get(room_code)
     if not room:
       raise ValueError("Room not found.")
+    self._ensure_room_host_metadata(room)
     if player_id not in room["players"]:
       raise ValueError("Previous player session is no longer available.")
+    player: Player = room["players"][player_id]
+    creator_id = str(room.get("creatorPlayerId") or "")
+    if not room.get("hostVacant") and creator_id and player_id == creator_id and player.color != "dark":
+      others_dark = any(p.color == "dark" for pid, p in room["players"].items() if pid != player_id)
+      if not others_dark:
+        player.color = "dark"
+    self._balance_two_player_colors(room)
     room["updated_at"] = now_ts()
     return self._session_payload(room, player_id)
 
-  def get_state(self, room_code: str) -> Dict[str, Any]:
+  def get_state(self, room_code: str, player_id: Optional[str] = None) -> Dict[str, Any]:
     room = self.rooms.get(room_code)
     if not room:
       raise ValueError("Room not found.")
+    self._ensure_room_host_metadata(room)
     game_type = room.get("gameType", "checkers")
     # Backward-compatible migration for rooms created before game-specific state.
     if game_type == "fourinarow" and not isinstance(room.get("state", {}).get("grid"), list):
@@ -312,14 +462,24 @@ class RoomStore:
     if game_type == "checkers" and not isinstance(room.get("state", {}).get("board"), list):
       room["state"] = create_initial_state_for_game(game_type)
       room["version"] += 1
+    self._balance_two_player_colors(room)
     room["updated_at"] = now_ts()
-    return {
+    payload: Dict[str, Any] = {
       "gameType": game_type,
       "state": stamp_puzzle_flip_fields(room, room["state"]),
       "version": room["version"],
       "messages": room["messages"],
+      "hostVacant": bool(room.get("hostVacant")),
       **self._room_meta(room),
     }
+    payload["hostPlayerId"] = room.get("hostPlayerId")
+    payload["creatorPlayerId"] = room.get("creatorPlayerId")
+    if player_id:
+      player = room["players"].get(player_id)
+      if player:
+        payload["yourColor"] = player.color
+      payload["canUndo"] = self._can_undo_for(room, player_id)
+    return payload
 
   def apply_move(
     self,
@@ -349,6 +509,7 @@ class RoomStore:
       "state": room["state"],
       "version": room["version"],
       "messages": room["messages"],
+      "canUndo": self._can_undo_for(room, player_id),
       **self._room_meta(room),
     }
 
@@ -506,6 +667,7 @@ class RoomStore:
       "state": room["state"],
       "version": room["version"],
       "messages": room["messages"],
+      "canUndo": self._can_undo_for(room, player_id),
       **self._room_meta(room),
     }
 
@@ -564,19 +726,23 @@ class RoomStore:
       self.rooms.pop(room_code, None)
       return {"left": True}
 
-    # Keep room consistent for the remaining player.
+    self._ensure_room_host_metadata(room)
+    host_id = str(room.get("hostPlayerId") or "")
+    creator_id = str(room.get("creatorPlayerId") or "")
+    if player_id == host_id or player_id == creator_id or player.color == "dark":
+      room["hostVacant"] = True
+
     only_player = next(iter(room["players"].values()))
-    only_player.color = "dark"
-    room["state"] = create_initial_state_for_game(room.get("gameType", "checkers"))
-    room["undoStack"] = []
-    room["messages"] = []
-    room["nextMessageId"] = 1
+    if room.get("hostVacant"):
+      # Host left — waiting player should stay Green.
+      if only_player.color != "light":
+        only_player.color = "light"
+    elif only_player.player_id == host_id or only_player.player_id == creator_id:
+      # Guest left — host (Blue) stays in the room.
+      if only_player.color != "dark":
+        only_player.color = "dark"
+    self._reset_room_to_waiting(room)
     room["chatRate"] = {only_player.player_id: {"times": [], "lastText": "", "lastAt": 0.0}}
-    room["voice"] = {
-      "participants": {"dark": False, "light": False},
-      "signals": {"dark": [], "light": []},
-    }
-    room["version"] += 1
     room["updated_at"] = now_ts()
     return {
       "left": True,
@@ -669,9 +835,14 @@ class RoomStore:
       "gameType": room.get("gameType", "checkers"),
       "playerId": player.player_id,
       "color": player.color,
+      "yourColor": player.color,
+      "hostPlayerId": room.get("hostPlayerId"),
+      "creatorPlayerId": room.get("creatorPlayerId"),
+      "hostVacant": bool(room.get("hostVacant")),
       "state": stamp_puzzle_flip_fields(room, room["state"]),
       "version": room["version"],
       "messages": room["messages"],
+      "canUndo": self._can_undo_for(room, player_id),
       **self._room_meta(room),
     }
 
@@ -685,6 +856,29 @@ class Handler(SimpleHTTPRequestHandler):
 
   def do_GET(self) -> None:  # noqa: N802
     parsed = urlparse(self.path)
+    join_prefix = "/join/"
+    if parsed.path.startswith(join_prefix):
+      code = parsed.path[len(join_prefix) :].strip("/").split("/")[0].strip().upper()
+      if len(code) >= 4 and len(code) <= 8 and code.isalnum():
+        params = parse_qs(parsed.query)
+        game = str((params.get("game") or ["checkers"])[0]).strip().lower() or "checkers"
+        if game == "connect4":
+          game = "fourinarow"
+        if game not in SUPPORTED_GAMES:
+          game = "checkers"
+        location = f"/iphone-checkers/guest-join.html?room={code}&game={game}"
+        if game == "puzzle":
+          puzzle_size = str((params.get("puzzleSize") or params.get("puzzleDifficulty") or ["medium"])[0]).strip().lower()
+          if puzzle_size in {"easy", "medium", "hard", "mini", "classic", "mega"}:
+            location += f"&puzzleSize={puzzle_size}"
+        body = b""
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return
     if parsed.path == "/api/health":
       self._json_endpoint(
         lambda: {
@@ -697,7 +891,8 @@ class Handler(SimpleHTTPRequestHandler):
     if parsed.path == "/api/rooms/state":
       params = parse_qs(parsed.query)
       room_code = (params.get("roomCode") or [""])[0].strip().upper()
-      self._json_endpoint(lambda: STORE.get_state(room_code))
+      player_id = (params.get("playerId") or [""])[0].strip()
+      self._json_endpoint(lambda: STORE.get_state(room_code, player_id or None))
       return
     if parsed.path == "/api/rooms/voice/poll":
       params = parse_qs(parsed.query)
@@ -730,12 +925,27 @@ class Handler(SimpleHTTPRequestHandler):
       room_code = str(payload.get("roomCode", "")).strip().upper()
       game_type_raw = payload.get("gameType")
       game_type = str(game_type_raw).strip().lower() if game_type_raw else None
-      self._json_endpoint(lambda: STORE.join_room(room_code, game_type))
+      reclaim_host = bool(payload.get("reclaimHost"))
+      print(
+        f"[rooms] join room={room_code} reclaim_host={reclaim_host} "
+        f"ua={(self.headers.get('User-Agent') or '')[:96]}",
+        flush=True,
+      )
+      self._json_endpoint(lambda: STORE.join_room(room_code, game_type, reclaim_host))
       return
     if parsed.path == "/api/rooms/reconnect":
       room_code = str(payload.get("roomCode", "")).strip().upper()
       player_id = str(payload.get("playerId", "")).strip()
       self._json_endpoint(lambda: STORE.reconnect_room(room_code, player_id))
+      return
+    if parsed.path == "/api/rooms/reclaim-guest":
+      room_code = str(payload.get("roomCode", "")).strip().upper()
+      print(
+        f"[rooms] reclaim-guest room={room_code} "
+        f"ua={(self.headers.get('User-Agent') or '')[:96]}",
+        flush=True,
+      )
+      self._json_endpoint(lambda: STORE.reclaim_guest_session(room_code))
       return
     if parsed.path == "/api/rooms/flip":
       room_code = str(payload.get("roomCode", "")).strip().upper()
@@ -835,6 +1045,13 @@ class Handler(SimpleHTTPRequestHandler):
         self._send_json({"error": "Internal server error."}, HTTPStatus.INTERNAL_SERVER_ERROR)
         return
     self._send_json(data, HTTPStatus.OK)
+
+  def end_headers(self) -> None:
+    path = urlparse(self.path).path
+    if "/iphone-checkers/" in path and path.endswith((".html", ".js", ".css")):
+      self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+      self.send_header("Pragma", "no-cache")
+    super().end_headers()
 
   def _send_json(self, data: Dict[str, Any], status: HTTPStatus) -> None:
     encoded = json.dumps(data).encode("utf-8")

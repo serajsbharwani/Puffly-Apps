@@ -10,11 +10,26 @@
  * 6. Bump SPEECH_BUILD and app.js import ?v= here together (stale voicePhrases.js breaks the app).
  */
 
-export const SPEECH_BUILD = 283;
+export const SPEECH_BUILD = 304;
 
 export const PRACTICE_FLIP_VOICE_PHRASE = "Flip to see who goes first.";
 
-export const FRIEND_LOBBY_VOICE_PHRASE = "Create a game room and invite a friend to play.";
+/** Mascot copy: flipper taps FLIP (friend mode, all game types). */
+export const FRIEND_TAP_FLIP_VOICE_PHRASE = "Tap FLIP to start.";
+
+/** Mascot copy: non-flipper while opponent flips (matches #puffly-thought). */
+export const FRIEND_BLUE_FLIPPING_PHRASE = "Blue is flipping.";
+export const FRIEND_GREEN_FLIPPING_PHRASE = "Green is flipping.";
+
+/** Mascot copy: practice / solo pre-flip. */
+export const PRACTICE_CHOOSE_FLIP_VOICE_PHRASE = "Flip to choose who starts.";
+
+/** Friend lobby (#friend-status before a room exists). */
+export const FRIEND_LOBBY_VOICE_PHRASE =
+  "Open the game room and then invite a friend to play.";
+
+/** Host waiting for guest (1/2 players) — matches #friend-status detail line. */
+export const FRIEND_INVITE_TO_PLAY_PHRASE = "Invite a friend to play.";
 
 export const VOICE_CLIP_BASE = "./assets/voice/";
 export const VOICE_CLIP_EXT = "wav";
@@ -39,13 +54,19 @@ export const VOICE_CLIP_IDS = [
   "team_blue",
   "team_green",
   "friend_waiting",
+  "friend_invite_to_play",
   "friend_joined",
   "now_checkers",
   "now_four",
   "now_puzzle",
   "blue_flip",
   "green_flip",
+  "tap_flip_start",
+  "blue_is_flipping",
+  "green_is_flipping",
+  "flip_choose_start",
   "friend_lobby",
+  "friend_lobby_intro",
 ];
 
 /** phrase text -> clip id (tests enforce bijection for listed phrases). */
@@ -71,6 +92,8 @@ export const VOICE_PHRASE_TO_CLIP = {
   "Welcome to the game room.": "welcome_room",
   "You are the Blue team.": "team_blue",
   "You are the Green team.": "team_green",
+  [FRIEND_INVITE_TO_PLAY_PHRASE]: "friend_invite_to_play",
+  "Invite a friend to join.": "friend_invite_to_play",
   "Waiting for your friend to join.": "friend_waiting",
   "Your friend joined.": "friend_joined",
   "Now playing Checkers with your friend.": "now_checkers",
@@ -78,7 +101,13 @@ export const VOICE_PHRASE_TO_CLIP = {
   "Now playing Puzzle with your friend.": "now_puzzle",
   "It's Blue's turn to flip.": "blue_flip",
   "It's Green's turn to flip.": "green_flip",
-  [FRIEND_LOBBY_VOICE_PHRASE]: "friend_lobby",
+  [FRIEND_TAP_FLIP_VOICE_PHRASE]: "tap_flip_start",
+  [FRIEND_BLUE_FLIPPING_PHRASE]: "blue_is_flipping",
+  [FRIEND_GREEN_FLIPPING_PHRASE]: "green_is_flipping",
+  /** Practice-only: reuse proven flip.wav (do not use friend pre-flip asset). */
+  [PRACTICE_CHOOSE_FLIP_VOICE_PHRASE]: "flip",
+  [FRIEND_LOBBY_VOICE_PHRASE]: "friend_lobby_intro",
+  "Open the game room.": "friend_lobby_intro",
 };
 
 const NOW_PLAYING_BY_GAME = {
@@ -121,10 +150,9 @@ export function buildFriendJoinClipSequence(teamUpper, options = {}) {
     sequence.push(teamPhrase);
   }
   if (waitingForFriend) {
-    sequence.push("Waiting for your friend to join.");
+    sequence.push(FRIEND_INVITE_TO_PLAY_PHRASE);
     return sequence;
   }
-  sequence.push(nowPlayingFriendClipPhrase(gameId));
   const flipPhrase = flipperPlayer ? flipTurnClipPhrase(flipperPlayer) : null;
   if (flipPhrase) {
     sequence.push(flipPhrase);
@@ -132,8 +160,24 @@ export function buildFriendJoinClipSequence(teamUpper, options = {}) {
   return sequence;
 }
 
+/** iPad guest attach: welcome + team only (pre-flip plays once on Start). */
+export function buildFriendGuestWelcomeSequence(teamUpper) {
+  const sequence = ["Welcome to the game room."];
+  const teamPhrase = friendTeamClipPhrase(teamUpper);
+  if (teamPhrase) {
+    sequence.push(teamPhrase);
+  }
+  return sequence;
+}
+
+/** Short iOS catch-up when full join welcome was deferred past pre-flip (one clip). */
+export function buildFriendJoinCatchUpSequence(teamUpper) {
+  const teamPhrase = friendTeamClipPhrase(teamUpper);
+  return teamPhrase ? [teamPhrase] : ["Welcome to the game room."];
+}
+
 export function buildFriendOpponentJoinedClipSequence(gameId = "checkers", flipperPlayer = null) {
-  const sequence = ["Your friend joined.", nowPlayingFriendClipPhrase(gameId)];
+  const sequence = ["Your friend joined."];
   const flipPhrase = flipperPlayer ? flipTurnClipPhrase(flipperPlayer) : null;
   if (flipPhrase) {
     sequence.push(flipPhrase);
@@ -142,12 +186,8 @@ export function buildFriendOpponentJoinedClipSequence(gameId = "checkers", flipp
 }
 
 export function buildFriendGameSwitchClipSequence(gameId = "checkers", flipperPlayer = null) {
-  const sequence = [nowPlayingFriendClipPhrase(gameId)];
   const flipPhrase = flipperPlayer ? flipTurnClipPhrase(flipperPlayer) : null;
-  if (flipPhrase) {
-    sequence.push(flipPhrase);
-  }
-  return sequence;
+  return flipPhrase ? [flipPhrase] : [];
 }
 
 /** UI labels like "Blue's Turn", "GREEN'S turn." → "dark" | "light". */
@@ -227,26 +267,34 @@ export function voiceClipPhraseFromMascotThought(thought) {
   if (lower.includes("green friend's turn") || lower.includes("green friend")) {
     return "Green's turn.";
   }
-  if (lower.includes("waiting for your friend")) {
-    return "Waiting for your friend to join.";
-  }
   if (
-    lower.includes("flip to choose") ||
-    lower.includes("choose who starts") ||
-    lower.includes("tap flip") ||
-    lower === "🪙 tap flip to start"
+    lower.includes("invite a friend to play") ||
+    lower.includes("invite a friend to join") ||
+    lower.includes("waiting for your friend")
   ) {
-    return PRACTICE_FLIP_VOICE_PHRASE;
+    return FRIEND_INVITE_TO_PLAY_PHRASE;
+  }
+  if (lower.includes("open the game room") || lower.includes("tap open game room")) {
+    return FRIEND_LOBBY_VOICE_PHRASE;
+  }
+  if (lower.includes("friend joined") || lower.includes("opponent connected")) {
+    return "Your friend joined.";
+  }
+  if (lower.includes("tap flip") || lower === "🪙 tap flip to start") {
+    return FRIEND_TAP_FLIP_VOICE_PHRASE;
+  }
+  if (lower.includes("flip to choose") || lower.includes("choose who starts")) {
+    return PRACTICE_CHOOSE_FLIP_VOICE_PHRASE;
   }
   if (lower.includes("my move")) {
     return "Puffly's turn.";
   }
   if (lower.includes("is flipping")) {
     if (lower.includes("green")) {
-      return "It's Green's turn to flip.";
+      return FRIEND_GREEN_FLIPPING_PHRASE;
     }
     if (lower.includes("blue")) {
-      return "It's Blue's turn to flip.";
+      return FRIEND_BLUE_FLIPPING_PHRASE;
     }
   }
   return null;

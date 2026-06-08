@@ -4,7 +4,36 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Puffly Checkers</title>
-    <link rel="stylesheet" href="./styles.css?v=116" />
+    <script>
+      (function () {
+        var search = new URLSearchParams(window.location.search || "");
+        if (search.get("friendAttached") === "1") {
+          return;
+        }
+        var join = (search.get("join") || search.get("room") || "").trim().toUpperCase();
+        if (!join) {
+          var pathMatch = window.location.pathname.match(/\/join\/([a-z0-9]{4,8})\/?$/i);
+          if (pathMatch) {
+            join = pathMatch[1].toUpperCase();
+          }
+        }
+        if (!/^[A-Z0-9]{4,8}$/.test(join)) {
+          return;
+        }
+        var dest = new URL("./guest-join.html", window.location.href);
+        dest.searchParams.set("room", join);
+        var game = (search.get("game") || "checkers").trim().toLowerCase();
+        if (game) {
+          dest.searchParams.set("game", game);
+        }
+        var puzzleSize = search.get("puzzleSize") || search.get("puzzleDifficulty");
+        if (puzzleSize) {
+          dest.searchParams.set("puzzleSize", puzzleSize);
+        }
+        window.location.replace(dest.toString());
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css?v=119" />
   </head>
   <body>
     <div class="app-chrome">
@@ -59,23 +88,26 @@
           </button>
         </div>
         <div id="friend-controls" class="friend-controls hidden">
-          <div class="friend-room-actions">
+          <div class="friend-toolbar">
             <button
               id="create-room-btn"
               class="toggle-btn is-off"
               type="button"
               data-friend-action="create"
             >
-              Create & Invite
+              OPEN GAME ROOM
             </button>
-            <button id="friend-test-voice-btn" class="toggle-btn is-on" type="button">
-              Test Voice
+            <button
+              id="friend-invite-share-btn"
+              class="toggle-btn is-off hidden"
+              type="button"
+              data-friend-action="invite"
+            >
+              INVITE FRIEND
             </button>
-            <button id="leave-room-btn" class="toggle-btn is-off" type="button">Leave Room</button>
-          </div>
-          <div class="friend-join-row">
             <input
               id="room-code-input"
+              class="friend-join-code-input"
               type="text"
               maxlength="8"
               placeholder="Code"
@@ -85,31 +117,40 @@
               spellcheck="false"
             />
             <button
-              id="join-room-btn"
+              id="friend-join-leave-btn"
               class="toggle-btn is-off"
               type="button"
               data-friend-action="join"
             >
-              Join
+              JOIN ROOM
+            </button>
+            <button
+              id="friend-voice-start-btn"
+              class="toggle-btn friend-voice-start-btn is-on hidden"
+              type="button"
+            >
+              START VOICE
             </button>
           </div>
-          <div id="friend-invite-panel" class="friend-invite-panel hidden">
-            <p class="friend-invite-code" aria-label="Room code">
-              <span class="friend-invite-label">Room</span>
-              <strong id="friend-room-code"></strong>
-            </p>
-            <button id="copy-invite-btn" class="toggle-btn is-on" type="button">Copy Link</button>
-            <a
-              id="friend-invite-link"
-              class="friend-invite-link visually-hidden"
-              href="#"
-              target="_blank"
-              rel="noopener noreferrer"
-              tabindex="-1"
-              aria-hidden="true"
-            ></a>
-          </div>
-          <p id="friend-status" class="friend-status" aria-live="polite">Create or join a room.</p>
+          <a
+            id="friend-invite-link"
+            class="friend-invite-link visually-hidden"
+            href="#"
+            target="_blank"
+            rel="noopener noreferrer"
+            tabindex="-1"
+            aria-hidden="true"
+          ></a>
+          <p id="friend-status" class="friend-status" aria-live="polite">
+            Open the game room and then invite a friend to play.
+          </p>
+          <audio
+            id="friend-lobby-audio"
+            preload="auto"
+            playsinline
+            hidden
+            aria-hidden="true"
+          ></audio>
         </div>
       </section>
 
@@ -202,6 +243,7 @@
             </div>
             <p id="voice-status" class="voice-status" aria-live="polite">Voice off</p>
           </section>
+          <div id="friend-side-audio" class="friend-side-audio" aria-label="Audio feedback"></div>
         </aside>
       </section>
 
@@ -256,6 +298,60 @@
           }
         };
 
+        var INVITE_JOIN_STORAGE_KEY = "puffly.inviteJoin";
+        var INVITE_JOIN_LOCAL_KEY = "puffly.inviteJoin.local";
+
+        function persistInviteJoinCode(code) {
+          var normalized = String(code || "").trim().toUpperCase();
+          if (!/^[A-Z0-9]{4,8}$/.test(normalized)) {
+            return;
+          }
+          try {
+            window.sessionStorage.setItem(INVITE_JOIN_STORAGE_KEY, normalized);
+          } catch (e) {}
+          try {
+            window.localStorage.setItem(INVITE_JOIN_LOCAL_KEY, normalized);
+          } catch (e) {}
+        }
+
+        function readPersistedInviteJoinCode() {
+          var readKey = function (storage, key) {
+            if (!storage) {
+              return "";
+            }
+            try {
+              return String(storage.getItem(key) || "")
+                .trim()
+                .toUpperCase();
+            } catch (e) {
+              return "";
+            }
+          };
+          var fromSession = readKey(window.sessionStorage, INVITE_JOIN_STORAGE_KEY);
+          if (/^[A-Z0-9]{4,8}$/.test(fromSession)) {
+            return fromSession;
+          }
+          var fromLocal = readKey(window.localStorage, INVITE_JOIN_LOCAL_KEY);
+          return /^[A-Z0-9]{4,8}$/.test(fromLocal) ? fromLocal : "";
+        }
+
+        function lockFriendInviteLanding(roomCode) {
+          var normalized = String(roomCode || "").trim().toUpperCase();
+          if (!/^[A-Z0-9]{4,8}$/.test(normalized)) {
+            return;
+          }
+          document.documentElement.dataset.inviteActive = "1";
+          document.documentElement.dataset.inviteCode = normalized;
+          try {
+            window.sessionStorage.setItem("puffly.inviteActive", "1");
+            window.sessionStorage.setItem("puffly.inviteActiveCode", normalized);
+          } catch (e) {}
+          window.__pufflyForceFriendLanding = true;
+          window.__pufflyUserChosePufflyMode = false;
+          window.__pufflyPendingPlayMode = "friend";
+          window.__pufflyPendingInviteJoin = normalized;
+        }
+
         function readInviteJoinCode() {
           var search = new URLSearchParams(window.location.search || "");
           var hashRaw = (window.location.hash || "").replace(/^#/, "");
@@ -264,8 +360,34 @@
           }
           var hash =
             hashRaw.indexOf("=") >= 0 ? new URLSearchParams(hashRaw) : new URLSearchParams();
-          var join = (search.get("join") || hash.get("join") || "").trim().toUpperCase();
-          return /^[A-Z0-9]{4,8}$/.test(join) ? join : "";
+          var join = (
+            search.get("join") ||
+            search.get("room") ||
+            hash.get("join") ||
+            hash.get("room") ||
+            ""
+          )
+            .trim()
+            .toUpperCase();
+          if (!join) {
+            var pathMatch = window.location.pathname.match(/\/join\/([a-z0-9]{4,8})\/?$/i);
+            if (pathMatch) {
+              join = pathMatch[1].toUpperCase();
+            }
+          }
+          if (!join && hashRaw && /^[A-Z0-9]{4,8}$/i.test(hashRaw)) {
+            join = hashRaw.toUpperCase();
+          }
+          if (/^[A-Z0-9]{4,8}$/.test(join)) {
+            lockFriendInviteLanding(join);
+            return join;
+          }
+          var mode = (search.get("mode") || hash.get("mode") || "").toLowerCase();
+          if (mode === "friend") {
+            window.__pufflyUserChosePufflyMode = false;
+            window.__pufflyPendingPlayMode = "friend";
+          }
+          return "";
         }
 
         function applyPlayModeChrome(mode) {
@@ -275,10 +397,13 @@
           var friendControls = document.getElementById("friend-controls");
           var playPuffly = document.getElementById("play-puffly-btn");
           var playFriend = document.getElementById("play-friend-btn");
-          var speechOverlay = document.getElementById("speech-unlock-overlay");
           var friendStatus = document.getElementById("friend-status");
           if (pufflyControls) {
-            pufflyControls.classList.remove("hidden");
+            if (isFriend) {
+              pufflyControls.classList.add("hidden");
+            } else {
+              pufflyControls.classList.remove("hidden");
+            }
           }
           if (friendControls) {
             if (isFriend) {
@@ -293,28 +418,40 @@
           if (playFriend) {
             playFriend.classList.toggle("active", isFriend);
           }
-          if (isFriend && friendStatus && !window.__pufflyRoomActionInFlight && !window.__pufflyCreateInFlight) {
+          if (typeof window.pufflyRefreshSpeechUnlockOverlay === "function") {
+            window.pufflyRefreshSpeechUnlockOverlay();
+          }
+          if (
+            isFriend &&
+            friendStatus &&
+            !window.__pufflyRoomActionInFlight &&
+            !window.__pufflyCreateInFlight &&
+            !window.__pufflyGuestAttachInProgress
+          ) {
             var pendingJoin = window.__pufflyPendingInviteJoin || readInviteJoinCode();
             if (pendingJoin) {
               friendStatus.textContent = "Joining room " + pendingJoin + "...";
-            } else {
-              friendStatus.textContent = "Create or join a room.";
+            } else if (
+              !friendStatus.textContent ||
+              friendStatus.textContent === "Open the game room." ||
+              friendStatus.textContent.indexOf("Open the game room") === 0
+            ) {
+              friendStatus.textContent =
+                "Open the game room and then invite a friend to play.";
             }
           }
           var createBtn = document.getElementById("create-room-btn");
-          var joinBtn = document.getElementById("join-room-btn");
-          var leaveBtn = document.getElementById("leave-room-btn");
+          var joinLeaveBtn = document.getElementById("friend-join-leave-btn");
           if (createBtn) {
             createBtn.classList.toggle("is-on", isFriend);
             createBtn.classList.toggle("is-off", !isFriend);
+            createBtn.textContent = "OPEN GAME ROOM";
           }
-          if (joinBtn) {
-            joinBtn.classList.toggle("is-on", isFriend);
-            joinBtn.classList.toggle("is-off", !isFriend);
-          }
-          if (leaveBtn) {
-            leaveBtn.classList.toggle("is-on", false);
-            leaveBtn.classList.toggle("is-off", true);
+          if (joinLeaveBtn) {
+            joinLeaveBtn.classList.toggle("is-on", isFriend);
+            joinLeaveBtn.classList.toggle("is-off", !isFriend);
+            joinLeaveBtn.textContent = "JOIN ROOM";
+            joinLeaveBtn.setAttribute("data-friend-action", "join");
           }
         }
 
@@ -326,7 +463,9 @@
           if (window.__pufflyCreateInFlight) {
             return;
           }
-          if (typeof window.pufflyPrimeVoice === "function") {
+          if (typeof window.pufflyPrimeVoiceForRoomAction === "function") {
+            window.pufflyPrimeVoiceForRoomAction();
+          } else if (typeof window.pufflyPrimeVoice === "function") {
             window.pufflyPrimeVoice();
           }
           if (typeof window.pufflyCreateFriendRoom === "function") {
@@ -380,26 +519,28 @@
             if (!res.ok) {
               throw new Error(data.error || "Could not create room (" + res.status + ")");
             }
-            var codeEl = document.getElementById("friend-room-code");
-            var panel = document.getElementById("friend-invite-panel");
             var codeInput = document.getElementById("room-code-input");
             var createBtn = document.getElementById("create-room-btn");
-            if (codeEl) {
-              codeEl.textContent = data.roomCode;
-            }
             if (codeInput) {
               codeInput.value = data.roomCode;
-            }
-            if (panel) {
-              panel.classList.remove("hidden");
             }
             if (createBtn) {
               createBtn.classList.add("is-on");
               createBtn.classList.remove("is-off");
-              createBtn.textContent = "Share Invite";
             }
+            var inviteBtn = document.getElementById("friend-invite-share-btn");
+            if (inviteBtn) {
+              inviteBtn.classList.remove("hidden");
+              inviteBtn.classList.add("is-on");
+              inviteBtn.classList.remove("is-off");
+              inviteBtn.textContent = "INVITE FRIEND";
+              inviteBtn.setAttribute("data-friend-action", "invite");
+            }
+            document.body.classList.add("friend-room-active");
             pufflySetFriendStatus(
-              "Room " + data.roomCode + " created. Waiting for your friend (1/2).",
+              "Room: " +
+                data.roomCode +
+                ". Welcome to the game room. Players: 1/2. Invite a friend to play.",
             );
             window.__pufflyPendingRoomHydrate = data;
             if (typeof window.pufflyHydrateFriendRoom === "function") {
@@ -423,7 +564,9 @@
             event.preventDefault();
             event.stopPropagation();
           }
-          if (typeof window.pufflyPrimeVoice === "function") {
+          if (typeof window.pufflyPrimeVoiceForRoomAction === "function") {
+            window.pufflyPrimeVoiceForRoomAction();
+          } else if (typeof window.pufflyPrimeVoice === "function") {
             window.pufflyPrimeVoice();
           }
           pufflySetFriendStatus("Joining room...");
@@ -443,7 +586,21 @@
         };
 
         var lastModeTapAt = 0;
+        function isInvitePageLockedInline() {
+          if (document.documentElement && document.documentElement.dataset.inviteActive === "1") {
+            return true;
+          }
+          try {
+            return window.sessionStorage.getItem("puffly.inviteActive") === "1";
+          } catch (e) {
+            return false;
+          }
+        }
+
         function runPlayMode(mode) {
+          if (mode === "puffly" && (isInvitePageLockedInline() || window.__pufflyInviteJoinInFlight)) {
+            return;
+          }
           var now = Date.now();
           if (now - lastModeTapAt < 400 && window.__pufflyLastPlayMode === mode) {
             return;
@@ -455,12 +612,31 @@
             window.__pufflyUserChosePufflyMode = true;
             window.__pufflyPendingInviteJoin = "";
             window.__pufflyInviteJoinInFlight = false;
+            document.documentElement.removeAttribute("data-invite-active");
+            document.documentElement.removeAttribute("data-invite-code");
+            try {
+              window.sessionStorage.removeItem("puffly.inviteActive");
+              window.sessionStorage.removeItem("puffly.inviteActiveCode");
+            } catch (e) {}
           } else if (mode === "friend") {
             window.__pufflyUserChosePufflyMode = false;
           }
           applyPlayModeChrome(mode);
-          if (mode === "friend" && typeof window.pufflyActivateFriendMode === "function") {
-            window.pufflyActivateFriendMode();
+          if (mode === "friend") {
+            playFriendLobbyInline({ fromGesture: true });
+            if (typeof window.pufflyPrimeVoiceForRoomAction === "function") {
+              window.pufflyPrimeVoiceForRoomAction();
+            } else if (typeof window.pufflyPrimeVoice === "function") {
+              window.pufflyPrimeVoice();
+            }
+            if (typeof window.pufflyActivateFriendMode === "function") {
+              window.pufflyActivateFriendMode();
+            }
+            if (typeof window.pufflyBootFriendLobbyVoice === "function") {
+              window.pufflyBootFriendLobbyVoice();
+            } else if (typeof window.pufflyAnnounceFriendLobby === "function") {
+              window.pufflyAnnounceFriendLobby();
+            }
             return;
           }
           if (mode === "puffly" && typeof window.pufflyActivatePufflyMode === "function") {
@@ -495,6 +671,75 @@
 
         document.addEventListener("click", routeModeTap, true);
 
+        function friendLobbyClipUrl() {
+          var search = new URLSearchParams(window.location.search || "");
+          var cb = search.get("cb") || "355";
+          return "./assets/voice/friend_lobby_intro.wav?v=" + encodeURIComponent(cb);
+        }
+
+        function getFriendLobbyAudioEl() {
+          var el = document.getElementById("friend-lobby-audio");
+          if (!el) {
+            return null;
+          }
+          var wanted = friendLobbyClipUrl();
+          if (!el.getAttribute("src") || el.getAttribute("src") !== wanted) {
+            el.setAttribute("src", wanted);
+          }
+          window.__pufflyFriendLobbyEarlyAudio = el;
+          return el;
+        }
+
+        function playFriendLobbyInline(options) {
+          options = options || {};
+          if (window.__pufflyFriendLobbyEarlyPlayed && !options.force && !options.fromGesture) {
+            return;
+          }
+          var audio = getFriendLobbyAudioEl();
+          if (!audio) {
+            return;
+          }
+          function markPlayed() {
+            window.__pufflyFriendLobbyEarlyPlayed = true;
+            window.__pufflyFriendLobbyEarlyFailed = false;
+          }
+          function markFailed() {
+            window.__pufflyFriendLobbyEarlyFailed = true;
+          }
+          function attempt() {
+            if (window.__pufflyFriendLobbyEarlyPlayed && !options.force) {
+              return;
+            }
+            var p = audio.play();
+            if (p && typeof p.then === "function") {
+              p.then(markPlayed).catch(markFailed);
+            }
+          }
+          audio.addEventListener("playing", markPlayed, { once: true });
+          audio.addEventListener("error", markFailed, { once: true });
+          attempt();
+          if (audio.readyState < 2) {
+            audio.addEventListener("loadeddata", attempt, { once: true });
+            audio.addEventListener("canplaythrough", attempt, { once: true });
+            audio.load();
+          }
+        }
+        window.pufflyPlayFriendLobbyInline = playFriendLobbyInline;
+
+        document.addEventListener(
+          "mousedown",
+          function (event) {
+            var friendModeBtn =
+              event.target &&
+              event.target.closest &&
+              event.target.closest("#play-friend-btn, [data-play-mode='friend']");
+            if (friendModeBtn) {
+              playFriendLobbyInline({ fromGesture: true, force: true });
+            }
+          },
+          true,
+        );
+
         document.addEventListener(
           "mousedown",
           function (event) {
@@ -503,7 +748,9 @@
             if (!btn) {
               return;
             }
-            if (typeof window.pufflyPrimeVoice === "function") {
+            if (typeof window.pufflyPrimeVoiceForRoomAction === "function") {
+              window.pufflyPrimeVoiceForRoomAction();
+            } else if (typeof window.pufflyPrimeVoice === "function") {
               window.pufflyPrimeVoice();
             }
           },
@@ -525,37 +772,93 @@
             } else if (action === "join") {
               event.preventDefault();
               void window.pufflyOnJoinRoomTap(event);
+            } else if (action === "leave" && typeof window.pufflyLeaveFriendRoom === "function") {
+              event.preventDefault();
+              void window.pufflyLeaveFriendRoom(event);
+            } else if (
+              (action === "invite" || action === "share") &&
+              typeof window.pufflyShareFriendInvite === "function"
+            ) {
+              event.preventDefault();
+              void window.pufflyShareFriendInvite(event);
             }
           },
           true,
         );
 
-        var inviteJoinOnLoad = readInviteJoinCode();
-        if (inviteJoinOnLoad) {
-          window.__pufflyPendingInviteJoin = inviteJoinOnLoad;
-          applyPlayModeChrome("friend");
-          pufflySetFriendStatus("Joining room " + inviteJoinOnLoad + "...");
-          var roomInput = document.getElementById("room-code-input");
-          if (roomInput) {
-            roomInput.value = inviteJoinOnLoad;
+        function isPlainPracticeLanding() {
+          var search = new URLSearchParams(window.location.search || "");
+          if (search.get("friendAttached") === "1") {
+            return false;
           }
+          var mode = (search.get("mode") || "").toLowerCase();
+          if (mode === "friend") {
+            return false;
+          }
+          var join = (search.get("join") || search.get("room") || "").trim();
+          if (/^[A-Za-z0-9]{4,8}$/.test(join)) {
+            return false;
+          }
+          var pathMatch = window.location.pathname.match(/\/join\/([a-z0-9]{4,8})\/?$/i);
+          if (pathMatch) {
+            return false;
+          }
+          return true;
         }
 
-        window.addEventListener("load", function () {
-          if (!readInviteJoinCode() || window.__pufflyUserChosePufflyMode) {
+        if (isPlainPracticeLanding()) {
+          window.__pufflyPendingPlayMode = "";
+          window.__pufflyUserChosePufflyMode = true;
+          window.__pufflyPendingInviteJoin = "";
+          try {
+            window.sessionStorage.removeItem("puffly.inviteActive");
+            window.sessionStorage.removeItem("puffly.inviteActiveCode");
+          } catch (e) {}
+        } else {
+          try {
+            if (window.sessionStorage.getItem("puffly.inviteActive") === "1") {
+              window.__pufflyPendingPlayMode = "friend";
+            }
+          } catch (e) {}
+        }
+        function bootFriendLobbyAutoplay() {
+          if (window.__pufflyPendingPlayMode !== "friend") {
             return;
           }
+          var audio = getFriendLobbyAudioEl();
+          if (audio) {
+            audio.setAttribute("autoplay", "");
+          }
+          playFriendLobbyInline();
           window.setTimeout(function () {
-            if (window.__pufflyUserChosePufflyMode) {
-              return;
+            if (!window.__pufflyFriendLobbyEarlyPlayed) {
+              playFriendLobbyInline({ force: true });
             }
-            if (typeof window.pufflyTryInviteJoinFromUrl === "function") {
-              window.pufflyTryInviteJoinFromUrl();
+          }, 400);
+          window.setTimeout(function () {
+            if (!window.__pufflyFriendLobbyEarlyPlayed) {
+              playFriendLobbyInline({ force: true });
             }
           }, 1200);
-        });
+        }
+
+        readInviteJoinCode();
+        if (isPlainPracticeLanding() && !window.__pufflyPendingInviteJoin) {
+          window.__pufflyPendingPlayMode = "";
+          applyPlayModeChrome("puffly");
+        } else if (window.__pufflyPendingPlayMode === "friend") {
+          applyPlayModeChrome("friend");
+          if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", bootFriendLobbyAutoplay);
+          } else {
+            bootFriendLobbyAutoplay();
+          }
+          window.addEventListener("load", bootFriendLobbyAutoplay, { once: true });
+        }
+
+        /* Guest invites use guest-join.html (minimal page). Host play stays on index.html. */
       })();
     </script>
-    <script type="module" src="./src/app.js?v=283"></script>
+    <script type="module" src="./src/app.js?v=357"></script>
   </body>
 </html>

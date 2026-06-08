@@ -28,6 +28,15 @@ if curl -sf -o /dev/null --max-time 3 "${ORIGIN}/iphone-checkers/"; then
     echo "[FAIL] Old multiplayer_server.py still running (no /api/health puzzleFlipAlternation)"
     echo "       Stop port ${PORT} and restart: python3 multiplayer_server.py ${PORT}"
   fi
+  reclaim_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -X POST "${ORIGIN}/api/rooms/reclaim-guest" \
+    -H 'Content-Type: application/json' -d '{"roomCode":"ZZZZ"}' 2>/dev/null || echo 000)"
+  if [ "${reclaim_code}" = "404" ]; then
+    echo "[FAIL] /api/rooms/reclaim-guest missing — restart: python3 multiplayer_server.py ${PORT}"
+  elif [ "${reclaim_code}" = "400" ] || [ "${reclaim_code}" = "500" ]; then
+    echo "[OK] /api/rooms/reclaim-guest is registered (iPad can reclaim Green after slow join)"
+  else
+    echo "[?] /api/rooms/reclaim-guest returned HTTP ${reclaim_code}"
+  fi
 else
   echo "[FAIL] Nothing serving ${ORIGIN}/iphone-checkers/"
   echo "       Start from repo root: python3 multiplayer_server.py ${PORT}"
@@ -73,4 +82,5 @@ esac
 
 echo
 echo "Open in browser (sign in with Access if prompted):"
-echo "  ${PUBLIC}/iphone-checkers/"
+echo "  ${PUBLIC}/iphone-checkers/index.html?cb=326"
+echo "  (Hard-refresh iPad after deploy; invite links use /join/ROOMCODE)"

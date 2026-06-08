@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <title>Joining Puffly Game…</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 1.25rem;
+        font-family: system-ui, -apple-system, sans-serif;
+        background: linear-gradient(160deg, #e8f8e0 0%, #fff6e5 55%, #f5efe3 100%);
+        color: #1f2a12;
+      }
+      .card {
+        width: min(380px, 100%);
+        background: #fff;
+        border: 3px solid #5a9e4b;
+        border-radius: 16px;
+        padding: 1.25rem 1.1rem;
+        text-align: center;
+        box-shadow: 0 10px 28px rgba(40, 70, 20, 0.12);
+      }
+      .frog {
+        font-size: 2.6rem;
+        line-height: 1;
+        margin: 0.2rem 0 0.5rem;
+      }
+      h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.2rem;
+      }
+      p {
+        margin: 0.35rem 0;
+        line-height: 1.45;
+        color: #334024;
+      }
+      .room {
+        font-weight: 800;
+        letter-spacing: 0.08em;
+      }
+      .meta {
+        font-size: 0.82rem;
+        color: #5a6848;
+      }
+      .error {
+        color: #7a1e1e;
+        font-weight: 600;
+      }
+      button {
+        margin-top: 0.85rem;
+        min-height: 44px;
+        border-radius: 10px;
+        border: 2px solid #39260a;
+        background: #ffd66e;
+        padding: 0.45rem 1rem;
+        font-weight: 700;
+        font-size: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card" role="status" aria-live="polite">
+      <div class="frog" aria-hidden="true">🐸</div>
+      <h1>Joining as Green</h1>
+      <p id="status">Connecting to the game room…</p>
+      <p id="room-line" class="meta"></p>
+      <p id="build" class="meta"></p>
+      <button id="retry-btn" type="button" hidden>Try again</button>
+    </div>
+    <script>
+      (function () {
+        var GUEST_BUILD = 357;
+        var SESSION_KEY = "puffly.friend.session.v1";
+        var SESSION_SESSION_KEY = "puffly.friend.session.session";
+        var HYDRATE_KEY = "puffly.guestHydratePayload";
+        var ATTACHED_KEY = "puffly.guestAttached";
+
+        if (window.__pufflyGuestJoinPageStarted) {
+          return;
+        }
+        window.__pufflyGuestJoinPageStarted = true;
+
+        var statusEl = document.getElementById("status");
+        var roomLineEl = document.getElementById("room-line");
+        var buildEl = document.getElementById("build");
+        var retryBtn = document.getElementById("retry-btn");
+
+        buildEl.textContent = "Guest join v" + GUEST_BUILD;
+
+        function readRoomFromUrl() {
+          var search = new URLSearchParams(window.location.search || "");
+          var room = (search.get("room") || search.get("join") || "").trim().toUpperCase();
+          if (!room) {
+            var pathMatch = window.location.pathname.match(/\/join\/([a-z0-9]{4,8})\/?$/i);
+            if (pathMatch) {
+              room = pathMatch[1].toUpperCase();
+            }
+          }
+          return /^[A-Z0-9]{4,8}$/.test(room) ? room : "";
+        }
+
+        function readGameFromUrl() {
+          var search = new URLSearchParams(window.location.search || "");
+          var game = (search.get("game") || "checkers").trim().toLowerCase();
+          if (game === "connect4") {
+            game = "fourinarow";
+          }
+          return game === "fourinarow" || game === "puzzle" ? game : "checkers";
+        }
+
+        function setStatus(text, isError) {
+          statusEl.textContent = String(text || "");
+          statusEl.className = isError ? "error" : "";
+        }
+
+        function readStoredSession(roomCode) {
+          var readRaw = function (storage, key) {
+            if (!storage) {
+              return null;
+            }
+            try {
+              return storage.getItem(key);
+            } catch (e) {
+              return null;
+            }
+          };
+          var raw =
+            readRaw(window.sessionStorage, SESSION_SESSION_KEY) ||
+            readRaw(window.localStorage, SESSION_KEY);
+          if (!raw) {
+            return null;
+          }
+          try {
+            var parsed = JSON.parse(raw);
+            if (String(parsed.roomCode || "").toUpperCase() !== roomCode) {
+              return null;
+            }
+            return parsed;
+          } catch (e) {
+            return null;
+          }
+        }
+
+        function writeStoredSession(data) {
+          var payload = {
+            roomCode: String(data.roomCode || "").toUpperCase(),
+            playerId: data.playerId,
+            gameType: data.gameType || "checkers",
+            color: data.color || data.yourColor,
+            hostPlayerId: data.hostPlayerId,
+            creatorPlayerId: data.creatorPlayerId,
+          };
+          var serialized = JSON.stringify(payload);
+          try {
+            window.localStorage.setItem(SESSION_KEY, serialized);
+          } catch (e) {}
+          try {
+            window.sessionStorage.setItem(SESSION_SESSION_KEY, serialized);
+          } catch (e) {}
+        }
+
+        function apiPost(path, body) {
+          return fetch(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body || {}),
+            cache: "no-store",
+          }).then(function (response) {
+            return response.json().then(function (data) {
+              if (!response.ok) {
+                throw new Error(data.error || "Request failed (" + response.status + ")");
+              }
+              return data;
+            });
+          });
+        }
+
+        function enterGame(data) {
+          writeStoredSession(data);
+          try {
+            window.sessionStorage.setItem(HYDRATE_KEY, JSON.stringify(data));
+            window.sessionStorage.setItem(ATTACHED_KEY, "1");
+            window.sessionStorage.removeItem("puffly.inviteActive");
+            window.sessionStorage.removeItem("puffly.inviteActiveCode");
+            window.sessionStorage.removeItem("puffly.friend.joinIntent.v1");
+          } catch (e) {}
+          var dest = new URL("./index.html", window.location.href);
+          dest.searchParams.set("friendAttached", "1");
+          dest.searchParams.set("cb", String(GUEST_BUILD));
+          window.location.replace(dest.toString());
+        }
+
+        function tryAttach(roomCode) {
+          var stored = readStoredSession(roomCode);
+          var chain = Promise.resolve()
+            .then(function () {
+              setStatus("Checking for your Green seat…");
+              return apiPost("/api/rooms/reclaim-guest", { roomCode: roomCode });
+            })
+            .catch(function () {
+              if (stored && stored.playerId) {
+                setStatus("Reconnecting to your seat…");
+                return apiPost("/api/rooms/reconnect", {
+                  roomCode: roomCode,
+                  playerId: stored.playerId,
+                });
+              }
+              throw new Error("no-reconnect");
+            })
+            .catch(function () {
+              setStatus("Joining the room…");
+              return apiPost("/api/rooms/join", { roomCode: roomCode });
+            });
+
+          return chain.then(function (data) {
+            if (!data || !data.roomCode || !data.playerId) {
+              throw new Error("Server did not return a player session.");
+            }
+            setStatus("Connected! Opening the game…");
+            enterGame(data);
+          });
+        }
+
+        function runJoin(attempt) {
+          var roomCode = readRoomFromUrl();
+          retryBtn.hidden = true;
+          if (!roomCode) {
+            setStatus("This invite link is missing a room code.", true);
+            return;
+          }
+          roomLineEl.textContent = "Room " + roomCode;
+          var suffix = attempt > 1 ? " (try " + attempt + ")" : "";
+          setStatus("Joining room " + roomCode + " as Green…" + suffix);
+
+          tryAttach(roomCode).catch(function (err) {
+            var message = err && err.message ? err.message : String(err);
+            if (attempt < 4) {
+              setStatus("Still connecting" + suffix + "…");
+              window.setTimeout(function () {
+                runJoin(attempt + 1);
+              }, 2500 + attempt * 1000);
+              return;
+            }
+            setStatus("Could not join: " + message, true);
+            retryBtn.hidden = false;
+          });
+        }
+
+        retryBtn.addEventListener("click", function () {
+          runJoin(1);
+        });
+
+        runJoin(1);
+      })();
+    </script>
+  </body>
+</html>
