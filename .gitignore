@@ -1,3 +1,7 @@
 .tools/
 .DS_Store
 **/.DS_Store
+
+# Voice sources — app ships assets/voice/*.wav only (see voicePhrases.js)
+*.aiff
+**/*.aiff

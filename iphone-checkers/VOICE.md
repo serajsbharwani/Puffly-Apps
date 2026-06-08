@@ -28,6 +28,7 @@ Practice and Friend share one browser audio stack (WAV clips + optional Web Spee
 - `playVoiceClip(clipId, handlers, { preferHtml, fromGesture })` — no Friend queue logic inside.
 - `voicePhrases.js` — phrase → clip id registry; run `npm run test:voice` after any new line.
 - Every WAV under `assets/voice/` must be **> 8KB** (empty 4KB placeholders break all playback).
+- **Do not commit `.aiff`** — browsers use `.wav` only; source recordings stay local (see root `.gitignore`).
 
 ## Mode switch
 
