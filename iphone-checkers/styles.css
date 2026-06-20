@@ -18,6 +18,45 @@
   display: none !important;
 }
 
+.pwa-install-hint {
+  position: fixed;
+  left: max(0.5rem, env(safe-area-inset-left));
+  right: max(0.5rem, env(safe-area-inset-right));
+  bottom: max(0.65rem, env(safe-area-inset-bottom));
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  border: 2px solid rgba(201, 147, 53, 0.85);
+  border-radius: 12px;
+  background: rgba(255, 246, 225, 0.97);
+  box-shadow: 0 8px 24px rgba(20, 12, 4, 0.22);
+}
+
+.pwa-install-hint-text {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #2f4a24;
+}
+
+.pwa-install-hint-dismiss {
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  border: 0;
+  border-radius: 10px;
+  background: #5a9e4b;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -256,6 +295,22 @@ body:not(.friend-room-active) #friend-invite-share-btn {
   gap: 0.4rem;
 }
 
+.friend-invite-guest-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: #4a5c38;
+  font-weight: 600;
+}
+
+#room-code-input.hidden {
+  display: none !important;
+}
+
+body.friend-mode:not(.friend-room-active) #friend-join-leave-btn {
+  display: none !important;
+}
+
 .friend-puzzle-panel {
   margin-top: 0;
 }
@@ -326,6 +381,44 @@ body:not(.friend-room-active) #friend-invite-share-btn {
   align-items: stretch;
 }
 
+body.friend-mode #practice-table-scene,
+body.friend-mode #game-board-matrix {
+  width: 100%;
+  min-width: 0;
+}
+
+body.friend-mode #game-board-matrix {
+  display: block;
+}
+
+body.friend-mode .board-and-captures {
+  align-items: stretch;
+}
+
+body.friend-mode .captured-tray {
+  align-self: start;
+  min-height: 0;
+}
+
+body.friend-mode .captured-pile {
+  min-height: 0;
+}
+
+body.friend-mode.puzzle-game .captured-pile.puzzle-tray {
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+  overflow-y: auto;
+  grid-auto-rows: var(--puzzle-tray-piece-size, min-content);
+}
+
+body.friend-mode.puzzle-game .puzzle-tray .puzzle-piece {
+  width: 100%;
+  height: var(--puzzle-tray-piece-size, auto);
+  min-height: 0;
+  aspect-ratio: unset;
+}
+
 body.puzzle-game .board-and-captures {
   grid-template-columns: 128px minmax(0, 1fr) 128px;
 }
@@ -346,19 +439,34 @@ body.puzzle-game .board-and-captures {
   padding: 0.24rem 0.12rem;
 }
 
+.captured-tray.blue {
+  border-color: #2f6db6;
+  border-width: 3px;
+  background: #eef5ff;
+  box-shadow: 0 0 0 1px rgba(47, 109, 182, 0.2);
+}
+
+.captured-tray.green {
+  border-color: #3a7a36;
+  border-width: 3px;
+  background: #f0fff0;
+  box-shadow: 0 0 0 1px rgba(58, 122, 54, 0.2);
+}
+
 .captured-tray.your-tray {
   border-width: 3px;
-  box-shadow: 0 0 0 2px rgba(63, 122, 54, 0.22);
 }
 
 .captured-tray.blue.your-tray {
   border-color: #2f6db6;
-  box-shadow: 0 0 0 2px rgba(47, 109, 182, 0.22);
+  background: #eef5ff;
+  box-shadow: 0 0 0 2px rgba(47, 109, 182, 0.28);
 }
 
 .captured-tray.green.your-tray {
   border-color: #3a7a36;
   background: #f0fff0;
+  box-shadow: 0 0 0 2px rgba(58, 122, 54, 0.28);
 }
 
 .captured-tray p {
@@ -417,6 +525,24 @@ body.puzzle-game .board-and-captures {
   grid-template-columns: minmax(0, 1fr);
   gap: 0.55rem;
   align-items: start;
+}
+
+body.friend-mode .gameplay-layout {
+  align-items: stretch;
+}
+
+body.friend-mode #practice-table-scene {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+body.friend-mode #friend-chat-panel:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-height: 0;
 }
 
 .friend-chat-panel {
@@ -502,6 +628,35 @@ body.puzzle-game .board-and-captures {
   gap: 0.22rem;
 }
 
+.voice-controls-top {
+  margin-bottom: 0.04rem;
+}
+
+.voice-chat-btn {
+  display: grid;
+  gap: 0.06rem;
+  justify-items: center;
+  text-align: center;
+  width: 100%;
+  line-height: 1.15;
+}
+
+.voice-chat-title {
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.voice-chat-subtitle {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #7a5f2a;
+}
+
+.voice-chat-btn.is-connected .voice-chat-subtitle {
+  color: #25672d;
+}
+
 .voice-controls button {
   min-height: 36px;
   border-radius: 7px;
@@ -547,14 +702,40 @@ body.friend-mode #puffly-controls {
   flex: 1 1 auto;
 }
 
-.friend-side-audio {
-  margin-top: auto;
-  padding-top: 0.2rem;
-}
-
-.friend-side-audio .audio-toggle {
+.voice-audio-slot .audio-toggle {
   width: 100%;
   min-height: 34px;
+}
+
+body.friend-mode .player-seat-identity,
+body.friend-mode .player-seat-thought {
+  display: none !important;
+}
+
+body.friend-mode #player-seat-row {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 0;
+  padding: 0.3rem 0.5rem max(0.5rem, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(20, 14, 6, 0) 0%, rgba(20, 14, 6, 0.55) 35%);
+  box-sizing: border-box;
+}
+
+body.friend-mode .player-seat-bar {
+  width: 100%;
+}
+
+body.friend-mode .player-seat-controls {
+  width: 100%;
+}
+
+body.friend-mode .player-seat-controls .controls {
+  width: 100%;
+  margin: 0;
+}
+
+body.friend-mode .controls-home:empty {
+  display: none;
 }
 
 body.friend-mode #friend-controls {
@@ -610,9 +791,11 @@ body.friend-mode #friend-invite-share-btn:disabled {
 }
 
 .voice-status {
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.25;
+  display: none;
+}
+
+body.friend-mode .voice-status {
+  display: none !important;
 }
 
 body.friend-mode .friend-chat-panel.hidden {

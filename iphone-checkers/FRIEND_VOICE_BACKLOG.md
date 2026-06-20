@@ -1,16 +1,30 @@
 # Friend & multiplayer voice backlog
 
-**Status:** **Complete for v357** — Mac Blue + iPad Green friend voice loop verified (welcome, pre-flip, post-flip turn, Play Again, late-join after Blue flip).  
-**Build:** `CLIENT_BUILD` / `GUEST_BUILD` **357** (`app.js?v=357`).  
+**Status:** **Core loop complete (v357)** — Mac Blue + iPad Green friend voice verified (welcome, pre-flip, post-flip turn, Play Again, late-join after Blue flip). **UI/voice polish v369–v381** tracked in `TEST_BUILD.md`.  
+**Build:** `CLIENT_BUILD` / `GUEST_BUILD` **381** (`app.js?v=381`).  
 **Strategy:** Friend Voice Bus only (`requestFriendVoice` → `drainFriendVoiceBus`); guest welcome gated until START, then deferred gameplay catch-up.
 
-Use this file as the source of truth. Check boxes here as items close.
+Use this file as the source of truth for voice backlog items. Check boxes here as items close.
 
 **GitHub issues:** run from repo root (after `gh auth login`):
 
 ```bash
 ./scripts/create-friend-voice-issues.sh
 ```
+
+---
+
+## v369–v381 — Shipped (UI + voice polish; see TEST_BUILD.md)
+
+| Build | Fix |
+|-------|-----|
+| **369–372** | Unified PWA test path, practice table layout, friend sidebar chrome |
+| **373** | Voice Chat button title + Connected/Not Connected subtitle |
+| **374–376** | Friend tray height factor (0.6 → 0.95) for readable puzzle pieces |
+| **377** | `FRIEND_ANIMATE_OPPONENT_MOVES` — checkers + four-in-a-row opponent animation |
+| **378** | Puzzle opponent placement animation via `inferRemotePuzzlePlacementFromStates` |
+| **379** | Host welcome on OPEN GAME ROOM (`fromGesture: true`), not deferred to INVITE |
+| **380–381** | Practice AUDIO GUIDE label; team tray borders/tints (Practice + Friend) |
 
 ---
 
@@ -258,4 +272,4 @@ Notes (what HUD showed on iPad):
 
 ---
 
-*Last updated: v357 — friend voice loop complete; optional Phase G polish + A2 formal dumps remain.*
+*Last updated: v381 — core voice loop v357; v369–381 polish in TEST_BUILD.md; optional Phase G polish + A2 formal dumps remain.*

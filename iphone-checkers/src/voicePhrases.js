@@ -10,7 +10,7 @@
  * 6. Bump SPEECH_BUILD and app.js import ?v= here together (stale voicePhrases.js breaks the app).
  */
 
-export const SPEECH_BUILD = 304;
+export const SPEECH_BUILD = 305;
 
 export const PRACTICE_FLIP_VOICE_PHRASE = "Flip to see who goes first.";
 
@@ -43,6 +43,8 @@ export const VOICE_CLIP_IDS = [
   "blue_first",
   "audio_on",
   "wrong_move",
+  "not_your_piece",
+  "doesnt_fit",
   "you_win",
   "try_again",
   "puffly_wins",
@@ -78,6 +80,8 @@ export const VOICE_PHRASE_TO_CLIP = {
   "Puffly (Blue) goes first": "blue_first",
   "Audio on.": "audio_on",
   "Wrong move.": "wrong_move",
+  "Not your piece.": "not_your_piece",
+  "Doesn't fit.": "doesnt_fit",
   "You win.": "you_win",
   "You win!": "you_win",
   "Try again.": "try_again",

@@ -31,7 +31,7 @@ import {
   playerColorFromFriendTurnPhrase,
   resolveVoiceClipId,
   voiceClipPhraseFromMascotThought,
-} from "./voicePhrases.js?v=304";
+} from "./voicePhrases.js?v=305";
 import { DEFAULT_GAME_ID, GAME_REGISTRY, getGameConfig, isKnownGame, normalizeGameId } from "./games/registry.js";
 import {
   FOUR_COLS,
@@ -78,7 +78,7 @@ const copyRoomButton = document.getElementById("copy-room-btn");
 const roomCodeInput = document.getElementById("room-code-input");
 const friendStatusLabel = document.getElementById("friend-status");
 const friendInviteLink = document.getElementById("friend-invite-link");
-const friendSideAudioHost = document.getElementById("friend-side-audio");
+const friendVoiceAudioHost = document.getElementById("friend-voice-audio");
 const historyList = document.getElementById("history-list");
 const rulesPanel = document.getElementById("rules-panel");
 const puzzleDebugStrip = document.getElementById("puzzle-debug-strip");
@@ -96,14 +96,13 @@ const chatSendButton = document.getElementById("chat-send-btn");
 const chatMuteButton = document.getElementById("chat-mute-btn");
 const chatUnreadBadge = document.getElementById("chat-unread-badge");
 const voiceJoinButton = document.getElementById("voice-join-btn");
-const voiceMuteMicButton = document.getElementById("voice-mic-btn");
-const voiceSpeakerButton = document.getElementById("voice-speaker-btn");
+const voiceChatTitle = document.querySelector("#voice-join-btn .voice-chat-title");
+const voiceConnectionLabel = document.getElementById("voice-connection-label");
 const speechUnlockOverlay = document.getElementById("speech-unlock-overlay");
 const speechUnlockButton = document.getElementById("speech-unlock-btn");
 const friendVoiceStartButton = document.getElementById("friend-voice-start-btn");
 const blueAvatar = document.getElementById("blue-avatar");
 const greenAvatar = document.getElementById("green-avatar");
-const voiceStatusLabel = document.getElementById("voice-status");
 const blueCapturedPile = document.getElementById("blue-captured-pile");
 const greenCapturedPile = document.getElementById("green-captured-pile");
 const blueCapturedTray = document.querySelector(".captured-tray.blue");
@@ -151,8 +150,8 @@ let lastTurnSpoken = "";
 const AI_MOVE_ANIMATION_MS = 1300;
 const HUMAN_MOVE_ANIMATION_MS = 450;
 const FRIEND_MOVE_DELAY_MS = 420;
-/** Opponent move animation disabled — strict server snapshots keep both boards identical. */
-const FRIEND_ANIMATE_OPPONENT_MOVES = false;
+/** Animate inferred opponent moves in Friend mode (Checkers, Four-in-a-Row, Puzzle). */
+const FRIEND_ANIMATE_OPPONENT_MOVES = true;
 const FRIEND_ROOM_POLL_MS =
   typeof navigator !== "undefined" && /iPad|iPhone|iPod/i.test(navigator.userAgent) ? 1000 : 250;
 const STARTER_FLIP_ANIMATION_MS = 1450;
@@ -178,7 +177,6 @@ let voiceLocalLevelTimer = null;
 let voiceRemoteLevelTimer = null;
 let voiceJoined = false;
 let voiceMicMuted = false;
-let voiceSpeakerMuted = false;
 let voiceOfferSent = false;
 let voiceRemoteAudioElement = null;
 let applyingRemoteSync = false;
@@ -205,6 +203,12 @@ let lastTraySelectedPieceId = "";
 const puzzleTrayPieceById = new Map();
 let boardGeometryLockedAt = 0;
 const BOARD_GEOMETRY_LOCK_TTL_MS = 400;
+const MIN_TOUCH_CELL_PX = 44;
+/** Friend-mode side trays use 95% of board height (5% shorter than board). */
+const FRIEND_MODE_TRAY_HEIGHT_FACTOR = 0.95;
+const BOARD_GEOMETRY_RESIZE_DEBOUNCE_MS = 150;
+const PWA_INSTALL_HINT_STORAGE_KEY = "puffly.pwaHintDismissed";
+let boardGeometryResizeTimer = null;
 const AUTO_GAME_ID = getGameFromUrl();
 const AUTO_PUZZLE_SIZE = getPuzzleSizeFromUrl();
 
@@ -228,6 +232,9 @@ let selectedPuzzlePieceId = "";
 let puzzleFlipTurnLocal = "dark";
 let puzzleTrayBootstrapAttempted = false;
 let puzzlePreFlipGeometryRefreshScheduled = false;
+let practiceTableLandscapePuzzleCellPx = 0;
+let practiceTableLandscapePuzzleBodyPx = 0;
+let practiceTableLandscapePuzzleBoardHeightPx = 0;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const puzzleEdgeCache = new Map();
 
@@ -483,8 +490,10 @@ const INVITE_JOIN_STORAGE_KEY = "puffly.inviteJoin";
 const INVITE_JOIN_LOCAL_KEY = "puffly.inviteJoin.local";
 const INVITE_PAGE_LOCK_KEY = "puffly.inviteActive";
 const INVITE_PAGE_LOCK_CODE_KEY = "puffly.inviteActiveCode";
+const INVITE_ORIGIN_STORAGE_KEY = "puffly.inviteOrigin";
+const DEFAULT_PUBLIC_INVITE_ORIGIN = "https://dev.playpuffly.org";
 /** Bumped with index.html app.js?v= so iPad cache mismatches are visible in friend status. */
-const CLIENT_BUILD = 357;
+const CLIENT_BUILD = 381;
 const VOICE_DEBUG_LOG_MAX = 200;
 const GUEST_HYDRATE_PAYLOAD_KEY = "puffly.guestHydratePayload";
 const GUEST_ATTACHED_FLAG_KEY = "puffly.guestAttached";
@@ -816,6 +825,38 @@ function isPlainPracticeLanding() {
   }
   const invite = readInviteParamsFromUrl();
   return !invite.join && invite.mode !== "friend";
+}
+
+function isPracticeTableTestPwaBoot() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const source = new URLSearchParams(window.location.search).get("source") || "";
+  return source === "pwa-test" || source === "pwa-test-preview" || source === "pwa-skeleton";
+}
+
+function forceClearInviteStateForPracticeTestPwa() {
+  if (!isPracticeTableTestPwaBoot()) {
+    return;
+  }
+  clearInvitePageLock();
+  clearPersistedInviteJoinCode();
+  clearFriendJoinIntent();
+  clearFriendPracticeBlocked();
+  clearStoredFriendSession();
+  if (typeof window !== "undefined") {
+    window.__pufflyForceFriendLanding = false;
+    window.__pufflyPendingInviteJoin = "";
+    window.__pufflyFriendSessionStable = false;
+    window.__pufflyInviteJoinInFlight = false;
+    window.__pufflyPendingPlayMode = "";
+    window.__pufflyUserChosePufflyMode = true;
+  }
+  try {
+    window.sessionStorage?.removeItem(FRIEND_STABLE_SESSION_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 function getJoinCodeFromUrl() {
@@ -1951,6 +1992,11 @@ async function runBootstrapInviteJoin(roomCode) {
   if (!normalizedCode) {
     return false;
   }
+  if (!isFriendHostRoom(normalizedCode)) {
+    applyInviteLandingConfig();
+    redirectToGuestJoinPage(normalizedCode);
+    return true;
+  }
   if (
     remoteSession?.roomCode === normalizedCode &&
     resolveFriendSessionColor(remoteSession)
@@ -2065,6 +2111,571 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+let lastPracticeTableChromeKey = "";
+let friendModeTrayLayoutSyncRaf = 0;
+
+function practiceTableUiStoredEnabled() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return false;
+  }
+  try {
+    return window.localStorage.getItem("puffly.tableUi") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function clearPracticeTableViewportInlineStyles() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.documentElement.style.width = "";
+  document.documentElement.style.height = "";
+  document.body.style.width = "";
+  document.body.style.height = "";
+}
+
+function clearPracticeTableTrayInlineStyles() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
+  for (const tray of trays) {
+    tray.style.height = "";
+    tray.style.maxHeight = "";
+  }
+  for (const pileId of ["blue-captured-pile", "green-captured-pile"]) {
+    document.getElementById(pileId)?.style.removeProperty("--puzzle-tray-piece-size");
+  }
+}
+
+function isFriendModeUiActive() {
+  return (
+    playMode === "friend" ||
+    (typeof document !== "undefined" && document.body.classList.contains("friend-mode"))
+  );
+}
+
+function syncFriendModeTrayHeights() {
+  if (!isFriendModeUiActive() || !boardElement) {
+    return;
+  }
+  const boardWrap = boardElement.parentElement;
+  if (!boardWrap) {
+    return;
+  }
+  const boardHeight = Math.round(boardWrap.getBoundingClientRect().height);
+  if (boardHeight <= 0) {
+    return;
+  }
+  const trayHeight = Math.max(1, Math.round(boardHeight * FRIEND_MODE_TRAY_HEIGHT_FACTOR));
+  const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
+  for (const tray of trays) {
+    tray.style.height = `${trayHeight}px`;
+    tray.style.maxHeight = `${trayHeight}px`;
+  }
+}
+
+function syncFriendModePuzzleTrayPieceSizes() {
+  if (!isFriendModeUiActive() || selectedGameId !== "puzzle") {
+    return;
+  }
+  const { rows, cols } = getPuzzleGridSizeFromState();
+  const targetVisible = practiceTablePuzzleTrayTargetVisible(rows);
+  const fallbackPieceCount = practiceTablePuzzleTrayPieceCount(rows, cols);
+  for (const pileId of ["blue-captured-pile", "green-captured-pile"]) {
+    const pile = document.getElementById(pileId);
+    if (!pile) {
+      continue;
+    }
+    const pileComputed = window.getComputedStyle(pile);
+    const padLeft = Number.parseFloat(pileComputed.paddingLeft) || 0;
+    const padRight = Number.parseFloat(pileComputed.paddingRight) || 0;
+    const innerWidth = Math.max(0, pile.clientWidth - padLeft - padRight);
+    const innerHeight = practiceTablePuzzleTrayViewportHeight(pile, pileComputed);
+    const pieceCount = pile.querySelectorAll(".puzzle-piece").length || fallbackPieceCount;
+    const slotCount = Math.max(1, Math.min(pieceCount, targetVisible));
+    const gapPx = Number.parseFloat(pileComputed.gap) || Number.parseFloat(pileComputed.rowGap) || 0;
+    const fromHeight = Math.max(
+      1,
+      Math.floor((innerHeight - gapPx * (slotCount - 1)) / slotCount),
+    );
+    let pieceSize = Math.min(innerWidth, fromHeight);
+    if (fromHeight >= MIN_TOUCH_CELL_PX) {
+      pieceSize = Math.max(MIN_TOUCH_CELL_PX, pieceSize);
+    } else {
+      pieceSize = Math.max(1, pieceSize);
+    }
+    if (pieceSize > 0) {
+      pile.style.setProperty("--puzzle-tray-piece-size", `${pieceSize}px`);
+    }
+  }
+}
+
+function scheduleFriendModeTrayLayoutSync() {
+  if (!isFriendModeUiActive()) {
+    return;
+  }
+  if (friendModeTrayLayoutSyncRaf) {
+    return;
+  }
+  friendModeTrayLayoutSyncRaf = window.requestAnimationFrame(() => {
+    friendModeTrayLayoutSyncRaf = 0;
+    if (!isFriendModeUiActive()) {
+      return;
+    }
+    syncFriendModeTrayHeights();
+    syncFriendModePuzzleTrayPieceSizes();
+    window.requestAnimationFrame(() => {
+      if (!isFriendModeUiActive()) {
+        return;
+      }
+      syncFriendModeTrayHeights();
+      syncFriendModePuzzleTrayPieceSizes();
+    });
+  });
+}
+
+function finalizeBoardGeometryLock() {
+  boardGeometryLockedAt = Date.now();
+  if (isFriendModeUiActive()) {
+    scheduleFriendModeTrayLayoutSync();
+  }
+}
+
+function suspendPracticeTableLayoutForFriendMode() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.body.classList.remove("practice-table-layout", "practice-table-initializing");
+  clearPracticeTableViewportInlineStyles();
+  clearPracticeTableTrayInlineStyles();
+  lastPracticeTableChromeKey = "off";
+  if (typeof window.pufflySyncPracticeTableDom === "function") {
+    window.pufflySyncPracticeTableDom({ useTableLayout: false, friendMode: true });
+  }
+}
+
+function restorePracticeTableLayoutIfEnabled() {
+  if (typeof document === "undefined" || playMode !== "puffly") {
+    return;
+  }
+  if (!practiceTableUiStoredEnabled()) {
+    document.body.classList.remove("practice-table-layout", "practice-table-initializing");
+    clearPracticeTableViewportInlineStyles();
+    return;
+  }
+  document.body.classList.add("practice-table-layout");
+  if (typeof window.pufflyRefreshPracticeTableViewport === "function") {
+    window.pufflyRefreshPracticeTableViewport();
+  }
+}
+
+function schedulePracticeTableRelayoutIfNeeded() {
+  updatePracticeTableChrome();
+  if (
+    typeof document === "undefined" ||
+    !document.body.classList.contains("practice-table-layout") ||
+    document.body.classList.contains("friend-mode")
+  ) {
+    return;
+  }
+  window.requestAnimationFrame(() => {
+    lockBoardGeometry(true);
+  });
+}
+
+function updatePracticeTableChrome() {
+  const useTable =
+    typeof document !== "undefined" &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode") &&
+    playMode === "puffly";
+  if (!useTable) {
+    const wasTableChrome = lastPracticeTableChromeKey !== "off";
+    if (wasTableChrome) {
+      lastPracticeTableChromeKey = "off";
+      document.body.classList.remove("practice-table-initializing");
+    }
+    const needsDomFlatten =
+      wasTableChrome ||
+      playMode === "friend" ||
+      (practiceTableUiStoredEnabled() &&
+        !document.body.classList.contains("practice-table-layout"));
+    if (needsDomFlatten && typeof window.pufflySyncPracticeTableDom === "function") {
+      window.pufflySyncPracticeTableDom({
+        useTableLayout: false,
+        friendMode: playMode === "friend",
+      });
+    }
+    return;
+  }
+  const initializing = isStarterFlipPending();
+  const chromeKey = initializing ? "init" : "play";
+  if (chromeKey === lastPracticeTableChromeKey) {
+    document.body.classList.toggle("practice-table-initializing", initializing);
+    return;
+  }
+  lastPracticeTableChromeKey = chromeKey;
+  document.body.classList.toggle("practice-table-initializing", initializing);
+  if (typeof window.pufflySyncPracticeTableDom === "function") {
+    window.pufflySyncPracticeTableDom({ initializing, useTableLayout: true });
+  }
+  window.requestAnimationFrame(() => {
+    lockBoardGeometry(true);
+  });
+}
+
+function practiceTableIsDesktopWide() {
+  return (
+    typeof window !== "undefined" &&
+    window.innerWidth >= 900 &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode")
+  );
+}
+
+function practiceTableIsLandscapeTablet() {
+  return (
+    typeof window !== "undefined" &&
+    window.innerWidth >= 768 &&
+    window.matchMedia?.("(orientation: landscape)")?.matches &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode")
+  );
+}
+
+function practiceTableIsActive() {
+  return (
+    typeof document !== "undefined" &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode")
+  );
+}
+
+function practiceTablePuzzleTrayPieceCount(rows, cols) {
+  return Math.ceil((rows * cols) / 2);
+}
+
+function practiceTableSeatTopHeightBudget(wrapRect, padTop, padBottom, clearancePx = 12) {
+  const playerSeat = document.getElementById("player-seat-row");
+  if (!playerSeat) {
+    return null;
+  }
+  return Math.max(
+    0,
+    playerSeat.getBoundingClientRect().top - wrapRect.top - padTop - padBottom - clearancePx,
+  );
+}
+
+const PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX = (3 + 4) * 2;
+
+function practiceTablePuzzleTrayTargetVisible(rows) {
+  if (rows === 2) {
+    return 2;
+  }
+  if (practiceTableIsLandscapeTablet()) {
+    return 3;
+  }
+  if (rows === 5) {
+    return 5;
+  }
+  return 4;
+}
+
+function practiceTablePuzzleLandscapeTrayColumnPx() {
+  return 112;
+}
+
+function syncPracticeTablePuzzleGridBodyClasses() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.body.classList.remove("puzzle-grid-mini", "puzzle-grid-classic", "puzzle-grid-mega");
+  if (selectedGameId !== "puzzle") {
+    return;
+  }
+  const { rows } = getPuzzleGridSizeFromState();
+  if (rows === 2) {
+    document.body.classList.add("puzzle-grid-mini");
+  } else if (rows === 5) {
+    document.body.classList.add("puzzle-grid-mega");
+  } else {
+    document.body.classList.add("puzzle-grid-classic");
+  }
+}
+
+function practiceTablePuzzlePieceBodyPx(cellPx) {
+  // Core jigsaw unit maps 1:1 to the grid cell; tabs render outside via SVG overflow.
+  return Math.max(1, cellPx);
+}
+
+function applyPracticeTableLandscapeTrayEdgeGlow(pieceEl, piece, rows, cols) {
+  const shadows = [];
+  const cyan = "rgba(54, 232, 255, 0.98)";
+  if (piece.correctRow === 0) {
+    shadows.push(`inset 0 2px 0 0 ${cyan}`);
+  }
+  if (piece.correctCol === cols - 1) {
+    shadows.push(`inset -2px 0 0 0 ${cyan}`);
+  }
+  if (piece.correctRow === rows - 1) {
+    shadows.push(`inset 0 -2px 0 0 ${cyan}`);
+  }
+  if (piece.correctCol === 0) {
+    shadows.push(`inset 2px 0 0 0 ${cyan}`);
+  }
+  if (shadows.length > 0) {
+    pieceEl.style.setProperty("--puzzle-tray-edge-glow", shadows.join(", "));
+  }
+}
+
+function practiceTablePuzzleTrayViewportHeight(pile, pileComputed) {
+  const padTop = Number.parseFloat(pileComputed.paddingTop) || 0;
+  const padBottom = Number.parseFloat(pileComputed.paddingBottom) || 0;
+  return Math.max(0, pile.clientHeight - padTop - padBottom);
+}
+
+function clearPracticeTablePuzzleLandscapeVars() {
+  practiceTableLandscapePuzzleCellPx = 0;
+  practiceTableLandscapePuzzleBodyPx = 0;
+  practiceTableLandscapePuzzleBoardHeightPx = 0;
+  const matrix = document.getElementById("game-board-matrix");
+  if (!matrix) {
+    return;
+  }
+  matrix.style.removeProperty("--puzzle-cell-px");
+  matrix.style.removeProperty("--puzzle-piece-body-px");
+  matrix.style.removeProperty("--puzzle-landscape-scale");
+}
+
+function syncPracticeTablePuzzleLandscapeScale(matrix, cell, rows, cols) {
+  if (!matrix || !practiceTableIsLandscapeTablet()) {
+    return;
+  }
+  const captures = matrix.querySelector(".board-and-captures");
+  if (!captures) {
+    matrix.style.removeProperty("--puzzle-landscape-scale");
+    return;
+  }
+  const capturesComputed = window.getComputedStyle(captures);
+  const gapPx =
+    Number.parseFloat(capturesComputed.columnGap) ||
+    Number.parseFloat(capturesComputed.gap) ||
+    0;
+  const trayWidth = practiceTablePuzzleLandscapeTrayColumnPx();
+  const boardWidth = cell * cols + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+  const naturalWidth = trayWidth * 2 + gapPx * 2 + boardWidth;
+  const maxWidth = Math.min(window.innerWidth * 0.96, 840);
+  if (naturalWidth > maxWidth && naturalWidth > 0) {
+    matrix.style.setProperty("--puzzle-landscape-scale", String(maxWidth / naturalWidth));
+    return;
+  }
+  matrix.style.removeProperty("--puzzle-landscape-scale");
+}
+
+function applyPracticeTablePuzzleLandscapeVars(cell, rows, cols, isPracticeTablePuzzle) {
+  const matrix = document.getElementById("game-board-matrix");
+  if (!isPracticeTablePuzzle || !practiceTableIsLandscapeTablet() || !matrix || cell <= 0) {
+    clearPracticeTablePuzzleLandscapeVars();
+    return;
+  }
+  practiceTableLandscapePuzzleCellPx = cell;
+  const bodyPx = practiceTablePuzzlePieceBodyPx(cell);
+  practiceTableLandscapePuzzleBodyPx = bodyPx;
+  practiceTableLandscapePuzzleBoardHeightPx = cell * rows + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+  matrix.style.setProperty("--puzzle-cell-px", `${cell}px`);
+  matrix.style.setProperty("--puzzle-piece-body-px", `${bodyPx}px`);
+  syncPracticeTablePuzzleLandscapeScale(matrix, cell, rows, cols);
+}
+
+function syncPracticeTablePuzzleTrayLandscapeTrayCaps() {
+  if (!practiceTableIsActive() || selectedGameId !== "puzzle") {
+    return;
+  }
+  const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
+  if (practiceTableIsLandscapeTablet() && practiceTableLandscapePuzzleBoardHeightPx > 0) {
+    const boardHeight = practiceTableLandscapePuzzleBoardHeightPx;
+    for (const tray of trays) {
+      tray.style.maxHeight = `${boardHeight}px`;
+      tray.style.height = "";
+    }
+    return;
+  }
+  for (const tray of trays) {
+    tray.style.height = "";
+    tray.style.maxHeight = "";
+  }
+}
+
+function schedulePracticeTablePuzzleTrayPieceSizeSync() {
+  window.requestAnimationFrame(() => {
+    syncPracticeTablePuzzleTrayLandscapeTrayCaps();
+    syncPracticeTablePuzzleTrayPieceSizes();
+    if (practiceTableIsLandscapeTablet()) {
+      window.requestAnimationFrame(() => {
+        syncPracticeTablePuzzleTrayLandscapeTrayCaps();
+        syncPracticeTablePuzzleTrayPieceSizes();
+      });
+    }
+  });
+}
+
+function syncPracticeTablePuzzleTrayPieceSizes() {
+  if (!practiceTableIsActive() || selectedGameId !== "puzzle") {
+    return;
+  }
+  const { rows, cols } = getPuzzleGridSizeFromState();
+  const targetVisible = practiceTablePuzzleTrayTargetVisible(rows);
+  const fallbackPieceCount = practiceTablePuzzleTrayPieceCount(rows, cols);
+  const isLandscape = practiceTableIsLandscapeTablet();
+  for (const pileId of ["blue-captured-pile", "green-captured-pile"]) {
+    const pile = document.getElementById(pileId);
+    if (!pile) {
+      continue;
+    }
+    const pileComputed = window.getComputedStyle(pile);
+    const padLeft = Number.parseFloat(pileComputed.paddingLeft) || 0;
+    const padRight = Number.parseFloat(pileComputed.paddingRight) || 0;
+    const padTop = Number.parseFloat(pileComputed.paddingTop) || 0;
+    const padBottom = Number.parseFloat(pileComputed.paddingBottom) || 0;
+    const innerWidth = Math.max(0, pile.clientWidth - padLeft - padRight);
+    const innerHeight = practiceTablePuzzleTrayViewportHeight(pile, pileComputed);
+    const pieceCount = pile.querySelectorAll(".puzzle-piece").length || fallbackPieceCount;
+    const slotCount = isLandscape ? targetVisible : Math.max(1, Math.min(pieceCount, targetVisible));
+    const gapPx = Number.parseFloat(pileComputed.gap) || Number.parseFloat(pileComputed.rowGap) || 0;
+    const fromHeight = Math.max(
+      1,
+      Math.floor((innerHeight - gapPx * (slotCount - 1)) / slotCount),
+    );
+    let pieceSize = Math.min(innerWidth, fromHeight);
+    if (isLandscape && practiceTableLandscapePuzzleCellPx > 0) {
+      pieceSize = Math.min(innerWidth, practiceTableLandscapePuzzleCellPx);
+    } else if (fromHeight >= MIN_TOUCH_CELL_PX) {
+      pieceSize = Math.max(MIN_TOUCH_CELL_PX, pieceSize);
+    } else {
+      pieceSize = Math.max(1, pieceSize);
+    }
+    if (pieceSize > 0) {
+      pile.style.setProperty("--puzzle-tray-piece-size", `${pieceSize}px`);
+    }
+  }
+}
+
+function touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight) {
+  if (cellFromHeight < MIN_TOUCH_CELL_PX) {
+    return Math.max(1, cellFromHeight);
+  }
+  return Math.min(
+    Math.max(MIN_TOUCH_CELL_PX, Math.min(cellFromWidth, cellFromHeight)),
+    cellFromHeight,
+  );
+}
+
+function touchTargetCellSize(innerContentWidth, innerContentHeight, tableBoardScale, gridSpan) {
+  const cellFromWidth = Math.floor((innerContentWidth * tableBoardScale) / gridSpan);
+  const cellFromHeight = Math.floor((innerContentHeight * tableBoardScale) / gridSpan);
+  return touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+}
+
+function practiceTableBoardMaxContentWidth() {
+  if (!practiceTableIsDesktopWide() && !practiceTableIsLandscapeTablet()) {
+    return null;
+  }
+  const scene = document.getElementById("practice-table-scene");
+  if (!scene) {
+    return null;
+  }
+  return Math.max(0, scene.clientWidth);
+}
+
+function practiceTableBoardScaleFactor() {
+  if (
+    typeof document === "undefined" ||
+    !document.body.classList.contains("practice-table-layout") ||
+    document.body.classList.contains("friend-mode")
+  ) {
+    return 1;
+  }
+  return 1.0;
+}
+
+function practiceTablePuzzleBoardCellSize(
+  puzzleInnerWidth,
+  puzzleInnerHeight,
+  tableBoardScale,
+  rows,
+  cols,
+  capByLandscapeTray = false,
+) {
+  const cellFromWidth = Math.floor((puzzleInnerWidth * tableBoardScale) / cols);
+  const cellFromHeight = Math.floor((puzzleInnerHeight * tableBoardScale) / rows);
+  let cell = touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+  if (capByLandscapeTray) {
+    cell = Math.min(cell, practiceTablePuzzleLandscapeTrayColumnPx());
+  }
+  return cell;
+}
+
+function scheduleBoardGeometryRelayout() {
+  if (boardGeometryResizeTimer) {
+    clearTimeout(boardGeometryResizeTimer);
+  }
+  boardGeometryResizeTimer = setTimeout(() => {
+    boardGeometryResizeTimer = null;
+    lockBoardGeometry(true);
+    render(lastStatusMessage);
+  }, BOARD_GEOMETRY_RESIZE_DEBOUNCE_MS);
+}
+
+function isStandalonePwaDisplay() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  if (window.matchMedia?.("(display-mode: standalone)")?.matches) {
+    return true;
+  }
+  return Boolean(window.navigator.standalone);
+}
+
+function isIosLikeBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  const ua = navigator.userAgent || "";
+  if (/iPad|iPhone|iPod/.test(ua)) {
+    return true;
+  }
+  return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+}
+
+function initPwaInstallHint() {
+  if (typeof document === "undefined" || isStandalonePwaDisplay() || !isIosLikeBrowser()) {
+    return;
+  }
+  try {
+    if (window.localStorage?.getItem(PWA_INSTALL_HINT_STORAGE_KEY) === "1") {
+      return;
+    }
+  } catch {
+    // ignore
+  }
+  const hint = document.getElementById("pwa-install-hint");
+  const dismiss = document.getElementById("pwa-install-hint-dismiss");
+  if (!hint || !dismiss) {
+    return;
+  }
+  hint.classList.remove("hidden");
+  dismiss.addEventListener("click", () => {
+    hint.classList.add("hidden");
+    try {
+      window.localStorage?.setItem(PWA_INSTALL_HINT_STORAGE_KEY, "1");
+    } catch {
+      // ignore
+    }
+  });
+}
+
 function lockBoardGeometry(force = false) {
   if (!force && Date.now() - boardGeometryLockedAt < BOARD_GEOMETRY_LOCK_TTL_MS) {
     return;
@@ -2073,6 +2684,10 @@ function lockBoardGeometry(force = false) {
   if (!wrap) {
     return;
   }
+  if (selectedGameId !== "puzzle" || !practiceTableIsActive()) {
+    clearPracticeTablePuzzleLandscapeVars();
+  }
+  const tableBoardScale = practiceTableBoardScaleFactor();
   const computed = window.getComputedStyle(wrap);
   const padLeft = Number.parseFloat(computed.paddingLeft) || 0;
   const padRight = Number.parseFloat(computed.paddingRight) || 0;
@@ -2080,48 +2695,203 @@ function lockBoardGeometry(force = false) {
   const padBottom = Number.parseFloat(computed.paddingBottom) || 0;
   const bodyComputed = window.getComputedStyle(document.body);
   const bodyBottomPadding = Number.parseFloat(bodyComputed.paddingBottom) || 0;
-  const innerContentWidth = Math.max(0, wrap.clientWidth - padLeft - padRight);
+  let innerContentWidth = Math.max(0, wrap.clientWidth - padLeft - padRight);
+  if (practiceTableIsLandscapeTablet()) {
+    const scene = document.getElementById("practice-table-scene");
+    const captures = wrap.closest(".board-and-captures");
+    if (scene && captures) {
+      const capturesComputed = window.getComputedStyle(captures);
+      const trayGapPx =
+        Number.parseFloat(capturesComputed.columnGap) ||
+        Number.parseFloat(capturesComputed.gap) ||
+        0;
+      const boardComputed = window.getComputedStyle(boardElement);
+      const boardBorderPx =
+        (Number.parseFloat(boardComputed.borderLeftWidth) || 0) +
+        (Number.parseFloat(boardComputed.borderRightWidth) || 0);
+      const landscapeTrayBudgetPx =
+        selectedGameId === "puzzle"
+          ? practiceTablePuzzleLandscapeTrayColumnPx() * 2
+          : 112;
+      innerContentWidth = Math.max(
+        0,
+        scene.clientWidth - landscapeTrayBudgetPx - trayGapPx * 2 - boardBorderPx,
+      );
+    }
+  }
+  const sceneBoardCap = practiceTableBoardMaxContentWidth();
+  if (sceneBoardCap != null) {
+    innerContentWidth = Math.min(innerContentWidth, sceneBoardCap);
+  }
   const wrapRect = wrap.getBoundingClientRect();
-  const remainingViewportHeight = Math.max(0, window.innerHeight - wrapRect.top - bodyBottomPadding - 8);
+  let remainingViewportHeight = Math.max(0, window.innerHeight - wrapRect.top - bodyBottomPadding - 8);
+  if (practiceTableIsActive()) {
+    const useSeatTopCap = practiceTableIsLandscapeTablet() || selectedGameId === "puzzle";
+    if (useSeatTopCap) {
+      const seatBudget = practiceTableSeatTopHeightBudget(wrapRect, padTop, padBottom, 12);
+      if (seatBudget != null) {
+        remainingViewportHeight = Math.min(remainingViewportHeight, seatBudget);
+      }
+    } else {
+      const matrix = document.getElementById("game-board-matrix");
+      if (matrix) {
+        const matrixRect = matrix.getBoundingClientRect();
+        remainingViewportHeight = Math.min(
+          remainingViewportHeight,
+          Math.max(0, matrixRect.bottom - wrapRect.top - padTop - padBottom - 4),
+        );
+      }
+    }
+  }
   const innerContentHeight = Math.max(0, remainingViewportHeight - padTop - padBottom);
   if (selectedGameId === "fourinarow") {
     // Account for board border + inner padding so edge circles never clip.
     const fourBoardChrome = (3 + 4) * 2;
-    const availableWidth = Math.max(0, innerContentWidth - fourBoardChrome);
-    const availableHeight = Math.max(0, innerContentHeight - fourBoardChrome);
+    const availableWidth = Math.max(0, Math.floor((innerContentWidth - fourBoardChrome) * tableBoardScale));
+    const availableHeight = Math.max(0, Math.floor((innerContentHeight - fourBoardChrome) * tableBoardScale));
     const cellFromWidth = Math.floor(availableWidth / FOUR_COLS);
     const cellFromHeight = Math.floor(availableHeight / FOUR_ROWS);
-    const cell = Math.max(1, Math.floor(Math.min(cellFromWidth, cellFromHeight)));
+    const cell = touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
     boardElement.style.width = `${cell * FOUR_COLS + fourBoardChrome}px`;
-    boardElement.style.height = `${cell * FOUR_ROWS + fourBoardChrome}px`;
     boardElement.style.gridTemplateColumns = `repeat(${FOUR_COLS}, ${cell}px)`;
     boardElement.style.gridTemplateRows = `repeat(${FOUR_ROWS}, ${cell}px)`;
-    boardGeometryLockedAt = Date.now();
+    if (practiceTableIsActive()) {
+      boardElement.style.aspectRatio = "auto";
+      boardElement.style.maxWidth = "100%";
+      boardElement.style.minHeight = "0";
+      boardElement.style.height = "";
+      boardElement.style.alignContent = "start";
+    } else {
+      boardElement.style.minHeight = "";
+      boardElement.style.alignContent = "";
+      boardElement.style.height = `${cell * FOUR_ROWS + fourBoardChrome}px`;
+    }
+    finalizeBoardGeometryLock();
     return;
   }
   if (selectedGameId === "puzzle") {
     const { rows, cols } = getPuzzleGridSizeFromState();
-    const usable = Math.floor(Math.min(innerContentWidth, innerContentHeight));
-    const cell = Math.max(1, Math.floor(usable / Math.max(rows, cols)));
-    const boardWidth = cell * cols;
-    const boardHeight = cell * rows;
+    const isPracticeTablePuzzle = practiceTableIsActive();
+    let puzzleInnerWidth = innerContentWidth;
+    let puzzleInnerHeight = innerContentHeight;
+    if (isPracticeTablePuzzle) {
+      puzzleInnerWidth = Math.max(0, innerContentWidth - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX);
+      puzzleInnerHeight = Math.max(0, innerContentHeight - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX);
+    }
+    const capByLandscapeTray =
+      isPracticeTablePuzzle && practiceTableIsLandscapeTablet();
+    let cell = practiceTablePuzzleBoardCellSize(
+      puzzleInnerWidth,
+      puzzleInnerHeight,
+      tableBoardScale,
+      rows,
+      cols,
+      capByLandscapeTray,
+    );
+    if (
+      isPracticeTablePuzzle &&
+      practiceTableIsLandscapeTablet() &&
+      rows >= 4 &&
+      cell > 1
+    ) {
+      const seatBudget = practiceTableSeatTopHeightBudget(wrapRect, padTop, padBottom, 12);
+      if (seatBudget != null) {
+        let shrinkSteps = 0;
+        while (cell > 1 && cell * rows > seatBudget * 0.65 && shrinkSteps < 2) {
+          cell -= 1;
+          shrinkSteps += 1;
+        }
+      }
+    }
+    let boardWidth = cell * cols;
+    let boardHeight = cell * rows;
+    if (isPracticeTablePuzzle) {
+      boardWidth += PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+      boardHeight += PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+    }
     boardElement.style.width = `${boardWidth}px`;
     boardElement.style.height = `${boardHeight}px`;
     boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
     boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
-    boardGeometryLockedAt = Date.now();
+    if (isPracticeTablePuzzle) {
+      const playerSeat = document.getElementById("player-seat-row");
+      if (
+        playerSeat &&
+        boardElement.getBoundingClientRect().bottom > playerSeat.getBoundingClientRect().top - 2 &&
+        cell > 1
+      ) {
+        cell -= 1;
+        boardWidth = cell * cols + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+        boardHeight = cell * rows + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+        boardElement.style.width = `${boardWidth}px`;
+        boardElement.style.height = `${boardHeight}px`;
+        boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
+        boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
+      }
+      applyPracticeTablePuzzleLandscapeVars(cell, rows, cols, isPracticeTablePuzzle);
+      schedulePracticeTablePuzzleTrayPieceSizeSync();
+    } else {
+      clearPracticeTablePuzzleLandscapeVars();
+    }
+    finalizeBoardGeometryLock();
     return;
   }
 
-  const usable = Math.floor(Math.min(innerContentWidth, innerContentHeight));
-  const cell = Math.max(1, Math.floor(usable / BOARD_SIZE));
-  const boardPixels = cell * BOARD_SIZE;
+  const isPracticeTableCheckers =
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode");
+  const boardComputed = window.getComputedStyle(boardElement);
+  let heightForCell = innerContentHeight;
+  if (practiceTableIsLandscapeTablet() && isPracticeTableCheckers) {
+    const boardBorderY =
+      (Number.parseFloat(boardComputed.borderTopWidth) || 0) +
+      (Number.parseFloat(boardComputed.borderBottomWidth) || 0);
+    heightForCell = Math.max(0, innerContentHeight - boardBorderY);
+  }
+
+  const cellFromWidth = Math.floor((innerContentWidth * tableBoardScale) / BOARD_SIZE);
+  const cellFromHeight = Math.floor((heightForCell * tableBoardScale) / BOARD_SIZE);
+  let cell = touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+  let boardPixels = cell * BOARD_SIZE;
+  if (isPracticeTableCheckers && boardComputed.boxSizing === "border-box") {
+    const boardBorderPx =
+      (Number.parseFloat(boardComputed.borderTopWidth) || 0) +
+      (Number.parseFloat(boardComputed.borderBottomWidth) || 0) +
+      (Number.parseFloat(boardComputed.borderLeftWidth) || 0) +
+      (Number.parseFloat(boardComputed.borderRightWidth) || 0);
+    boardPixels += boardBorderPx;
+  }
 
   boardElement.style.width = `${boardPixels}px`;
   boardElement.style.height = `${boardPixels}px`;
   boardElement.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, ${cell}px)`;
   boardElement.style.gridTemplateRows = `repeat(${BOARD_SIZE}, ${cell}px)`;
-  boardGeometryLockedAt = Date.now();
+
+  if (practiceTableIsLandscapeTablet() && isPracticeTableCheckers) {
+    const playerSeat = document.getElementById("player-seat-row");
+    if (
+      playerSeat &&
+      boardElement.getBoundingClientRect().bottom > playerSeat.getBoundingClientRect().top - 4 &&
+      cell > 1
+    ) {
+      cell -= 1;
+      boardPixels = cell * BOARD_SIZE;
+      if (boardComputed.boxSizing === "border-box") {
+        const boardBorderPx =
+          (Number.parseFloat(boardComputed.borderTopWidth) || 0) +
+          (Number.parseFloat(boardComputed.borderBottomWidth) || 0) +
+          (Number.parseFloat(boardComputed.borderLeftWidth) || 0) +
+          (Number.parseFloat(boardComputed.borderRightWidth) || 0);
+        boardPixels += boardBorderPx;
+      }
+      boardElement.style.width = `${boardPixels}px`;
+      boardElement.style.height = `${boardPixels}px`;
+      boardElement.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, ${cell}px)`;
+      boardElement.style.gridTemplateRows = `repeat(${BOARD_SIZE}, ${cell}px)`;
+    }
+  }
+
+  finalizeBoardGeometryLock();
 }
 
 function scheduleAudioUnlockFromGesture() {
@@ -2157,10 +2927,6 @@ function isFriendChromeVisible() {
   return (
     typeof document !== "undefined" && document.body.classList.contains("friend-mode")
   );
-}
-
-function isFriendModeUiActive() {
-  return playMode === "friend";
 }
 
 function ensureFriendPlayModeSynced() {
@@ -3155,6 +3921,7 @@ function speakPracticeFlipPromptOnce(options = {}) {
   speechUnlocked = true;
   speechGesturePrimed = true;
 
+  stopAllVoiceClips();
   speakImmediate(PRACTICE_FLIP_VOICE_PHRASE, { inGesture });
   window.setTimeout(() => {
     if (practiceFlipDelivering && lastSpokenPhrase !== PRACTICE_FLIP_VOICE_PHRASE) {
@@ -3272,6 +4039,14 @@ function beginPracticeFlipRound(options = {}) {
   suppressFlipVoiceFromRender = false;
   busy = false;
   updateStarterFlipButton();
+  if (
+    typeof document !== "undefined" &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode")
+  ) {
+    lastPracticeTableChromeKey = "";
+  }
+  schedulePracticeTableRelayoutIfNeeded();
   if (!practiceVoiceStartDismissed) {
     updateSpeechUnlockOverlay();
     return;
@@ -3348,7 +4123,7 @@ function primePufflyVoiceFromGesture(options = {}) {
       ? pendingWelcomeVoiceLines
       : friendWelcomeLinesSnapshot;
     if (lines.length) {
-      playFriendWelcomeVoiceNow(lines);
+      playFriendWelcomeVoiceNow(lines, { fromGesture: true });
     }
   }
 }
@@ -3396,7 +4171,7 @@ function flushFriendVoicePending() {
     return 0;
   }
   const lines = pendingWelcomeVoiceLines;
-  return playFriendWelcomeVoiceNow(lines) ? lines.length : 0;
+  return playFriendWelcomeVoiceNow(lines, { fromGesture: true }) ? lines.length : 0;
 }
 
 function speakMascotVoiceFromPanel(options = {}) {
@@ -3501,7 +4276,8 @@ function speakPracticeMascotVoice(thoughtText, options = {}) {
     return false;
   }
   const force = Boolean(options.force);
-  if (!practiceVoiceStartDismissed && !force) {
+  const fromGesture = Boolean(options.fromGesture);
+  if (!practiceVoiceStartDismissed && !fromGesture) {
     return false;
   }
   const text = String(thoughtText || "").trim();
@@ -3531,7 +4307,7 @@ function speakPracticeMascotVoice(thoughtText, options = {}) {
     practiceFlipDelivering = true;
     practiceFlipSpeechLockUntil = Date.now() + 4500;
   }
-  const fromGesture = Boolean(options.fromGesture ?? force);
+  const clipFromGesture = Boolean(options.fromGesture ?? force);
   const preferHtml = !speechNeedsInteractionUnlock;
   console.info("[puffly] practice mascot voice", SPEECH_BUILD, text, "→", clipPhrase);
   ensureAudioContext({ skipSpeechUnlock: true });
@@ -3564,7 +4340,7 @@ function speakPracticeMascotVoice(thoughtText, options = {}) {
       }
     },
   };
-  void playVoiceClip(clipId, clipHandlers, { fromGesture, preferHtml }).then((ok) => {
+  void playVoiceClip(clipId, clipHandlers, { fromGesture: clipFromGesture, preferHtml }).then((ok) => {
     if (!ok && !force) {
       lastPracticeMascotVoiceThought = "";
     }
@@ -3616,7 +4392,7 @@ function playFriendWelcomeVoiceNow(phrases, options = {}) {
   if (!lines.length) {
     return false;
   }
-  if (speechNeedsInteractionUnlock && !friendIosCanPlayClip()) {
+  if (speechNeedsInteractionUnlock && !friendIosCanPlayClip(options)) {
     pendingWelcomeVoiceLines = lines;
     friendWelcomeLinesSnapshot = lines;
     console.info("[puffly] welcome voice deferred (iOS gesture)", SPEECH_BUILD, lines.join(" → "));
@@ -3628,7 +4404,7 @@ function playFriendWelcomeVoiceNow(phrases, options = {}) {
   const count = enqueueFriendWelcomePhrases(lines);
   pendingWelcomeVoiceLines = [];
   if (count > 0) {
-    tryDrainFriendVoiceBus({ fromGesture: true });
+    tryDrainFriendVoiceBus({ fromGesture: Boolean(options.fromGesture) });
     return true;
   }
   pendingWelcomeVoiceLines = lines;
@@ -3689,6 +4465,13 @@ function installGlobalVoicePrime() {
 
 function announcePracticeFlipVoice() {
   if (suppressFlipVoiceFromRender || playMode !== "puffly") {
+    return;
+  }
+  if (
+    typeof document !== "undefined" &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode")
+  ) {
     return;
   }
   if (practiceVoiceStartDismissed) {
@@ -3817,6 +4600,7 @@ function updateTeamMascot() {
   const isGreenTeam = teamColor === "light";
   const isBlueTeam = teamColor === "dark";
   const inFriendRoom = playMode === "friend" && Boolean(remoteSession);
+  const inPractice = playMode === "puffly";
   const teamKnown = isGreenTeam || isBlueTeam;
   pufflyPanel?.classList.toggle("team-green", isGreenTeam);
   pufflyPanel?.classList.toggle("team-blue", isBlueTeam);
@@ -3825,7 +4609,7 @@ function updateTeamMascot() {
   document.body.classList.toggle("friend-green-player", inFriendRoom && isGreenTeam);
   document.body.classList.toggle("friend-blue-player", inFriendRoom && isBlueTeam);
   blueCapturedTray?.classList.toggle("your-tray", inFriendRoom && isBlueTeam);
-  greenCapturedTray?.classList.toggle("your-tray", inFriendRoom && isGreenTeam);
+  greenCapturedTray?.classList.toggle("your-tray", (inFriendRoom && isGreenTeam) || inPractice);
   if (teamMascotLabel) {
     if (inFriendRoom && !teamKnown) {
       teamMascotLabel.textContent = "Connecting…";
@@ -4203,7 +4987,7 @@ function friendGestureAudioTickAfterWarm() {
       const lines = pendingWelcomeVoiceLines.length
         ? pendingWelcomeVoiceLines
         : friendWelcomeLinesSnapshot;
-      playFriendWelcomeVoiceNow(lines);
+      playFriendWelcomeVoiceNow(lines, { fromGesture: true });
     } else if (!friendVoiceBusQueue.length && !friendVoiceBusPlaying) {
       deliverFriendIntroVoiceFromGesture();
     }
@@ -4471,7 +5255,7 @@ function deliverFriendIntroVoiceFromGesture() {
       pendingJoinIntroTeam || playerDisplayName(remoteSession?.color) || "",
     ).toUpperCase();
     const lines = buildFriendJoinCatchUpSequence(team);
-    return playFriendWelcomeVoiceNow(lines) ? lines.length : 0;
+    return playFriendWelcomeVoiceNow(lines, { fromGesture: true }) ? lines.length : 0;
   }
   resumeFriendAudioContextFromGesture();
   pufflyVoiceReady = true;
@@ -4486,7 +5270,7 @@ function deliverFriendIntroVoiceFromGesture() {
   if (!lines.length) {
     return 0;
   }
-  return playFriendWelcomeVoiceNow(lines) ? lines.length : 0;
+  return playFriendWelcomeVoiceNow(lines, { fromGesture: true }) ? lines.length : 0;
 }
 
 function speakFriendVoice(phrase, options = {}) {
@@ -4977,8 +5761,61 @@ function scheduleFriendLobbyAutoplay() {
   });
 }
 
+function shouldSkipFriendLobbyVoice() {
+  if (remoteSession?.roomCode) {
+    return true;
+  }
+  if (getJoinCodeFromUrl()) {
+    return true;
+  }
+  if (isInvitePageLocked() || isActiveInviteBootstrap() || isGuestAttachedBoot()) {
+    return true;
+  }
+  if (typeof window !== "undefined") {
+    if (
+      window.__pufflyInviteJoinInFlight ||
+      window.__pufflyPendingInviteJoin ||
+      window.__pufflyGuestAttachInProgress
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function redirectToGuestJoinPage(roomCode, options = {}) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const normalized = String(roomCode || "")
+    .trim()
+    .toUpperCase();
+  if (!/^[A-Z0-9]{4,8}$/.test(normalized)) {
+    return false;
+  }
+  const dest = new URL("./guest-join.html", window.location.href);
+  dest.searchParams.set("room", normalized);
+  dest.searchParams.set("join", normalized);
+  const invite = readInviteParamsFromUrl();
+  const gameId = normalizeGameId(
+    String(options.gameType || invite.game || selectedGameId || DEFAULT_GAME_ID),
+  );
+  if (isKnownGame(gameId)) {
+    dest.searchParams.set("game", gameId);
+  }
+  if (gameId === "puzzle") {
+    dest.searchParams.set(
+      "puzzleSize",
+      String(options.puzzleSize || invite.puzzleSize || difficulty || "medium"),
+    );
+  }
+  dest.searchParams.set("cb", String(CLIENT_BUILD));
+  window.location.replace(dest.toString());
+  return true;
+}
+
 function bootFriendLobbyVoiceIfNeeded(options = {}) {
-  if (playMode !== "friend" || remoteSession || getJoinCodeFromUrl()) {
+  if (playMode !== "friend" || shouldSkipFriendLobbyVoice()) {
     return;
   }
   syncEarlyFriendLobbyPlayback();
@@ -5014,6 +5851,9 @@ function stopAllVoiceClips() {
     } catch {
       // ignore
     }
+  }
+  if (playMode === "puffly" && typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
   }
 }
 
@@ -5260,10 +6100,13 @@ function pufflySpeak(text, handlers = {}, options = {}) {
   return Promise.resolve(true);
 }
 
-/** Practice Start tap — speak whatever #puffly-thought already shows (e.g. flip prompt). */
+/** Practice Start tap — single canonical flip clip (same path as later game starts). */
 function deliverPracticeVoiceOnStartTap() {
   if (!audioEnabled || typeof window === "undefined") {
     console.warn("[puffly] speech build", SPEECH_BUILD, "blocked: audio off");
+    return false;
+  }
+  if (practiceFlipDelivering) {
     return false;
   }
   console.info("[puffly] speech build", SPEECH_BUILD, "practice Start tap");
@@ -5272,10 +6115,9 @@ function deliverPracticeVoiceOnStartTap() {
   pendingUnlockSpeech = "";
   pendingPrioritySpeech = "";
   cancelPracticeFlipVoiceTimers();
-  lastPracticeMascotVoiceThought = "";
   busy = false;
   updateStarterFlipButton();
-  return speakMascotVoiceFromPanel({ force: true, fromGesture: true });
+  return speakPracticeFlipPromptOnce({ force: true, inGesture: true });
 }
 
 /** iOS friend Start / explicit gesture speaks — no cancel() (that silences Mac Chrome). */
@@ -5347,21 +6189,7 @@ function speakImmediate(text, options = {}) {
     updateSpeechUnlockOverlay();
     return;
   }
-  // Practice uses bundled WAVs — Web Speech from speakInUserGesture is silent on Mac Chrome.
-  if (playMode === "puffly" && resolveVoiceClipId(text)) {
-    if (inGesture) {
-      speechUnlocked = true;
-      speechGesturePrimed = true;
-      ensureAudioContext({ skipSpeechUnlock: true });
-    }
-    void pufflySpeak(text, handlers, { immediate: inGesture }).then((ok) => {
-      if (!ok && inGesture && typeof window !== "undefined" && window.speechSynthesis) {
-        speakInUserGesture(text, { friendMode: false });
-      }
-    });
-    return;
-  }
-  if (inGesture) {
+  if (inGesture && !(playMode === "puffly" && resolveVoiceClipId(text))) {
     if (speakInUserGesture(text, { friendMode: isFriendMode })) {
       return;
     }
@@ -5461,8 +6289,17 @@ function speakImmediate(text, options = {}) {
       finishSpeech();
     },
   };
-  if (playMode === "puffly" && !speechNeedsInteractionUnlock) {
-    void pufflySpeak(text, handlers);
+  if (playMode === "puffly" && (resolveVoiceClipId(text) || !speechNeedsInteractionUnlock)) {
+    if (inGesture) {
+      speechUnlocked = true;
+      speechGesturePrimed = true;
+      ensureAudioContext({ skipSpeechUnlock: true });
+    }
+    void pufflySpeak(text, handlers, { immediate: inGesture }).then((ok) => {
+      if (!ok && inGesture && typeof window !== "undefined" && window.speechSynthesis) {
+        speakInUserGesture(text, { friendMode: false });
+      }
+    });
     return;
   }
   const utterance = createSpeechUtterance(text, handlers);
@@ -5489,7 +6326,9 @@ function unlockSpeechIfNeeded() {
     pendingPrioritySpeech = "";
     pendingUnlockSpeech = "";
     practiceFlipColdBootActive = false;
-    speakPracticeFlipPromptOnce({ force: true, inGesture: true });
+    if (!practiceVoiceStartDismissed && !practiceFlipDelivering) {
+      speakPracticeFlipPromptOnce({ force: true, inGesture: true });
+    }
     return;
   }
   if (alreadyPrimed) {
@@ -5727,6 +6566,10 @@ function announceFriendJoinWelcome(teamName) {
     !friendJoinWelcomeSpoken &&
     (friendWelcomeLinesSnapshot.length > 0 || pendingWelcomeVoiceLines.length > 0)
   ) {
+    const pending = pendingWelcomeVoiceLines.length
+      ? pendingWelcomeVoiceLines
+      : friendWelcomeLinesSnapshot;
+    playFriendWelcomeVoiceNow(pending, { fromGesture: true });
     return;
   }
   prepareFriendWelcomeVoicePlayback();
@@ -5746,7 +6589,7 @@ function announceFriendJoinWelcome(teamName) {
     flipperPlayer: flipper,
   });
   friendWelcomeLinesSnapshot = filterClipPhrases(sequence);
-  playFriendWelcomeVoiceNow(sequence);
+  playFriendWelcomeVoiceNow(sequence, { fromGesture: true });
 }
 
 function buildFriendOpponentJoinedPhrase(gameId = selectedGameId) {
@@ -6101,10 +6944,45 @@ function normalizeCheckersMoveFromLast(lastMove) {
   };
 }
 
+function inferRemotePuzzlePlacementFromStates(previousState, nextState) {
+  const opponent = getFriendOpponentColor();
+  const last = nextState?.lastMove;
+  if (last?.pieceId && last.by === opponent) {
+    const prevPiece = getPuzzlePiece(previousState, last.pieceId);
+    if (prevPiece && !prevPiece.placed) {
+      return { pieceId: last.pieceId, row: last.row, col: last.col };
+    }
+  }
+  if (!Array.isArray(previousState?.pieces) || !Array.isArray(nextState?.pieces)) {
+    return null;
+  }
+  for (const nextPiece of nextState.pieces) {
+    if (!nextPiece.placed) {
+      continue;
+    }
+    const prevPiece = previousState.pieces.find((entry) => entry.id === nextPiece.id);
+    if (prevPiece && !prevPiece.placed && nextPiece.owner === opponent) {
+      return {
+        pieceId: nextPiece.id,
+        row: nextPiece.placedRow ?? nextPiece.correctRow,
+        col: nextPiece.placedCol ?? nextPiece.correctCol,
+      };
+    }
+  }
+  return null;
+}
+
 function extractOpponentMovesForAnimation(previousState, nextState) {
   if (selectedGameId === "fourinarow") {
     const remoteDrop = inferRemoteDropFromStates(previousState, nextState);
     return remoteDrop ? [{ kind: "drop", drop: remoteDrop }] : [];
+  }
+  if (selectedGameId === "puzzle") {
+    if (previousState.currentPlayer !== getFriendOpponentColor()) {
+      return [];
+    }
+    const placement = inferRemotePuzzlePlacementFromStates(previousState, nextState);
+    return placement ? [{ kind: "puzzle", placement }] : [];
   }
   if (previousState.currentPlayer !== getFriendOpponentColor()) {
     return [];
@@ -6125,7 +7003,7 @@ function shouldAnimateFriendOpponentMove(previousState, nextState, didVersionCha
   if (!FRIEND_ANIMATE_OPPONENT_MOVES) {
     return false;
   }
-  if (playMode !== "friend" || !remoteSession?.ready || selectedGameId === "puzzle") {
+  if (playMode !== "friend" || !remoteSession?.ready) {
     return false;
   }
   if (!previousState || !nextState) {
@@ -6164,6 +7042,17 @@ async function playFriendOpponentMoveAnimation(previousState, nextState, message
       const dropResult = applyFourInARowDrop(simState, step.drop.col);
       if (dropResult.ok) {
         simState = dropResult.nextState;
+      }
+      continue;
+    }
+    if (step.kind === "puzzle") {
+      const { pieceId, row, col } = step.placement;
+      await sleep(120);
+      await animatePuzzleUserPlacement(pieceId, row, col);
+      const puzzleResult = applyPuzzlePlacement(simState, pieceId, row, col);
+      if (puzzleResult.ok) {
+        playSnapSound();
+        simState = finalizePuzzleCompletionState(puzzleResult.nextState);
       }
       continue;
     }
@@ -6456,7 +7345,7 @@ function speakFromStatus(statusMessage) {
   ) {
     phrase = "Wrong move.";
   } else if (statusMessage === "Choose a highlighted destination.") {
-    if (playMode === "friend") {
+    if (playMode === "friend" || playMode === "puffly") {
       return;
     }
     phrase = "Choose one of the highlighted squares.";
@@ -6516,6 +7405,41 @@ function playInvalidAudio() {
   beep(180, 0.06, "square", 0.04);
 }
 
+function primePuzzleVoiceFromGesture() {
+  noteUserGesture();
+  primeSpeechSynthesisFromUserGesture();
+  ensureAudioContext({ skipSpeechUnlock: true });
+}
+
+function speakPuzzleFeedback(phrase, options = {}) {
+  playInvalidAudio();
+  if (!phrase || !audioEnabled) {
+    return;
+  }
+  lastSpokenPhrase = "";
+  lastSpokenAt = 0;
+  const clipId = resolveVoiceClipId(phrase);
+  if (!clipId) {
+    speakPhraseReliable(phrase, { forceRepeat: true });
+    return;
+  }
+  if (options.fromGesture) {
+    speechUnlocked = true;
+    speechGesturePrimed = true;
+    ensureAudioContext({ skipSpeechUnlock: true });
+  }
+  void playVoiceClip(
+    clipId,
+    {
+      onstart: () => {
+        lastSpokenPhrase = phrase;
+        lastSpokenAt = Date.now();
+      },
+    },
+    { fromGesture: Boolean(options.fromGesture) },
+  );
+}
+
 function playCelebrationAudio() {
   beep(530, 0.08, "triangle", 0.06);
   window.setTimeout(() => beep(660, 0.1, "triangle", 0.06), 90);
@@ -6567,7 +7491,7 @@ function renderCapturedPile(container, count, tokenClass) {
   }
 }
 
-function createPuzzlePieceElement(piece) {
+function createPuzzlePieceElement(piece, options = {}) {
   const pieceEl = document.createElement("button");
   pieceEl.type = "button";
   pieceEl.className = `puzzle-piece ${piece.owner}`;
@@ -6578,7 +7502,9 @@ function createPuzzlePieceElement(piece) {
     (edges.bottom === 1 ? 3 : 0) +
     (edges.left === 1 ? 2 : 0) +
     (edges.top === 1 ? 1 : 0);
-  pieceEl.style.zIndex = String(20 + overlapPriority);
+  if (!(practiceTableIsActive() && options.inTray)) {
+    pieceEl.style.zIndex = String(20 + overlapPriority);
+  }
   if (piece.id === selectedPuzzlePieceId) {
     pieceEl.classList.add("selected");
   }
@@ -6631,6 +7557,9 @@ function createPuzzlePieceElement(piece) {
 
   if (piece.correctRow === 0 || piece.correctCol === 0 || piece.correctRow === rows - 1 || piece.correctCol === cols - 1) {
     pieceEl.classList.add("edge-piece");
+    if (options.inTray && practiceTableIsActive() && practiceTableIsLandscapeTablet()) {
+      applyPracticeTableLandscapeTrayEdgeGlow(pieceEl, piece, rows, cols);
+    }
   }
   return pieceEl;
 }
@@ -6750,13 +7679,19 @@ function renderPuzzleTray(container, owner) {
   }
   container.classList.add("puzzle-tray");
   for (const piece of pending) {
-    const pieceEl = createPuzzlePieceElement(piece);
+    const pieceEl = createPuzzlePieceElement(piece, { inTray: true });
     container.appendChild(pieceEl);
     registerPuzzleTrayPieceElement(piece.id, pieceEl);
     if (piece.id === selectedPuzzlePieceId) {
       pieceEl.classList.add("selected");
       lastTraySelectedPieceId = piece.id;
     }
+  }
+}
+
+function scheduleFriendCapturedTrayLayoutIfNeeded() {
+  if (isFriendModeUiActive()) {
+    scheduleFriendModeTrayLayoutSync();
   }
 }
 
@@ -6773,9 +7708,10 @@ function renderCapturedPiles() {
     }
     renderPuzzleTray(blueCapturedPile, "dark");
     renderPuzzleTray(greenCapturedPile, "light");
-    return;
-  }
-  if (selectedGameId === "fourinarow") {
+    if (practiceTableIsActive()) {
+      schedulePracticeTablePuzzleTrayPieceSizeSync();
+    }
+  } else if (selectedGameId === "fourinarow") {
     if (blueCapturedLabel) {
       blueCapturedLabel.textContent = "BLUE Remaining";
     }
@@ -6784,16 +7720,17 @@ function renderCapturedPiles() {
     }
     renderCapturedPile(blueCapturedPile, Math.max(0, FOUR_STARTING_PIECES - countFourPieces("dark")), "blue");
     renderCapturedPile(greenCapturedPile, Math.max(0, FOUR_STARTING_PIECES - countFourPieces("light")), "green");
-    return;
+  } else {
+    if (blueCapturedLabel) {
+      blueCapturedLabel.textContent = "BLUE Captured";
+    }
+    if (greenCapturedLabel) {
+      greenCapturedLabel.textContent = "GREEN Captured";
+    }
+    renderCapturedPile(blueCapturedPile, Math.max(0, CHECKERS_STARTING_PIECES - countCheckersPieces("dark")), "blue");
+    renderCapturedPile(greenCapturedPile, Math.max(0, CHECKERS_STARTING_PIECES - countCheckersPieces("light")), "green");
   }
-  if (blueCapturedLabel) {
-    blueCapturedLabel.textContent = "BLUE Captured";
-  }
-  if (greenCapturedLabel) {
-    greenCapturedLabel.textContent = "GREEN Captured";
-  }
-  renderCapturedPile(blueCapturedPile, Math.max(0, CHECKERS_STARTING_PIECES - countCheckersPieces("dark")), "blue");
-  renderCapturedPile(greenCapturedPile, Math.max(0, CHECKERS_STARTING_PIECES - countCheckersPieces("light")), "green");
+  scheduleFriendCapturedTrayLayoutIfNeeded();
 }
 
 function getDifficultyLabelsForGame(gameId = selectedGameId) {
@@ -6939,10 +7876,14 @@ function updateFriendRoomButtons() {
     }
   }
   if (friendJoinLeaveButton) {
-    friendJoinLeaveButton.textContent = inRoom ? "LEAVE ROOM" : "JOIN ROOM";
-    friendJoinLeaveButton.dataset.friendAction = inRoom ? "leave" : "join";
-    friendJoinLeaveButton.classList.toggle("is-on", inRoom || inFriendUi);
-    friendJoinLeaveButton.classList.toggle("is-off", !inRoom && !inFriendUi);
+    friendJoinLeaveButton.classList.toggle("hidden", !inRoom);
+    friendJoinLeaveButton.textContent = "LEAVE ROOM";
+    friendJoinLeaveButton.dataset.friendAction = "leave";
+    friendJoinLeaveButton.classList.toggle("is-on", inRoom);
+    friendJoinLeaveButton.classList.toggle("is-off", !inRoom);
+  }
+  if (roomCodeInput) {
+    roomCodeInput.classList.add("hidden");
   }
   if (typeof document !== "undefined") {
     document.body.classList.toggle("friend-room-active", inRoom);
@@ -6954,6 +7895,8 @@ function updateAudioToggle() {
   if (!audioToggleButton) {
     return;
   }
+  audioToggleButton.textContent = "AUDIO GUIDE";
+  audioToggleButton.setAttribute("aria-label", "Audio guide for game prompts");
   audioToggleButton.classList.toggle("is-on", audioEnabled);
   audioToggleButton.classList.toggle("is-off", !audioEnabled);
   audioToggleButton.setAttribute("aria-pressed", audioEnabled ? "true" : "false");
@@ -7154,6 +8097,9 @@ function setPufflyState(mode, text, options = {}) {
   pufflyPanel.classList.remove("idle", "thinking", "celebrate");
   pufflyPanel.classList.add(mode);
   pufflyThought.textContent = text;
+  const thoughtSlot = document.getElementById("player-seat-thought");
+  thoughtSlot?.classList.toggle("is-thinking", mode === "thinking");
+  thoughtSlot?.classList.toggle("is-celebrate", mode === "celebrate");
   if (playMode === "puffly" && !options.silentVoice) {
     const voiceOpts = { ...options };
     if (isPracticePreFlipMascotClipPhrase(text) || options.forceVoice) {
@@ -7236,13 +8182,88 @@ function getInviteGameIdForLink() {
   return selectedGameId;
 }
 
+function normalizeInviteLinkOrigin(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    const parsed = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "";
+    }
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "";
+  }
+}
+
+function readStoredInviteLinkOrigin() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    return normalizeInviteLinkOrigin(window.localStorage?.getItem(INVITE_ORIGIN_STORAGE_KEY));
+  } catch {
+    return "";
+  }
+}
+
+function persistInviteLinkOrigin(value) {
+  const normalized = normalizeInviteLinkOrigin(value);
+  if (!normalized || typeof window === "undefined") {
+    return false;
+  }
+  try {
+    window.localStorage.setItem(INVITE_ORIGIN_STORAGE_KEY, normalized);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isLocalInviteHost(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+}
+
+function getInviteLinkOrigin() {
+  if (typeof window === "undefined") {
+    return DEFAULT_PUBLIC_INVITE_ORIGIN;
+  }
+  const stored = readStoredInviteLinkOrigin();
+  if (stored) {
+    return stored;
+  }
+  const { hostname, origin } = window.location;
+  if (isLocalInviteHost(hostname)) {
+    return DEFAULT_PUBLIC_INVITE_ORIGIN;
+  }
+  return origin;
+}
+
+function bootstrapInviteLinkOriginFromUrl() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const search = new URLSearchParams(window.location.search || "");
+    const fromQuery = search.get("inviteOrigin") || search.get("publicOrigin");
+    if (fromQuery) {
+      persistInviteLinkOrigin(fromQuery);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function buildInviteLink(roomCode) {
   if (typeof window === "undefined") {
     return roomCode;
   }
   const normalizedCode = String(roomCode || "").trim().toUpperCase();
   const gameId = getInviteGameIdForLink();
-  const url = new URL(`/join/${encodeURIComponent(normalizedCode)}`, window.location.origin);
+  const url = new URL(`/join/${encodeURIComponent(normalizedCode)}`, getInviteLinkOrigin());
   url.searchParams.set("join", normalizedCode);
   url.searchParams.set("room", normalizedCode);
   url.searchParams.set("game", gameId);
@@ -7321,6 +8342,26 @@ function revealInviteFallback(roomCode, statusMessage) {
   setFriendStatus(statusMessage);
 }
 
+function prefersDesktopShareTextFirst() {
+  return Boolean(window.matchMedia?.("(hover: hover) and (pointer: fine)")?.matches);
+}
+
+function tryOpenSmsInvite(shareText) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const ua = navigator.userAgent || "";
+  if (!/Macintosh|iPhone|iPad|iPod/.test(ua)) {
+    return false;
+  }
+  try {
+    window.location.href = `sms:&body=${encodeURIComponent(shareText)}`;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function shareInviteLink(roomCode, options = {}) {
   const inviteUrl = buildInviteLink(roomCode);
   const gameTitle = getGameConfig(getInviteGameIdForLink()).title;
@@ -7329,12 +8370,19 @@ async function shareInviteLink(roomCode, options = {}) {
   updateInvitePanel(roomCode);
 
   if (navigator.share) {
-    const sharePayloads = [
-      { url: inviteUrl },
-      { title: `Puffly ${gameTitle} Invite`, url: inviteUrl },
-      { text: shareText },
-      { title: `Puffly ${gameTitle} Invite`, text: shareText, url: inviteUrl },
-    ];
+    const sharePayloads = prefersDesktopShareTextFirst()
+      ? [
+          { text: shareText },
+          { title: `Puffly ${gameTitle} Invite`, text: shareText, url: inviteUrl },
+          { url: inviteUrl },
+          { title: `Puffly ${gameTitle} Invite`, url: inviteUrl },
+        ]
+      : [
+          { text: shareText },
+          { title: `Puffly ${gameTitle} Invite`, text: shareText, url: inviteUrl },
+          { url: inviteUrl },
+          { title: `Puffly ${gameTitle} Invite`, url: inviteUrl },
+        ];
     for (const sharePayload of sharePayloads) {
       try {
         if (navigator.canShare && !navigator.canShare(sharePayload)) {
@@ -7364,6 +8412,14 @@ async function shareInviteLink(roomCode, options = {}) {
     friendInviteShareReady = true;
     updateFriendRoomButtons();
   }
+  if (!copied && tryOpenSmsInvite(shareText)) {
+    friendInviteShareReady = true;
+    updateFriendRoomButtons();
+    if (!options.silentFallback) {
+      setFriendStatus(`Room ${roomCode} ready. Messages opened with invite link.`);
+    }
+    return true;
+  }
   if (!options.silentFallback) {
     setFriendStatus(
       copied
@@ -7374,26 +8430,30 @@ async function shareInviteLink(roomCode, options = {}) {
   return copied;
 }
 
-function setVoiceStatus(text) {
-  if (voiceStatusLabel) {
-    voiceStatusLabel.textContent = text;
+function setVoiceStatus(_text) {
+  updateVoiceConnectionLabel();
+}
+
+function updateVoiceConnectionLabel() {
+  if (voiceConnectionLabel) {
+    voiceConnectionLabel.textContent = voiceJoined ? "Connected" : "Not Connected";
+  }
+  if (voiceChatTitle) {
+    voiceChatTitle.textContent = voiceJoined ? "Leave Voice" : "Voice Chat";
+  }
+  if (voiceJoinButton) {
+    voiceJoinButton.classList.toggle("is-connected", voiceJoined);
+    voiceJoinButton.setAttribute(
+      "aria-label",
+      voiceJoined ? "Leave voice chat (connected)" : "Voice chat (not connected)",
+    );
   }
 }
 
 function updateVoiceButtons() {
-  if (voiceJoinButton) {
-    voiceJoinButton.textContent = voiceJoined ? "Leave Voice" : "Join Voice";
-  }
-  if (voiceMuteMicButton) {
-    voiceMuteMicButton.disabled = !voiceJoined;
-    voiceMuteMicButton.textContent = voiceMicMuted ? "Unmute Mic" : "Mute Mic";
-  }
-  if (voiceSpeakerButton) {
-    voiceSpeakerButton.disabled = !voiceJoined;
-    voiceSpeakerButton.textContent = voiceSpeakerMuted ? "Speaker Off" : "Speaker On";
-  }
+  updateVoiceConnectionLabel();
   if (voiceRemoteAudioElement) {
-    voiceRemoteAudioElement.muted = voiceSpeakerMuted;
+    voiceRemoteAudioElement.muted = false;
   }
 }
 
@@ -7547,7 +8607,6 @@ function closeVoiceConnection() {
   voiceJoined = false;
   voiceOfferSent = false;
   voiceMicMuted = false;
-  voiceSpeakerMuted = false;
   setVoiceStatus("Voice not connected.");
   updateVoiceButtons();
 }
@@ -8152,7 +9211,7 @@ async function startVoiceConnection() {
       document.body.appendChild(voiceRemoteAudioElement);
     }
     voiceRemoteAudioElement.srcObject = stream;
-    voiceRemoteAudioElement.muted = voiceSpeakerMuted;
+    voiceRemoteAudioElement.muted = false;
     voiceRemoteAudioElement.play().catch(() => {});
     setVoiceStatus("Voice connected.");
     startStreamLevelMeter(voiceRemoteStream, remoteSession.color === "dark" ? "light" : "dark", (timer) => {
@@ -8593,6 +9652,7 @@ function applyCreateRoomResponse(data) {
     throw new Error("Server did not return a room code.");
   }
   ensureFriendPlayModeSynced();
+  abortFriendLobbyVoice();
   ensureAudioContext();
   primeSpeechEngine();
   friendInviteShareReady = false;
@@ -8663,10 +9723,30 @@ function writeStoredFriendSessionFromJoinPayload(data, roomCode) {
   });
 }
 
-async function attachInviteGuestFromServerPayload(data, roomCode) {
+async function attachInviteGuestFromServerPayload(data, roomCode, options = {}) {
   writeStoredFriendSessionFromJoinPayload(data, roomCode);
-  if (!hydrateRoomSession(data)) {
+  const normalizedCode = String(roomCode || "")
+    .trim()
+    .toUpperCase();
+  const asGuestAttach =
+    options.guestAttach !== false && !isFriendHostRoom(normalizedCode);
+  if (
+    !hydrateRoomSession(data, {
+      announceJoinVoice: !asGuestAttach,
+      deferGameplayVoice: asGuestAttach,
+      deferVoicePreload: asGuestAttach,
+      statusMessage: asGuestAttach ? "Friend room connected." : undefined,
+    })
+  ) {
     return false;
+  }
+  if (asGuestAttach) {
+    announceFriendGuestWelcome(playerDisplayName(remoteSession.color).toUpperCase());
+    if (speechNeedsInteractionUnlock) {
+      friendVoiceStartDismissed = false;
+    }
+    void warmFriendSessionVoiceClips();
+    updateSpeechUnlockOverlay();
   }
   markFriendSessionStable();
   setFriendStatus(getFriendStatusText(remoteSession));
@@ -8876,13 +9956,15 @@ function syncAudioTogglePlacement() {
     return;
   }
   const practiceHost = pufflyControls;
-  const friendHost = friendSideAudioHost;
+  const friendHost = friendVoiceAudioHost;
   if (playMode === "friend" && friendHost) {
     friendHost.appendChild(audioToggleButton);
+    updateAudioToggle();
     return;
   }
   if (practiceHost) {
     practiceHost.appendChild(audioToggleButton);
+    updateAudioToggle();
   }
 }
 
@@ -8926,6 +10008,11 @@ function syncPlayModeChrome() {
     playMode = "friend";
     practiceVoiceStartDismissed = true;
   }
+  if (playMode === "friend") {
+    suspendPracticeTableLayoutForFriendMode();
+  } else if (playMode === "puffly") {
+    restorePracticeTableLayoutIfEnabled();
+  }
   if (typeof window !== "undefined" && typeof window.pufflyApplyPlayModeChrome === "function") {
     window.pufflyApplyPlayModeChrome(playMode);
   }
@@ -8942,6 +10029,7 @@ function syncPlayModeChrome() {
   pufflyBtn?.classList.toggle("active", playMode === "puffly");
   friendBtn?.classList.toggle("active", playMode === "friend");
   chatPanel?.classList.toggle("hidden", playMode !== "friend");
+  updatePracticeTableChrome();
 }
 
 function setPlayMode(mode, options = {}) {
@@ -9247,8 +10335,10 @@ function renderFourInARowBoard() {
 
 function renderPuzzleBoard() {
   const { rows, cols } = getPuzzleGridSizeFromState();
-  boardElement.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
-  boardElement.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  if (!practiceTableIsActive()) {
+    boardElement.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    boardElement.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  }
   const occupied = new Map();
   for (const piece of state.pieces || []) {
     if (piece.placed && piece.placedRow !== null && piece.placedCol !== null) {
@@ -9368,10 +10458,7 @@ function selectPuzzlePiece(pieceId, options = {}) {
   }
   if (piece.owner !== state.currentPlayer) {
     clearPuzzleTraySelection();
-    window.setTimeout(() => {
-      playInvalidAudio();
-      speakPhraseReliable("Not your piece.", { forceRepeat: true });
-    }, 0);
+    speakPuzzleFeedback("Not your piece.", { fromGesture: Boolean(options.fromGesture) });
     lastStatusMessage = `Select a ${playerDisplayName(state.currentPlayer)} tray piece.`;
     updatePuzzleSelectionUi(lastStatusMessage, { deferMascot: true, skipTrayHighlight: true });
     return;
@@ -9404,15 +10491,13 @@ async function submitPuzzlePlacement(pieceId, row, col, options = {}) {
   }
   const expectedOwner = state.currentPlayer;
   if (piece.owner !== expectedOwner) {
-    playInvalidAudio();
-    speakPhraseReliable("Not your piece.", { forceRepeat: true });
-    render(`Place a ${playerDisplayName(expectedOwner).toUpperCase()} tray piece.`);
+    speakPuzzleFeedback("Not your piece.", { fromGesture: Boolean(options.fromGesture) });
+    render(`Place a ${playerDisplayName(expectedOwner).toUpperCase()} tray piece.`, { suppressStatusVoice: true });
     return;
   }
   if (row !== piece.correctRow || col !== piece.correctCol) {
-    playInvalidAudio();
-    speakPhraseReliable("Doesn't fit.", { forceRepeat: true });
-    render("Doesn't fit there.");
+    speakPuzzleFeedback("Doesn't fit.", { fromGesture: Boolean(options.fromGesture) });
+    render("Doesn't fit there.", { suppressStatusVoice: true });
     return;
   }
 
@@ -9682,6 +10767,7 @@ function render(statusMessage = "Make your move.", options = {}) {
   try {
     updateFriendLockOverlay();
     renderUi(statusMessage, options);
+    updatePracticeTableChrome();
   } catch (error) {
     console.error("[render] recover after error", error);
     state = createStateForGame(selectedGameId);
@@ -9714,6 +10800,7 @@ function renderUi(statusMessage = "Make your move.", options = {}) {
   undoButton?.classList.toggle("hidden", isPuzzleGame);
   controlsPanel?.classList.toggle("puzzle-no-undo", isPuzzleGame);
   document.body.classList.toggle("puzzle-game", selectedGameId === "puzzle");
+  syncPracticeTablePuzzleGridBodyClasses();
   ensureRenderableGameState();
   if (!boardElement) {
     return;
@@ -10154,27 +11241,40 @@ async function animateComputerMove(move, durationMs = AI_MOVE_ANIMATION_MS) {
   captureSquare?.classList.remove("ai-move-capture");
 }
 
+function fourInARowGhostSizeForSquare(square) {
+  const rect = square.getBoundingClientRect();
+  return Math.min(rect.width, rect.height) * 0.82;
+}
+
+function fourInARowGhostOriginForSquare(square, size) {
+  const rect = square.getBoundingClientRect();
+  return {
+    left: rect.left + rect.width / 2 - size / 2,
+    top: rect.top + rect.height / 2 - size / 2,
+  };
+}
+
 async function animateFourDrop(player, row, col, durationMs = HUMAN_MOVE_ANIMATION_MS) {
   const toSquare = findSquareElement(row, col);
   const fromSquare = findSquareElement(0, col);
   if (!toSquare || !fromSquare) {
     return;
   }
-  const fromRect = fromSquare.getBoundingClientRect();
-  const toRect = toSquare.getBoundingClientRect();
-  const size = Math.min(fromRect.width, fromRect.height) * 0.82;
+  const size = fourInARowGhostSizeForSquare(fromSquare);
+  const start = fourInARowGhostOriginForSquare(fromSquare, size);
+  const end = fourInARowGhostOriginForSquare(toSquare, size);
 
   const ghost = document.createElement("span");
   ghost.className = `ai-piece-ghost piece four-piece ${player}`;
   ghost.style.width = `${size}px`;
   ghost.style.height = `${size}px`;
-  ghost.style.left = `${fromRect.left + fromRect.width / 2}px`;
-  ghost.style.top = `${fromRect.top + fromRect.height / 2}px`;
+  ghost.style.left = `${start.left}px`;
+  ghost.style.top = `${start.top}px`;
   ghost.style.transitionDuration = `${durationMs}ms`;
   document.body.appendChild(ghost);
 
   await new Promise((resolve) => window.requestAnimationFrame(resolve));
-  ghost.style.transform = `translate(${toRect.left - fromRect.left}px, ${toRect.top - fromRect.top}px)`;
+  ghost.style.transform = `translate(${end.left - start.left}px, ${end.top - start.top}px)`;
   await sleep(durationMs);
   ghost.remove();
   await animateDestinationBounce(toSquare);
@@ -10186,21 +11286,21 @@ async function animateUndoFourLift(player, row, col, durationMs = HUMAN_MOVE_ANI
   if (!fromSquare || !toSquare) {
     return;
   }
-  const fromRect = fromSquare.getBoundingClientRect();
-  const toRect = toSquare.getBoundingClientRect();
-  const size = Math.min(fromRect.width, fromRect.height) * 0.82;
+  const size = fourInARowGhostSizeForSquare(fromSquare);
+  const start = fourInARowGhostOriginForSquare(fromSquare, size);
+  const end = fourInARowGhostOriginForSquare(toSquare, size);
 
   const ghost = document.createElement("span");
   ghost.className = `ai-piece-ghost piece four-piece ${player}`;
   ghost.style.width = `${size}px`;
   ghost.style.height = `${size}px`;
-  ghost.style.left = `${fromRect.left + fromRect.width / 2}px`;
-  ghost.style.top = `${fromRect.top + fromRect.height / 2}px`;
+  ghost.style.left = `${start.left}px`;
+  ghost.style.top = `${start.top}px`;
   ghost.style.transitionDuration = `${durationMs}ms`;
   document.body.appendChild(ghost);
 
   await new Promise((resolve) => window.requestAnimationFrame(resolve));
-  ghost.style.transform = `translate(${toRect.left - fromRect.left}px, ${toRect.top - fromRect.top}px)`;
+  ghost.style.transform = `translate(${end.left - start.left}px, ${end.top - start.top}px)`;
   await sleep(durationMs);
   ghost.remove();
 }
@@ -10696,7 +11796,9 @@ async function runComputerTurn() {
 
 function handlePuzzleTrayTap(event) {
   releasePuzzleInteractionLocks();
-  if (playMode === "friend" && remoteSession) {
+  if (selectedGameId === "puzzle") {
+    primePuzzleVoiceFromGesture();
+  } else if (playMode === "friend" && remoteSession) {
     scheduleAudioUnlockFromGesture();
   }
   const pieceEl = event.target.closest(".puzzle-piece");
@@ -10727,13 +11829,15 @@ function handlePuzzleTrayTap(event) {
     selectedPuzzlePieceId = pieceId;
   }
   runAfterPuzzleTapPaint(() => {
-    selectPuzzlePiece(pieceId, { fromPointerDown: true });
+    selectPuzzlePiece(pieceId, { fromPointerDown: true, fromGesture: true });
   });
 }
 
 function handlePuzzleBoardTap(event) {
   releasePuzzleInteractionLocks();
-  if (playMode === "friend" && remoteSession) {
+  if (selectedGameId === "puzzle") {
+    primePuzzleVoiceFromGesture();
+  } else if (playMode === "friend" && remoteSession) {
     scheduleAudioUnlockFromGesture();
   }
   if (!shouldHandleBoardTap()) {
@@ -10751,11 +11855,11 @@ function handlePuzzleBoardTap(event) {
   runAfterPuzzleTapPaint(() => {
     const placeMetrics = capturePuzzlePlaceMetrics(cell, selectedPuzzlePieceId);
     cell.classList.add("puzzle-slot-placing");
-    void handlePuzzleBoardPlace(cell, placeMetrics);
+    void handlePuzzleBoardPlace(cell, placeMetrics, { fromGesture: true });
   });
 }
 
-async function handlePuzzleBoardPlace(square, placeMetrics = null) {
+async function handlePuzzleBoardPlace(square, placeMetrics = null, options = {}) {
   if (!square || busy || puzzlePlaceInFlight) {
     return;
   }
@@ -10793,7 +11897,10 @@ async function handlePuzzleBoardPlace(square, placeMetrics = null) {
     if (!selectedPuzzlePieceId) {
       return;
     }
-    await submitPuzzlePlacement(selectedPuzzlePieceId, row, col, { placeMetrics });
+    await submitPuzzlePlacement(selectedPuzzlePieceId, row, col, {
+      placeMetrics,
+      fromGesture: Boolean(options.fromGesture),
+    });
   } finally {
     targetCell?.classList.remove("puzzle-slot-placing");
     puzzlePlaceInFlight = false;
@@ -11573,7 +12680,10 @@ async function createFriendRoom() {
     }
     friendInviteShareReady = false;
     updateFriendRoomButtons();
-    setFriendStatus("Tap INVITE FRIEND to share the link.");
+    if (remoteSession) {
+      setFriendStatus(getFriendStatusText(remoteSession));
+    }
+    friendGestureAudioTick();
   } catch (error) {
     setFriendStatus(error?.message || "Could not create room.");
   } finally {
@@ -11629,7 +12739,7 @@ async function shareFriendInviteFromButton() {
 }
 
 function installFriendActionButtonHandlers() {
-  const wire = (button, handler) => {
+  const wire = (button, handler, options = {}) => {
     if (!button || button.dataset.friendActionWired === "1") {
       return;
     }
@@ -11637,6 +12747,14 @@ function installFriendActionButtonHandlers() {
     const run = (event) => {
       event.preventDefault();
       event.stopPropagation();
+      noteUserGesture();
+      if (options.shareBeforeAudioUnlock) {
+        void handler();
+        void unlockFriendAudioForJoin().then(() => {
+          primePufflyVoiceFromGesture({ dismissFriendStart: speechNeedsInteractionUnlock });
+        });
+        return;
+      }
       void unlockFriendAudioForJoin().then(() => {
         primePufflyVoiceFromGesture({ dismissFriendStart: speechNeedsInteractionUnlock });
         void handler();
@@ -11652,7 +12770,7 @@ function installFriendActionButtonHandlers() {
       await joinFriendRoom();
     }
   });
-  wire(friendInviteShareButton, shareFriendInviteFromButton);
+  wire(friendInviteShareButton, shareFriendInviteFromButton, { shareBeforeAudioUnlock: true });
 }
 
 installFriendActionButtonHandlers();
@@ -11663,46 +12781,31 @@ async function joinFriendRoom() {
     return;
   }
   lastJoinRoomTapAt = now;
-  await unlockFriendAudioForJoin();
-  primePufflyVoiceFromGesture({ dismissFriendStart: speechNeedsInteractionUnlock });
-  playConnectedFromTap();
-  if (typeof window !== "undefined") {
-    window.__pufflyUserChosePufflyMode = false;
-    if (typeof window.pufflyApplyPlayModeChrome === "function") {
-      window.pufflyApplyPlayModeChrome("friend");
-    }
-  }
-  releaseStaleBusyForFriendAction();
-  if (!ensureFriendPlayModeSynced()) {
-    setFriendStatus("Tap Play with a Friend above, then try Join Room again.");
-    return;
-  }
-  if (speechNeedsInteractionUnlock) {
-    primeFriendGestureOnly();
-  } else {
-    primeSpeechSynthesisFromUserGesture();
-  }
   const roomCode = (roomCodeInput?.value || "").trim().toUpperCase();
   if (!roomCode) {
-    setFriendStatus("Enter a room code, then tap Join Room.");
+    setFriendStatus("Your friend should tap the invite link in Messages — no code needed.");
     return;
   }
-  setFriendStatus(`Joining room ${roomCode}...`);
-  const joined = await joinRoomWithCode(roomCode, { preferFreshJoin: true });
-  if (!joined) {
-    render(lastStatusMessage);
-    return;
-  }
-  markFriendJoinGestureWindow();
-  await unlockFriendAudioForJoin();
-  if (!friendJoinWelcomeSpoken && !friendWelcomeAbortedForPlay) {
-    const lines = friendWelcomeLinesSnapshot.length
-      ? friendWelcomeLinesSnapshot
-      : buildPendingFriendJoinIntroSequence();
-    if (lines.length) {
-      playFriendWelcomeVoiceNow(lines);
+  if (isFriendHostRoom(roomCode)) {
+    await unlockFriendAudioForJoin();
+    primePufflyVoiceFromGesture({ dismissFriendStart: speechNeedsInteractionUnlock });
+    if (typeof window !== "undefined" && typeof window.pufflyApplyPlayModeChrome === "function") {
+      window.pufflyApplyPlayModeChrome("friend");
     }
+    releaseStaleBusyForFriendAction();
+    if (!ensureFriendPlayModeSynced()) {
+      setFriendStatus("Tap Play with a Friend above, then try again.");
+      return;
+    }
+    setFriendStatus(`Reconnecting to room ${roomCode}...`);
+    const joined = await joinRoomWithCode(roomCode, { preferFreshJoin: false });
+    if (!joined) {
+      render(lastStatusMessage);
+    }
+    return;
   }
+  noteUserGesture();
+  redirectToGuestJoinPage(roomCode);
 }
 
 copyRoomButton?.addEventListener("click", async () => {
@@ -11776,22 +12879,6 @@ voiceJoinButton?.addEventListener("click", async () => {
   await startVoiceConnection();
 });
 
-voiceMuteMicButton?.addEventListener("click", () => {
-  if (!voiceLocalStream) {
-    return;
-  }
-  voiceMicMuted = !voiceMicMuted;
-  for (const track of voiceLocalStream.getAudioTracks()) {
-    track.enabled = !voiceMicMuted;
-  }
-  updateVoiceButtons();
-});
-
-voiceSpeakerButton?.addEventListener("click", () => {
-  voiceSpeakerMuted = !voiceSpeakerMuted;
-  updateVoiceButtons();
-});
-
 function wireFriendVoiceStartTap(button) {
   if (!button || button.dataset.pufflySpeechWired === "1") {
     return;
@@ -11801,11 +12888,9 @@ function wireFriendVoiceStartTap(button) {
     event.preventDefault();
     event.stopPropagation();
     noteUserGesture();
-    handleSpeechUnlockFromUserGesture({ force: true });
+    handleSpeechUnlockFromUserGesture();
   };
-  button.addEventListener("pointerdown", runStart, { capture: true });
-  button.addEventListener("touchend", runStart, { capture: true });
-  button.addEventListener("click", runStart);
+  button.addEventListener("click", runStart, { capture: true });
 }
 
 function installSpeechStartButton() {
@@ -11818,7 +12903,7 @@ function installFriendVoiceStartButton() {
 
 function handleSpeechUnlockFromUserGesture(options = {}) {
   const now = Date.now();
-  if (!options.force && now - speechUnlockGestureHandledAt < 500) {
+  if (now - speechUnlockGestureHandledAt < 500) {
     return;
   }
   speechUnlockGestureHandledAt = now;
@@ -11857,6 +12942,8 @@ function handleSpeechUnlockFromUserGesture(options = {}) {
     return;
   }
   noteUserGesture();
+  speechUnlocked = true;
+  speechGesturePrimed = true;
   dismissPracticeVoiceStartOverlay();
   primePufflyVoiceFromGesture();
   deliverPracticeVoiceOnStartTap();
@@ -11873,11 +12960,13 @@ celebrationClose?.addEventListener("click", () => {
 });
 
 if (typeof window !== "undefined") {
-  window.addEventListener("resize", () => {
-    lockBoardGeometry();
-    render(lastStatusMessage);
-  });
+  window.addEventListener("resize", scheduleBoardGeometryRelayout);
+  window.addEventListener("orientationchange", scheduleBoardGeometryRelayout);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", scheduleBoardGeometryRelayout);
+  }
   window.addEventListener("pageshow", (event) => {
+    lockBoardGeometry(true);
     if (remoteSession?.roomCode) {
       return;
     }
@@ -12148,6 +13237,9 @@ async function bootstrapGuestAttachedSession() {
 
 function bootstrapApp() {
   releaseBootstrapLocks();
+  bootstrapInviteLinkOriginFromUrl();
+  forceClearInviteStateForPracticeTestPwa();
+  initPwaInstallHint();
   const plainPracticeLanding = isPlainPracticeLanding();
   if (plainPracticeLanding) {
     syncInviteLandingOnBootstrap();
@@ -12235,16 +13327,13 @@ function bootstrapApp() {
   updateSpeechUnlockOverlay();
   mountVoiceDebugHud();
   renderRoomChat(true);
-  if (playMode === "friend" && !remoteSession && !getJoinCodeFromUrl()) {
+  if (playMode === "friend" && !shouldSkipFriendLobbyVoice()) {
     const clipId = resolveVoiceClipId(FRIEND_LOBBY_VOICE_PHRASE);
     if (clipId) {
       preloadVoiceClips({ clipIds: [clipId] });
     }
     syncEarlyFriendLobbyPlayback();
     bootFriendLobbyVoiceIfNeeded();
-    if (typeof window !== "undefined" && typeof window.pufflyPlayFriendLobbyInline === "function") {
-      window.pufflyPlayFriendLobbyInline();
-    }
   }
   const storedFriend = readStoredFriendSession();
   if (
@@ -12331,8 +13420,15 @@ function bootstrapApp() {
   syncPlayModeChrome();
   installPrimePracticeSpeechOnFirstGesture();
   updateSpeechUnlockOverlay();
-  beginPracticeFlipRound({ coldBoot: true });
+  beginPracticeFlipRound({
+    coldBoot: true,
+    userChosePractice: isPracticeTableTestPwaBoot(),
+  });
+  if (isPracticeTableTestPwaBoot() && isStarterFlipPending() && boardElement && boardElement.children.length === 0) {
+    bootstrapInitialRender("Flip to see who goes first.");
+  }
   flushPendingPlayModeTap();
+  schedulePracticeTableRelayoutIfNeeded();
 }
 
 function flushPendingPlayModeTap() {
@@ -12389,6 +13485,10 @@ if (typeof window !== "undefined") {
   window.pufflyTryInviteJoinFromUrl = maybeAutoJoinFromInviteLink;
   window.pufflySpeechStartTap = handleSpeechUnlockFromUserGesture;
   window.pufflyRefreshSpeechUnlockOverlay = updateSpeechUnlockOverlay;
+  window.pufflyUpdatePracticeTableChrome = updatePracticeTableChrome;
+  window.pufflyRelayoutTableBoard = () => {
+    schedulePracticeTableRelayoutIfNeeded();
+  };
   window.pufflyPrimeVoice = primePufflyVoiceFromGesture;
   window.pufflyPrimeVoiceForRoomAction = () =>
     primePufflyVoiceFromGesture({ dismissFriendStart: speechNeedsInteractionUnlock });
@@ -12399,6 +13499,7 @@ if (typeof window !== "undefined") {
   window.pufflyPlayConnectedFromTap = playConnectedFromTap;
   window.pufflySpeechBuild = SPEECH_BUILD;
   window.pufflyClientBuild = CLIENT_BUILD;
+  window.pufflyGetInviteLinkOrigin = getInviteLinkOrigin;
   window.pufflyFriendYourTurn = () => isFriendYourTurnNow();
   window.pufflyVoiceDebugDump = pufflyVoiceDebugDump;
   window.pufflyVoiceDebugEnabled = isVoiceDebugEnabled;

@@ -63,10 +63,11 @@ Calling `setPlayMode("puffly")` or `pauseFriendRoomForPractice()` must run `rese
 - **Play:** `drainFriendVoiceBus` — one clip at a time; gestures call `tryDrainFriendVoiceBus`.
 - **Welcome gate:** `friendGameplayVoiceGatedByWelcome()` + `friendGuestWelcomeArmed` block flip/turn until guest welcome finishes.
 - **After welcome:** `flushFriendGameplayVoiceAfterWelcome()` → pre-flip or `announceFriendDeferredTurnVoiceAfterWelcome()` (your turn + opponent turn).
+- **Host welcome (v379):** `playFriendWelcomeVoiceNow(..., { fromGesture: true })` on **OPEN GAME ROOM** — not deferred until INVITE; uses `friendIosCanPlayClip` / `friendGestureAudioTick` after create.
 - **UI:** `#puffly-thought` updates in `setPufflyState`; friend mode does **not** speak from render.
 - **Debug:** `?voiceDebug=1` — watch `bus_enqueue` / `bus_play` / `blocked` / `your_turn_deferred`.
 
-## Guest attach flow (v357)
+## Guest attach flow (v357+)
 
 1. `guest-join.html` → `bootstrapGuestAttachedSession()` → `hydrateRoomSession({ deferGameplayVoice: true })`.
 2. `announceFriendGuestWelcome()` sets `friendGuestWelcomeArmed` and queues welcome+team.
@@ -75,4 +76,4 @@ Calling `setPlayMode("puffly")` or `pauseFriendRoomForPractice()` must run `rese
 
 ---
 
-*Last updated: v357 — see FRIEND_VOICE_BACKLOG.md for full test matrix.*
+*Last updated: v381 — core bus unchanged since v357; host welcome timing v379. Regression: TEST_BUILD.md.*

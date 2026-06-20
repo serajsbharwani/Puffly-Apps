@@ -1,9 +1,9 @@
 # Puffly App Map
 
 Concise reference for global state, shell architecture, UI/voice constraints, and how new games plug in.  
-**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v357** — friend voice complete).
+**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v381** — unified PlayPuffly test PWA; Practice + Friend regression baseline).
 
-Related docs (in `iphone-checkers/`): `VOICE.md`, `FRIEND_VOICE_BACKLOG.md`, `PLAN.md`.
+Related docs (in `iphone-checkers/`): `TEST_BUILD.md`, `VOICE.md`, `FRIEND_VOICE_BACKLOG.md`, `PLAN.md`.
 
 ---
 
@@ -31,9 +31,13 @@ Game logic lives in **pure modules** (`iphone-checkers/src/engine.js`, `iphone-c
 checkers/                         # repo root (this file)
   multiplayer_server.py           # Room API (memory rooms, versioned state)
   iphone-checkers/
-    index.html                    # Shell DOM + inline bootstrap (friend chrome, invite redirect)
+    index.html                    # Shell DOM + inline bootstrap (friend chrome, invite redirect, tableUi)
     guest-join.html               # Minimal guest attach page → hydrate index with session
-    styles.css                    # Layout, friend/practice chrome, overlays
+    install.html                  # PWA install helper (unified PlayPuffly test build)
+    manifest.json                 # PWA manifest (start_url with source=pwa&tableUi=1)
+    TEST_BUILD.md                 # Regression checklist (Practice + Friend, v381+)
+    styles.css                    # Layout, friend/practice chrome, overlays, tray team colors
+    styles/practice-table.css     # Practice table layout (body.practice-table-layout)
     src/
       app.js                      # Shell: state, UI, multiplayer, voice bus, input routing
       engine.js                   # Checkers rules + AI
@@ -42,7 +46,10 @@ checkers/                         # repo root (this file)
         registry.js               # Game ids + titles
         puzzle.js
         fourinarow.js
-    assets/voice/                 # WAV clips (must be real audio, not stubs)
+    assets/
+      voice/                      # WAV clips (must be real audio, not stubs)
+      Puffly/skeleton/            # PNG skeleton layers (practice table / future Rive)
+      icons/                      # PWA icons
 ```
 
 **Run:** `python3 multiplayer_server.py 8002` → `http://localhost:8002/iphone-checkers/`
@@ -95,11 +102,12 @@ checkers/                         # repo root (this file)
 
 **Bootstrap paths**
 
-- **Mac host:** `index.html` → Friend tab → OPEN GAME ROOM → invite
-- **iPad guest:** invite URL → `guest-join.html` (auto join) → `index.html?friendAttached=1` → `hydrateRoomSession()`
+- **PWA / Mac+iPad test:** `install.html` or `index.html?source=pwa&tableUi=1&cb=381` → Add to Home Screen → **PlayPuffly** (see `TEST_BUILD.md`)
+- **Mac host:** Friend tab → **OPEN GAME ROOM** → welcome voice → **INVITE FRIEND** (Messages link)
+- **iPad guest:** invite URL in Messages → Safari → `guest-join.html` → `index.html?friendAttached=1` → `hydrateRoomSession()`
 - Invite links with `?join=` on index redirect to `guest-join.html`
 
-**Room sync loop:** `startRoomPolling()` → `syncRoomState()` → `applyRemoteRoomState()` → `syncFriendVoiceBusFromStates()` → `render()`.
+**Room sync loop:** `startRoomPolling()` → `syncRoomState()` → optional `playFriendOpponentMoveAnimation()` → `applyRemoteRoomState()` → `syncFriendVoiceBusFromStates()` → `render()`.
 
 **Local moves (friend):** apply move locally → `notifyFriendVoiceAfterLocalMove()` → `submitRemoteMove()` with `skipVoiceSync` where needed → server applies `nextState` with `expectedVersion`.
 
@@ -148,8 +156,16 @@ Status strings are mostly **silent** in friend mode (`speakFromStatus` filters b
 ### Mode chrome
 
 - `body.friend-mode` toggles visible panels (`syncPlayModeChrome()` / `pufflyApplyPlayModeChrome()` in `index.html`).
-- Practice shows difficulty + audio toggle; friend shows room toolbar + puzzle size when game is puzzle.
+- `body.practice-table-layout` enables table scene (`styles/practice-table.css`); stripped in friend mode.
+- Practice: difficulty buttons + **AUDIO GUIDE** toggle (`#audio-toggle-btn`); friend: room toolbar + puzzle size when game is puzzle.
+- Friend voice sidebar (`#friend-chat-panel`): Voice Chat subtitle (Connected / Not Connected), avatars, audio guide slot; stretches with bottom navbar on iPad.
+- Side **captured trays**: team borders/tints (blue `#eef5ff`, green `#f0fff0`); `.your-tray` adds stronger glow for the local player.
+- Friend tray height capped via `FRIEND_MODE_TRAY_HEIGHT_FACTOR` (0.95 of board height); puzzle pieces scroll inside trays.
 - Puzzle hides undo; checkers/four keep undo (friend undo when server allows).
+
+### Friend opponent move animation (v377+)
+
+When `FRIEND_ANIMATE_OPPONENT_MOVES` is true, `syncRoomState()` infers the opponent's move from the prior snapshot and runs `playFriendOpponentMoveAnimation()` before `applyRemoteRoomState()` — checkers (ghost fly), four-in-a-row (drop), puzzle (tray→cell fly). Local moves still animate in `commitMove()` / `submitPuzzlePlacement()`.
 
 ### iOS audio gate
 
@@ -174,9 +190,11 @@ Two parallel systems — **do not merge**:
 
 **Guest welcome (iOS):** `announceFriendGuestWelcome()` arms full welcome; `friendGameplayVoiceGatedByWelcome()` blocks flip/turn until START + welcome completes; `flushFriendGameplayVoiceAfterWelcome()` / `announceFriendDeferredTurnVoiceAfterWelcome()` plays pre-flip or turn catch-up (incl. opponent turn when Blue flipped before START).
 
+**Host welcome (v379):** `announceFriendJoinWelcome()` on room create calls `playFriendWelcomeVoiceNow(..., { fromGesture: true })` so “Welcome to the game room / You are Blue…” plays on **OPEN GAME ROOM**, not deferred until INVITE.
+
 **Phrases/clips:** `iphone-checkers/src/voicePhrases.js` + `iphone-checkers/assets/voice/{id}.wav`. Run `npm test` from `iphone-checkers/` after changes.
 
-**Voice backlog:** `iphone-checkers/FRIEND_VOICE_BACKLOG.md` (v357 complete; optional polish in Phase G1/G3–G5).
+**Voice backlog:** `iphone-checkers/FRIEND_VOICE_BACKLOG.md` (core loop v357; v369–v381 UI/voice polish in `TEST_BUILD.md`).
 
 ---
 
@@ -254,4 +272,4 @@ Keep **no DOM or `fetch`** in game modules.
 
 ---
 
-*Last updated: v357 — friend voice loop complete (Mac host + iPad guest); see FRIEND_VOICE_BACKLOG.md.*
+*Last updated: v381 — unified test PWA, friend UI/animation polish, practice tray chrome; see TEST_BUILD.md for regression matrix.*

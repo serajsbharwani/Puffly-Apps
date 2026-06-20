@@ -1,37 +1,40 @@
-# iPhone Checkers (Clean Project)
+# iPhone Checkers (PlayPuffly)
 
-A standalone, iPhone-first checkers app rebuilt from the original requirements docs.
+Unified PWA for **Practice** and **Play with a Friend** (Checkers, Four-in-a-Row, Puzzle). Test baseline: **v381** — see `TEST_BUILD.md`.
 
 ## Run
 
 From the repo root:
 
-1. Start static-only mode (Puffly mode and local pass-and-play):
+1. Start static-only mode (Practice / local pass-and-play):
    - `python3 -m http.server 8002`
 2. Open:
    - `http://localhost:8002/iphone-checkers/`
 
+For Mac + iPad testing over Cloudflare tunnel, use `python3 multiplayer_server.py 8002` and the URLs in `TEST_BUILD.md` (`https://dev.playpuffly.org/...`).
+
 ## Remote Friend Mode
 
-For room-based remote friend play, start the multiplayer API server instead:
+For room-based remote friend play, start the multiplayer API server:
 
 1. `python3 multiplayer_server.py 8002`
-2. Open:
-   - `http://localhost:8002/iphone-checkers/`
+2. Open the app (PWA or browser).
 3. In the app:
    - Choose a game from the top selector (`Checkers`, `Four-in-a-Row`, `Puzzle`)
-   - Switch to `Play with a Friend`
-   - One player taps `Create & Invite` and shares the invite link
-   - Friend opens the invite link to auto-join
-   - Use `Leave Room` to disconnect and free the slot
-   - Tap `Join Voice` for audio chat and use avatar speaking indicators
-   - Share URL on same network or over a reachable host setup
+   - Switch to **Play with a Friend**
+   - Host taps **OPEN GAME ROOM** (welcome voice plays here), then **INVITE FRIEND** and shares the Messages link
+   - Guest opens the invite link in Safari → auto-attach via `guest-join.html`
+   - Use **Leave Room** to disconnect
+   - **Voice Chat** in the sidebar for audio chat and avatar speaking indicators
 
 Notes:
 
-- This is a lightweight room server for friendly play and prototyping.
-- Room state is memory-only and resets when the server restarts.
-- If you run `python3 -m http.server`, the friend mode API buttons will fail (expected).
+- Lightweight room server for friendly play; memory-only state (resets on server restart).
+- Plain `python3 -m http.server` will not serve friend API (expected).
+
+## PWA install
+
+Use `install.html` or `index.html?source=pwa&tableUi=1` — manifest `start_url` includes the same flags. Verify `window.pufflyClientBuild === 381` after load.
 
 ## Tests
 

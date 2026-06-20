@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>PlayPuffly Test Build v381</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f4efe6;
+        color: #2b2118;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      main {
+        max-width: 420px;
+        background: #fff;
+        border-radius: 16px;
+        padding: 28px 24px;
+        box-shadow: 0 8px 32px rgba(43, 33, 24, 0.12);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.35rem;
+      }
+      .build {
+        display: inline-block;
+        margin-bottom: 16px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #e8f5e9;
+        color: #1b5e20;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+      p,
+      li {
+        line-height: 1.5;
+        font-size: 0.95rem;
+      }
+      ol {
+        padding-left: 1.2rem;
+        margin: 16px 0;
+      }
+      a.btn {
+        display: block;
+        margin-top: 20px;
+        padding: 14px 18px;
+        border-radius: 12px;
+        background: #5c4033;
+        color: #fff;
+        text-align: center;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .note {
+        margin-top: 16px;
+        font-size: 0.85rem;
+        color: #6b5b4f;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>PlayPuffly — unified test build</h1>
+      <span class="build">Build 381</span>
+      <p>
+        One Home Screen app for regression testing <strong>Practice</strong> (table layout) and
+        <strong>Friend</strong> before commit.
+      </p>
+      <ol>
+        <li>Remove any old PlayPuffly / PlayPufflyTest / Puffly Skeleton icons from your Home Screen.</li>
+        <li>Open the app link below in Safari (Mac or iPad).</li>
+        <li>Use <strong>Add to Home Screen</strong> while on that page.</li>
+        <li>Launch <strong>PlayPuffly</strong> from the icon — not a bookmark.</li>
+      </ol>
+      <a class="btn" id="open-app" href="./index.html?source=pwa&amp;tableUi=1&amp;cb=381"
+        >Open PlayPuffly v381</a
+      >
+      <p class="note">
+        Friend on iPad: open the PlayPuffly icon → Friend → <strong>OPEN GAME ROOM</strong> →
+        <strong>INVITE FRIEND</strong>. Guests tap the Messages link (opens Safari) — no room code or JOIN ROOM.
+      </p>
+    </main>
+    <script>
+      (function () {
+        var host = window.location.hostname;
+        if (host === "localhost" || host === "127.0.0.1") {
+          try {
+            localStorage.setItem("puffly.inviteOrigin", "https://dev.playpuffly.org");
+          } catch (e) {}
+        }
+      })();
+    </script>
+  </body>
+</html>
