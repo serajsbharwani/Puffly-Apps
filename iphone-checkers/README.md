@@ -1,6 +1,6 @@
 # iPhone Checkers (PlayPuffly)
 
-Unified PWA for **Practice** and **Play with a Friend** (Checkers, Four-in-a-Row, Puzzle). Test baseline: **v381** — see `TEST_BUILD.md`.
+Unified PWA for **Practice** and **Play with a Friend** (Checkers, Four-in-a-Row, Puzzle). Test baseline: **v382** — see `TEST_BUILD.md`.
 
 ## Run
 
@@ -34,7 +34,7 @@ Notes:
 
 ## PWA install
 
-Use `install.html` or `index.html?source=pwa&tableUi=1` — manifest `start_url` includes the same flags. Verify `window.pufflyClientBuild === 381` after load.
+Use `install.html` or `home.html?source=pwa&tableUi=1` — manifest `start_url` opens home; **LET'S PLAY** enters the game shell. Verify `window.pufflyClientBuild === 382` after load.
 
 ## Tests
 

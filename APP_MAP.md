@@ -1,7 +1,7 @@
 # Puffly App Map
 
 Concise reference for global state, shell architecture, UI/voice constraints, and how new games plug in.  
-**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v381** — unified PlayPuffly test PWA; Practice + Friend regression baseline).
+**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v382** — PWA home page + unified PlayPuffly test build; Practice + Friend regression baseline).
 
 Related docs (in `iphone-checkers/`): `TEST_BUILD.md`, `VOICE.md`, `FRIEND_VOICE_BACKLOG.md`, `PLAN.md`.
 
@@ -31,11 +31,12 @@ Game logic lives in **pure modules** (`iphone-checkers/src/engine.js`, `iphone-c
 checkers/                         # repo root (this file)
   multiplayer_server.py           # Room API (memory rooms, versioned state)
   iphone-checkers/
+    home.html                    # PWA entry — parchment home scene → LET'S PLAY
     index.html                    # Shell DOM + inline bootstrap (friend chrome, invite redirect, tableUi)
     guest-join.html               # Minimal guest attach page → hydrate index with session
     install.html                  # PWA install helper (unified PlayPuffly test build)
-    manifest.json                 # PWA manifest (start_url with source=pwa&tableUi=1)
-    TEST_BUILD.md                 # Regression checklist (Practice + Friend, v381+)
+    manifest.json                 # PWA manifest (start_url → home.html?source=pwa&tableUi=1)
+    TEST_BUILD.md                 # Regression checklist (Home + Practice + Friend, v382+)
     styles.css                    # Layout, friend/practice chrome, overlays, tray team colors
     styles/practice-table.css     # Practice table layout (body.practice-table-layout)
     src/
@@ -102,7 +103,7 @@ checkers/                         # repo root (this file)
 
 **Bootstrap paths**
 
-- **PWA / Mac+iPad test:** `install.html` or `index.html?source=pwa&tableUi=1&cb=381` → Add to Home Screen → **PlayPuffly** (see `TEST_BUILD.md`)
+- **PWA / Mac+iPad test:** `install.html` or `home.html?source=pwa&tableUi=1&cb=382` → Add to Home Screen → **PlayPuffly** → **LET'S PLAY** → game shell (see `TEST_BUILD.md`)
 - **Mac host:** Friend tab → **OPEN GAME ROOM** → welcome voice → **INVITE FRIEND** (Messages link)
 - **iPad guest:** invite URL in Messages → Safari → `guest-join.html` → `index.html?friendAttached=1` → `hydrateRoomSession()`
 - Invite links with `?join=` on index redirect to `guest-join.html`
@@ -272,4 +273,4 @@ Keep **no DOM or `fetch`** in game modules.
 
 ---
 
-*Last updated: v381 — unified test PWA, friend UI/animation polish, practice tray chrome; see TEST_BUILD.md for regression matrix.*
+*Last updated: v382 — PWA home page (`home.html`); unified test PWA; see TEST_BUILD.md for regression matrix.*

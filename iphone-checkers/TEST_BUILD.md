@@ -1,22 +1,23 @@
-# PlayPuffly unified test build (v381)
+# PlayPuffly unified test build (v382)
 
-Single canonical install for regression testing **Practice** and **Friend** before commit.
+Single canonical install for regression testing **Home**, **Practice**, and **Friend** before commit.
 
 ## Install (Mac + iPad)
 
-1. Delete old Home Screen icons: PlayPuffly, PlayPufflyTest, Puffly Skeleton.
-2. Open the install page or app URL (cache-bust with `cb=381`):
+1. **Delete the old PlayPuffly Home Screen icon** (and any PlayPufflyTest / Puffly Skeleton icons). iOS caches the old launcher graphic until you remove and re-add.
+2. Open the install page or app URL (cache-bust with `cb=382`):
    - **Public:** https://dev.playpuffly.org/iphone-checkers/install.html
-   - **Direct app:** https://dev.playpuffly.org/iphone-checkers/index.html?source=pwa&tableUi=1&cb=381
-3. **Add to Home Screen** from Safari while on the app page (`index.html`).
-4. Launch **PlayPuffly** from the Home Screen icon.
+   - **Home (PWA start):** https://dev.playpuffly.org/iphone-checkers/home.html?source=pwa&tableUi=1&cb=382
+   - **Direct shell (skip home):** https://dev.playpuffly.org/iphone-checkers/index.html?source=pwa&tableUi=1&cb=382
+3. **Add to Home Screen** from Safari while on the **home page** (`home.html`) — confirm the new **Puffly face** icon (`Puffly_Icon-192/512.png`) appears in the Add preview.
+4. Launch **PlayPuffly** from the Home Screen icon → home scene → **LET'S PLAY**.
 
 ## Verify build
 
-In Safari Web Inspector or the in-app console:
+In Safari Web Inspector or the in-app console (after **LET'S PLAY** → game shell):
 
 ```js
-window.pufflyClientBuild === 381
+window.pufflyClientBuild === 382
 window.pufflyGetInviteLinkOrigin?.() // should be https://dev.playpuffly.org when hosting from localhost
 ```
 
@@ -30,16 +31,29 @@ On iPhone and iPad, when a guest taps the invite link in **Messages**, iOS opens
 
 | Role | How to open the app | Invite |
 |------|---------------------|--------|
-| **Host** | PlayPuffly **Home Screen icon** (PWA) | OPEN GAME ROOM → INVITE FRIEND → share link in Messages |
+| **Host** | PlayPuffly **Home Screen icon** (PWA) → home → LET'S PLAY | Friend → OPEN GAME ROOM → INVITE FRIEND → share link in Messages |
 | **Guest** | **Tap the link in Messages** → Safari | No room code, no JOIN ROOM — one tap on the link |
 
-The guest Safari flow is intentional: `https://dev.playpuffly.org/join/ROOM` → `guest-join.html` → auto-join as Green → game (v381 guest voice path).
+The guest Safari flow is intentional: `https://dev.playpuffly.org/join/ROOM` → `guest-join.html` → auto-join as Green → game (v382 guest voice path). **Guests never see the home page.**
 
 **Do not treat “link opened Safari instead of the PWA” as a regression.** The seamless guest experience is: tap link → play. Safari is the correct browser for guests.
 
+## Home checklist
+
+Launch from Home Screen icon:
+
+- [ ] Home Screen icon shows **Puffly face** (new `Puffly_Icon-192/512.png`, not old generic icon)
+- [ ] Unified light cream canvas (`--home-parchment: #f4efe6`) behind transparent hero; no frame-within-frame
+- [ ] Transparent hero (`PlayPuffly_HomePage_Hero_New_Transparent.png`) in `.hero-container` at ~65vh
+- [ ] No `mix-blend-mode` on hero image
+- [ ] Top **PLAYPUFFLY** title (bold, `#2B2B2B`) + italic tagline **Where Generations Play** (`#555555`)
+- [ ] Pill **LET'S PLAY** (`max-width: 170px`, min-height 64px) centered on cream belly with slight right nudge (`--lets-play-x-nudge: 14px`)
+- [ ] LET'S PLAY → Practice table shell with flip overlay (“Flip to choose who starts”)
+- [ ] `body.practice-table-layout` + `practice-table-initializing` while flip pending
+
 ## Practice checklist
 
-Launch from Home Screen icon → **Practice**:
+Home → **LET'S PLAY** (or direct shell URL) → **Practice**:
 
 - [ ] Top navbar **AUDIO GUIDE** button (not “Audio”)
 - [ ] Side trays: matching 3px borders + team tint (blue `#eef5ff`, green `#f0fff0`); your tray slightly stronger glow
@@ -53,7 +67,7 @@ Launch from Home Screen icon → **Practice**:
 
 **Host (Mac or iPad PWA):** tunnel running (`python3 multiplayer_server.py 8002`).
 
-- [ ] PlayPuffly icon → Friend → **OPEN GAME ROOM**
+- [ ] PlayPuffly icon → home → LET'S PLAY → Friend → **OPEN GAME ROOM**
 - [ ] OPEN GAME ROOM → welcome voice plays immediately (“Welcome… You are Blue…”), not deferred until INVITE
 - [ ] **INVITE FRIEND** → Messages link uses `https://dev.playpuffly.org/join/ROOM` (not localhost)
 - [ ] When guest joins: “Your friend joined” + flip cue
@@ -65,7 +79,7 @@ Launch from Home Screen icon → **Practice**:
 **Guest (iPad or iPhone — via Messages link in Safari):**
 
 - [ ] Tap invite link in Messages (opens **Safari** — correct)
-- [ ] Brief “Joining as Green…” then game loads
+- [ ] Brief “Joining as Green…” then game loads (**no home page**)
 - [ ] iOS: tap **START VOICE** if prompted → welcome → Green team → flip → turn
 - [ ] Board + trays match host; voice / game sync
 - [ ] Guest does **not** need a room code or JOIN ROOM
@@ -82,7 +96,7 @@ python3 multiplayer_server.py 8002
 cloudflared tunnel run --token <token>   # dev.playpuffly.org
 ```
 
-## Build notes (v369 → v381)
+## Build notes (v369 → v382)
 
 - **v369:** One PWA (`tableUi=1` in manifest); unified Practice table on Mac + iPad.
 - **v370–371:** Friend UI (voice sidebar, bottom navbar, hide static “You · Green” footer).
@@ -93,8 +107,9 @@ cloudflared tunnel run --token <token>   # dev.playpuffly.org
 - **v379:** Host welcome voice on OPEN GAME ROOM.
 - **v380:** Practice **AUDIO GUIDE** label; team-colored tray borders.
 - **v381:** Matched tray styling — 3px borders + subtle blue/green tint on both trays (Practice + Friend).
+- **v382:** New PWA home page (`home.html`) — parchment scene, hero, LET'S PLAY → unchanged Practice first screen; manifest `start_url` → home.
 
-Current builds: `CLIENT_BUILD` / `GUEST_BUILD` **381**, `app.js?v=381`.
+Current builds: `CLIENT_BUILD` / `GUEST_BUILD` **382**, `app.js?v=382`.
 
 ## Legacy test PWAs (ignore)
 
@@ -103,4 +118,4 @@ Do not use for this regression pass:
 - `test.html` / PlayPufflyTest
 - `skeleton.html` / Puffly Skeleton
 
-Use **PlayPuffly** only (`manifest.json` on `index.html`).
+Use **PlayPuffly** only (`manifest.json` on `home.html`).

@@ -493,7 +493,7 @@ const INVITE_PAGE_LOCK_CODE_KEY = "puffly.inviteActiveCode";
 const INVITE_ORIGIN_STORAGE_KEY = "puffly.inviteOrigin";
 const DEFAULT_PUBLIC_INVITE_ORIGIN = "https://dev.playpuffly.org";
 /** Bumped with index.html app.js?v= so iPad cache mismatches are visible in friend status. */
-const CLIENT_BUILD = 381;
+const CLIENT_BUILD = 382;
 const VOICE_DEBUG_LOG_MAX = 200;
 const GUEST_HYDRATE_PAYLOAD_KEY = "puffly.guestHydratePayload";
 const GUEST_ATTACHED_FLAG_KEY = "puffly.guestAttached";
@@ -8479,7 +8479,7 @@ function updateSpeechUnlockOverlay() {
   friendVoiceStartButton?.classList.toggle("hidden", !showFriendVoiceStart);
   if (showFriendVoiceStart) {
     if (title) {
-      title.textContent = `Tap Start for Voice · v${CLIENT_BUILD}`;
+      title.textContent = "Tap Start for Audio Guide";
     }
     if (blurb) {
       blurb.textContent = remoteSession?.roomCode
@@ -8506,7 +8506,7 @@ function updateSpeechUnlockOverlay() {
   }
   friendVoiceStartButton?.classList.add("hidden");
   if (title) {
-    title.textContent = "Tap Start for Voice";
+    title.textContent = "Tap Start for Audio Guide";
   }
   if (blurb) {
     blurb.textContent = "Tap Start to turn on voice prompts and hear the flip cue before you play.";

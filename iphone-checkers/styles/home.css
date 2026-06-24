@@ -1,0 +1,151 @@
+/* PlayPuffly home page — flex stack + framed hero (v382+) */
+
+:root {
+  --home-parchment: #f4efe6;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  color: #2b2b2b;
+  background: var(--home-parchment);
+  overflow: hidden;
+}
+
+#puffly-home-container {
+  width: 100vw;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  overflow: hidden;
+  padding:
+    max(4vh, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right))
+    max(4vh, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
+  background-color: var(--home-parchment);
+}
+
+.brand-wrapper {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 640px;
+  text-align: center;
+  z-index: 10;
+}
+
+.brand-title {
+  margin: 0 0 4px;
+  font-size: clamp(26px, 5vw, 32px);
+  font-weight: 700;
+  color: #2b2b2b;
+  letter-spacing: 1px;
+}
+
+.brand-tagline {
+  margin: 0;
+  font-size: clamp(16px, 3.5vw, 18px);
+  font-style: italic;
+  font-weight: 500;
+  color: #555555;
+}
+
+.hero-container {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: min(94vw, 720px);
+  height: 65vh;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: var(--home-parchment);
+  --lets-play-x-nudge: 14px;
+}
+
+.hero-image {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+#home-lets-play-btn {
+  position: absolute;
+  top: 58%;
+  left: 50%;
+  transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%);
+  appearance: none;
+  width: 100%;
+  max-width: 170px;
+  min-height: 64px;
+  padding: 0 12px;
+  border: 2px solid #5da361;
+  border-radius: 32px;
+  background-color: #d1ebd2;
+  font: inherit;
+  font-size: clamp(16px, 3.8vw, 20px);
+  font-weight: 700;
+  line-height: 1.1;
+  color: #1c3d1f;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s ease;
+  z-index: 3;
+}
+
+#home-lets-play-btn:active {
+  transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%) scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #home-lets-play-btn {
+    transition: none;
+  }
+
+  #home-lets-play-btn:active {
+    transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%);
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  #puffly-home-container {
+    padding-top: max(2vh, env(safe-area-inset-top));
+    padding-bottom: max(2vh, env(safe-area-inset-bottom));
+  }
+
+  .brand-title {
+    font-size: clamp(22px, 4vw, 28px);
+  }
+
+  .brand-tagline {
+    font-size: clamp(14px, 3vw, 16px);
+  }
+
+  .hero-container {
+    height: 58vh;
+  }
+
+  #home-lets-play-btn {
+    top: 57%;
+    font-size: clamp(15px, 3.2vw, 18px);
+  }
+}

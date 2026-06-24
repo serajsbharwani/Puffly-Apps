@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#f4efe6" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="PlayPuffly" />
+    <link rel="apple-touch-icon" href="./assets/icons/Puffly_Icon-192.png" />
+    <title>PlayPuffly</title>
+    <link
+      rel="preload"
+      as="image"
+      href="./assets/Puffly/skeleton/PlayPuffly_HomePage_Hero_New_Transparent.png"
+    />
+    <link rel="stylesheet" href="./styles/home.css?v=11" />
+    <script>
+      (function () {
+        var search = new URLSearchParams(window.location.search || "");
+        try {
+          var source = search.get("source") || "";
+          if (search.get("tableUi") === "1" || source === "pwa") {
+            localStorage.setItem("puffly.tableUi", "1");
+          }
+          var host = window.location.hostname;
+          if (host === "localhost" || host === "127.0.0.1") {
+            localStorage.setItem("puffly.inviteOrigin", "https://dev.playpuffly.org");
+          }
+        } catch (e) {
+          // ignore
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <main id="puffly-home-container" role="main" aria-label="PlayPuffly home">
+      <div class="brand-wrapper">
+        <h1 class="brand-title">PLAYPUFFLY</h1>
+        <p class="brand-tagline">Where Generations Play</p>
+      </div>
+
+      <div class="hero-container">
+        <img
+          class="hero-image"
+          src="./assets/Puffly/skeleton/PlayPuffly_HomePage_Hero_New_Transparent.png"
+          alt="Puffly hanging from a wooden frame above checkers and puzzle pieces"
+          decoding="async"
+          fetchpriority="high"
+        />
+        <button type="button" id="home-lets-play-btn" aria-label="Let's play — start practice with Puffly">
+          LET'S PLAY
+        </button>
+      </div>
+    </main>
+    <script>
+      (function () {
+        var CLIENT_BUILD = 382;
+        var btn = document.getElementById("home-lets-play-btn");
+        if (!btn) {
+          return;
+        }
+        btn.addEventListener("click", function () {
+          var dest = new URL("./index.html", window.location.href);
+          dest.searchParams.set("source", "pwa");
+          dest.searchParams.set("tableUi", "1");
+          dest.searchParams.set("cb", String(CLIENT_BUILD));
+          window.location.replace(dest.toString());
+        });
+      })();
+    </script>
+  </body>
+</html>
