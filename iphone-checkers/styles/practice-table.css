@@ -20,6 +20,21 @@ body.practice-table-layout.friend-mode #practice-table-scene {
   display: contents;
 }
 
+body:not(.practice-table-layout):not(.friend-mode) #practice-stage,
+body.practice-table-layout.friend-mode #practice-stage {
+  display: contents;
+}
+
+body:not(.practice-table-layout):not(.friend-mode) #practice-play-cluster,
+body.practice-table-layout.friend-mode #practice-play-cluster {
+  display: contents;
+}
+
+body:not(.practice-table-layout):not(.friend-mode) #puffly-dealer-unit,
+body.practice-table-layout.friend-mode #puffly-dealer-unit {
+  display: contents;
+}
+
 body.friend-mode #practice-flip-overlay {
   display: none !important;
 }
@@ -60,6 +75,9 @@ html:has(body.practice-table-layout:not(.friend-mode)) {
 }
 
 body.practice-table-layout:not(.friend-mode) {
+  --practice-dealer-height: 238px;
+  --practice-host-overlap: 40px;
+  --practice-board-tuck: 30px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -142,6 +160,367 @@ body.practice-table-layout:not(.friend-mode) .gameplay-layout {
   overflow-y: auto;
 }
 
+/* Active play: chrome collapsed — scene fills viewport */
+body.practice-table-layout:not(.friend-mode) > .app-chrome {
+  flex: 0 0 0;
+  max-height: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  margin: 0;
+  gap: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.practice-table-layout:not(.friend-mode) .gameplay-layout {
+  max-height: none;
+  flex: 1 1 auto;
+}
+
+/* --- Practice layout tokens (v403: nav band row + head gap) --- */
+body.practice-table-layout:not(.friend-mode) {
+  --practice-stage-edge-top: max(0.45rem, env(safe-area-inset-top, 0px));
+  --practice-stage-edge-bottom: max(0.55rem, env(safe-area-inset-bottom, 0px));
+  --practice-stage-edge-x: max(0.35rem, env(safe-area-inset-left, 0px));
+  --practice-pill-height: 48px;
+  --practice-board-group-max: min(68vw, 640px);
+  --practice-dealer-height: 238px;
+  --practice-host-overlap: 40px;
+  --practice-board-tuck: 30px;
+  --practice-nav-to-head-gap: 20px;
+  --practice-head-clearance: 48px;
+  --practice-play-cluster-top: calc(
+    var(--practice-nav-to-head-gap, 20px) + var(--practice-head-clearance, 48px)
+  );
+  padding: 0;
+  background: #f4efe6;
+}
+
+/* --- Practice setup tray (v384–v385) --- */
+body.practice-table-layout:not(.friend-mode) #practice-setup-menu-btn {
+  position: relative;
+  top: auto;
+  left: auto;
+  flex: 0 0 auto;
+  align-self: center;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--practice-pill-height);
+  padding: 0.32rem 0.78rem;
+  border: 1px solid #2b2b2b;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.98);
+  color: #2b2b2b;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    opacity 0.2s ease,
+    visibility 0.2s ease,
+    transform 0.15s ease;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-menu-btn:active {
+  transform: scale(0.98);
+}
+
+body.practice-table-layout:not(.friend-mode).practice-setup-tray-open #practice-setup-menu-btn {
+  display: none !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* v405: fixed scrim + scene-mounted tray above #practice-stage (z-index 1) stacking trap */
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1340;
+  background: rgba(244, 239, 230, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.24s ease;
+}
+
+body.practice-table-layout:not(.friend-mode).practice-setup-tray-open
+  #practice-setup-tray-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray {
+  display: none;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray[hidden] {
+  display: none !important;
+}
+
+body.practice-table-layout:not(.friend-mode).practice-setup-tray-open
+  #practice-setup-tray {
+  display: flex;
+  position: fixed;
+  top: var(--practice-nav-band-top, max(0.45rem, env(safe-area-inset-top, 0px)));
+  left: 50%;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  height: auto;
+  max-width: min(96vw, 720px);
+  z-index: 1450;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: translateX(-50%);
+  opacity: 1;
+  pointer-events: auto;
+  transition:
+    opacity 0.24s ease,
+    transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+body.practice-table-layout:not(.friend-mode).practice-setup-tray-open
+  #practice-setup-pill-nav {
+  position: relative;
+  z-index: 1;
+  width: fit-content;
+  max-width: min(96vw, 720px);
+  margin: 0;
+  pointer-events: auto;
+}
+
+body.practice-table-layout:not(.friend-mode).practice-setup-tray-open
+  #practice-setup-pill-nav
+  .practice-pill-trigger,
+body.practice-table-layout:not(.friend-mode).practice-setup-tray-open
+  #practice-setup-pill-nav
+  .practice-pill-audio {
+  pointer-events: auto;
+}
+
+body.practice-table-layout:not(.friend-mode).practice-pill-cluster-open
+  #practice-setup-pill-nav {
+  overflow: visible;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-cluster {
+  position: relative;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-pill-nav {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem 1.1rem;
+  min-height: var(--practice-pill-height, 48px);
+  padding: 14px 36px;
+  border-radius: 40px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-trigger,
+body.practice-table-layout:not(.friend-mode) .practice-pill-audio {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2b2b2b;
+  font-family: inherit;
+  font-size: 1.125rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-prefix {
+  color: #6a6458;
+  font-weight: 500;
+  font-size: 1rem;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-value {
+  font-weight: 700;
+  color: #1f1f1f;
+  font-size: 1.125rem;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-caret {
+  font-size: 0.875rem;
+  color: #6a6458;
+  line-height: 1;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-audio {
+  margin-left: 0.15rem;
+  padding-left: 1rem;
+  border-left: 1px solid rgba(43, 43, 43, 0.14);
+  font-weight: 600;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-audio.is-on {
+  color: #1f1f1f;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-pill-audio:not(.is-on) {
+  color: #8a8274;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .practice-setup-rows {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .practice-setup-rows .app-header {
+  display: none;
+}
+
+/* v406: anchored dropdown panels under pill clusters (not viewport-centered) */
+body.practice-table-layout:not(.friend-mode)
+  #practice-setup-tray
+  .game-panel,
+body.practice-table-layout:not(.friend-mode)
+  #practice-setup-tray
+  .mode-panel,
+body.practice-table-layout:not(.friend-mode)
+  #practice-setup-tray
+  .practice-puffly-control-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 1460;
+  box-sizing: border-box;
+  min-width: 200px;
+  max-width: 240px;
+  width: max-content;
+  margin: 0;
+  padding: 8px 0;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: none;
+  transition:
+    opacity 0.2s ease,
+    visibility 0.2s ease;
+}
+
+body.practice-table-layout:not(.friend-mode)
+  .practice-pill-cluster[data-cluster="trait"]
+  .practice-puffly-control-card {
+  left: auto;
+  right: 0;
+}
+
+body.practice-table-layout:not(.friend-mode).practice-pill-cluster-open-game
+  #practice-setup-tray
+  .game-panel,
+body.practice-table-layout:not(.friend-mode).practice-pill-cluster-open-mode
+  #practice-setup-tray
+  .mode-panel,
+body.practice-table-layout:not(.friend-mode).practice-pill-cluster-open-trait
+  #practice-setup-tray
+  .practice-puffly-control-card {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .game-buttons,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .mode-panel,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .difficulty-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .mode-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .game-btn,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .mode-btn,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .difficulty-btn {
+  display: block;
+  min-height: 48px;
+  width: 100%;
+  margin: 0;
+  padding: 14px 20px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #2b2b2b;
+  font-size: 1rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .game-btn:hover,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .mode-btn:hover,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .difficulty-btn:hover,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .game-btn:active,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .mode-btn:active,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .difficulty-btn:active {
+  background: #f9f6f0;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .game-btn.active,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .mode-btn.active,
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray .difficulty-btn.active {
+  background: #f9f6f0;
+  border: none;
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray #puffly-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-setup-tray #audio-toggle-btn {
+  display: none;
+}
+
+body.practice-table-layout:not(.friend-mode) .practice-setup-chrome-home:empty {
+  display: none;
+}
+
 body.practice-table-layout:not(.friend-mode) #practice-table-scene {
   position: relative;
   flex: 1 1 auto;
@@ -150,11 +529,20 @@ body.practice-table-layout:not(.friend-mode) #practice-table-scene {
   width: 100%;
   height: 100%;
   margin-top: 0;
-  display: grid;
-  grid-template-rows: minmax(238px, auto) minmax(0, 1fr) auto;
-  overflow-x: clip;
-  overflow-y: visible;
+  display: block;
+  overflow: hidden;
   isolation: auto;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-table-scene {
+  box-sizing: border-box;
+  background-color: #f4efe6;
+}
+
+body.practice-table-layout:not(.friend-mode).practice-table-initializing #practice-table-scene {
+  display: flex;
+  flex-direction: column;
+  overflow-y: visible;
 }
 
 body.practice-table-layout:not(.friend-mode) #practice-table-scene::before {
@@ -167,6 +555,79 @@ body.practice-table-layout:not(.friend-mode) #practice-table-scene::before {
   background-position: center;
   background-repeat: no-repeat;
   pointer-events: none;
+}
+
+/* v400: full-bleed flex stage (top nav / playfield / bottom nav) */
+body.practice-table-layout:not(.friend-mode) #practice-stage {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 0;
+  min-width: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-stage > * {
+  pointer-events: auto;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-stage {
+  inset: 0;
+  height: 100%;
+  padding:
+    var(--practice-stage-edge-top)
+    var(--practice-stage-edge-x)
+    var(--practice-stage-edge-bottom);
+  gap: 0;
+}
+
+/* v402: JS-synced cover insets — inset defines height (no height: 100% override) */
+body.practice-table-layout:not(.friend-mode).practice-table-frame-synced
+  #practice-stage {
+  inset: var(--practice-stage-inset-top) var(--practice-stage-inset-right)
+    var(--practice-stage-inset-bottom) var(--practice-stage-inset-left);
+  height: auto;
+  min-height: 0;
+  padding: 0;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-stage-top {
+  flex: 0 0 var(--practice-pill-height);
+  height: var(--practice-pill-height);
+  min-height: var(--practice-pill-height);
+  max-height: var(--practice-pill-height);
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.35rem;
+  padding-inline: max(0.35rem, env(safe-area-inset-left, 0px))
+    max(0.35rem, env(safe-area-inset-right, 0px));
+  box-sizing: border-box;
+  z-index: 30;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* v403/v404: tray open — reserve 48px band; pill fixed above backdrop (z1400) */
+body.practice-table-layout:not(.friend-mode).practice-setup-tray-open
+  #practice-stage-top {
+  flex: 0 0 var(--practice-pill-height);
+  height: var(--practice-pill-height);
+  min-height: var(--practice-pill-height);
+  max-height: var(--practice-pill-height);
+  justify-content: flex-start;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-stage-top > * {
+  pointer-events: auto;
 }
 
 body.practice-table-layout:not(.friend-mode) #player-seat-row {
@@ -189,7 +650,7 @@ body.practice-table-layout:not(.friend-mode).practice-table-initializing #practi
   inset: 0;
   z-index: 30;
   padding: 1rem;
-  background: rgba(16, 10, 4, 0.58);
+  background: rgba(16, 10, 4, 0.42);
   backdrop-filter: blur(3px);
   pointer-events: auto;
 }
@@ -245,7 +706,9 @@ body.practice-table-layout:not(.friend-mode):not(.practice-table-initializing) #
   display: none !important;
 }
 
-/* --- Torso layer (behind board) + dealer host (head + arm above board) --- */
+/* --- v397: unified dealer unit — torso + host share one bottom anchor (V380 tuck) --- */
+body.practice-table-layout:not(.friend-mode) #practice-play-cluster,
+body.practice-table-layout:not(.friend-mode) #puffly-dealer-unit,
 body.practice-table-layout:not(.friend-mode) #puffly-torso-layer,
 body.practice-table-layout:not(.friend-mode) #rive-character-host,
 body.practice-table-layout:not(.friend-mode) #rive-character-host .puffly-skeleton-stack,
@@ -266,12 +729,50 @@ body.practice-table-layout:not(.friend-mode) #rive-character-host img {
   background-color: transparent !important;
 }
 
+body.practice-table-layout:not(.friend-mode) #practice-play-cluster {
+  padding-top: var(--practice-play-cluster-top, 0);
+  margin-top: 0;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+
+body.practice-table-layout:not(.friend-mode) #practice-play-cluster {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
+  z-index: 1;
+}
+
+body.practice-table-layout:not(.friend-mode) #puffly-dealer-unit {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  height: var(--practice-dealer-height, 238px);
+  min-height: var(--practice-dealer-height, 238px);
+  margin: 0 0 calc(-1 * var(--practice-host-overlap, 40px));
+  padding: 0;
+  overflow: visible;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+body.practice-table-layout:not(.friend-mode) #puffly-dealer-unit {
+  margin: 0 0 calc(-1 * var(--practice-host-overlap, 40px));
+}
+
 body.practice-table-layout:not(.friend-mode) #puffly-torso-layer {
   position: absolute;
-  top: 0;
   left: 0;
   right: 0;
-  height: 270px;
+  bottom: 0;
+  height: var(--practice-dealer-height, 238px);
   z-index: 2;
   margin: 0;
   padding: 0;
@@ -285,9 +786,9 @@ body.practice-table-layout:not(.friend-mode) #puffly-torso-layer .puffly-skeleto
   left: 50%;
   transform: translateX(-50%);
   width: auto;
-  height: 238px;
-  max-height: 238px;
-  max-width: min(78vw, 376px);
+  height: var(--practice-dealer-height, 238px);
+  max-height: var(--practice-dealer-height, 238px);
+  max-width: 376px;
   margin: 0;
   padding: 0 !important;
   z-index: 2;
@@ -300,19 +801,16 @@ body.practice-table-layout:not(.friend-mode) #puffly-torso-layer .puffly-skeleto
 body.practice-table-layout:not(.friend-mode) #rive-character-host {
   position: relative;
   z-index: 10;
-  grid-row: 1;
-  grid-column: 1;
   width: 100%;
-  height: auto;
-  min-height: 238px;
+  height: var(--practice-dealer-height, 238px);
+  min-height: var(--practice-dealer-height, 238px);
   max-height: none;
-  flex: 0 0 auto;
+  flex: none;
   overflow: visible !important;
-  margin: 0 0 -40px;
+  margin: 0;
   padding: 0;
   pointer-events: none;
   box-sizing: border-box;
-  isolation: auto;
 }
 
 body.practice-table-layout:not(.friend-mode) .puffly-skeleton-stack {
@@ -322,8 +820,8 @@ body.practice-table-layout:not(.friend-mode) .puffly-skeleton-stack {
   right: 0;
   bottom: 0;
   width: 100%;
-  height: 238px;
-  min-height: 238px;
+  height: var(--practice-dealer-height, 238px);
+  min-height: var(--practice-dealer-height, 238px);
   margin: 0;
   padding: 0 !important;
   overflow: visible !important;
@@ -357,10 +855,11 @@ body.practice-table-layout:not(.friend-mode) .puffly-skeleton-head {
   overflow: visible !important;
 }
 
+body.practice-table-layout:not(.friend-mode) #rive-character-host .puffly-skeleton-arm,
 body.practice-table-layout:not(.friend-mode) .puffly-skeleton-arm {
   position: absolute;
   top: 47px;
-  left: calc(50% - clamp(95px, 14vw, 115px));
+  left: calc(50% - 102px);
   width: 145px;
   height: auto;
   margin: 0;
@@ -372,21 +871,27 @@ body.practice-table-layout:not(.friend-mode) .puffly-skeleton-arm {
   overflow: visible !important;
 }
 
-/* --- MIDDLE: felt / game board matrix (under dealer torso + arm overlap) --- */
+/* --- Game board matrix (V380 tuck — z-index 5 between torso and head) --- */
 body.practice-table-layout:not(.friend-mode) #game-board-matrix {
   position: relative;
   z-index: 5;
-  grid-row: 2;
-  grid-column: 1;
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  margin-top: -30px !important;
+  margin-top: calc(-1 * var(--practice-board-tuck, 30px)) !important;
   padding: 0 0.35rem 0.1rem;
   overflow: visible;
+}
+
+body.practice-table-layout:not(.friend-mode) #game-board-matrix {
+  flex: 0 0 auto;
+  margin-top: calc(-1 * var(--practice-board-tuck, 30px)) !important;
+  padding-bottom: 0;
 }
 
 body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-stage {
@@ -411,12 +916,90 @@ body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-and-captu
   grid-template-columns: 56px minmax(0, 1fr) 56px;
 }
 
+body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-and-captures {
+  width: 100%;
+  max-width: var(--practice-board-group-max, min(68vw, 640px));
+  margin-left: auto;
+  margin-right: auto;
+  flex: 0 0 auto;
+  align-items: stretch;
+  min-height: var(--practice-footprint-board-height, auto);
+}
+
+/* v408: Four-in-a-Row / Puzzle hug board height; Checkers keeps footprint min-height */
+body.practice-table-layout:not(.friend-mode).fourinarow-game
+  #game-board-matrix
+  .board-and-captures,
+body.practice-table-layout:not(.friend-mode).puzzle-game
+  #game-board-matrix
+  .board-and-captures {
+  min-height: auto;
+}
+
+body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-wrap {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+/* Checkers: footprint slot height (board fills it) */
+body.practice-table-layout:not(.friend-mode):not(.fourinarow-game):not(.puzzle-game)
+  #game-board-matrix
+  .board-wrap {
+  min-height: var(--practice-footprint-board-height, auto);
+}
+
+body.practice-table-layout:not(.friend-mode) #game-board-matrix .captured-tray {
+  align-self: start;
+  height: var(--practice-board-height, auto);
+  max-height: var(--practice-board-height, none);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* v411: puzzle trays — jigsaw tabs render outside cell via SVG overflow */
+body.practice-table-layout:not(.friend-mode).puzzle-game
+  #game-board-matrix
+  .captured-tray {
+  overflow-x: visible;
+  overflow-y: hidden;
+}
+
 body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .board-and-captures {
   grid-template-columns: 128px minmax(0, 1fr) 128px;
 }
 
+/* v409: puzzle portrait trays — wide enough for board-matched jigsaw pieces */
+body.practice-table-layout:not(.friend-mode).puzzle-game
+  #game-board-matrix
+  .board-and-captures {
+  grid-template-columns: 98px minmax(0, 1fr) 98px;
+}
+
+body.practice-table-layout:not(.friend-mode).puzzle-game
+  .puzzle-tray
+  .puzzle-piece {
+  width: var(--puzzle-tray-piece-size, 100%);
+  max-width: var(--puzzle-tray-piece-size, 100%);
+  margin-inline: auto;
+  overflow: visible;
+}
+
+body.practice-table-layout:not(.friend-mode).puzzle-game
+  .puzzle-tray
+  .puzzle-piece
+  .puzzle-piece-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
 @media (max-width: 860px) {
-  body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .board-and-captures {
+  body.practice-table-layout:not(.friend-mode).puzzle-game
+    #game-board-matrix
+    .board-and-captures {
     grid-template-columns: 98px minmax(0, 1fr) 98px;
   }
 }
@@ -492,6 +1075,13 @@ body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix #boa
   aspect-ratio: unset;
 }
 
+body.practice-table-layout:not(.friend-mode).puzzle-game
+  #game-board-matrix
+  .board-wrap {
+  width: max-content;
+  max-width: 100%;
+}
+
 body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .captured-pile.puzzle-tray {
   max-height: none;
   height: 100%;
@@ -500,6 +1090,7 @@ body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .cap
   -webkit-overflow-scrolling: touch;
   grid-auto-rows: var(--puzzle-tray-piece-size, min-content);
   align-content: start;
+  justify-items: center;
   gap: 0.28rem;
 }
 
@@ -510,7 +1101,7 @@ body.practice-table-layout:not(.friend-mode).puzzle-game .puzzle-tray .puzzle-pi
   aspect-ratio: 1 / 1;
   min-height: 0;
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -518,11 +1109,11 @@ body.practice-table-layout:not(.friend-mode).puzzle-game .puzzle-tray .puzzle-pi
 }
 
 body.practice-table-layout:not(.friend-mode).puzzle-game .puzzle-tray .puzzle-piece-svg {
-  width: 92%;
-  height: 92%;
+  width: 100%;
+  height: 100%;
   margin: auto;
   display: block;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* --- BOTTOM: unified player seat bar --- */
@@ -535,65 +1126,70 @@ body.practice-table-layout:not(.friend-mode) #player-seat-row {
   box-sizing: border-box;
 }
 
-body.practice-table-layout:not(.friend-mode) .player-seat-bar {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  align-items: stretch;
+/* v393: bottom pill as flex child in stage (not viewport-absolute) */
+body.practice-table-layout:not(.friend-mode) #player-seat-row {
+  position: relative;
+  flex: 0 0 auto;
+  bottom: auto;
+  left: auto;
+  transform: none;
+  z-index: 30;
   width: 100%;
-  min-height: 44px;
-  border: 2px solid rgba(201, 147, 53, 0.82);
-  border-radius: 12px;
-  background: rgba(255, 246, 225, 0.94);
-  box-shadow: 0 6px 18px rgba(10, 6, 2, 0.28);
-  overflow: hidden;
-}
-
-body.practice-table-layout:not(.friend-mode) .player-seat-identity {
+  max-width: none;
+  padding: 0.25rem 0 0;
+  margin-top: 0;
+  background: transparent;
   display: flex;
-  align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  min-width: 0;
-  padding: 0.35rem 0.4rem;
-  border-right: 1px solid rgba(201, 147, 53, 0.45);
-  background: rgba(232, 249, 232, 0.92);
-  color: #1f5d28;
-  font-size: clamp(0.62rem, 1.8vw, 0.74rem);
-  font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-body.practice-table-layout:not(.friend-mode) .player-seat-identity .player-indicator-icon {
-  font-size: 1rem;
-  line-height: 1;
   flex-shrink: 0;
 }
 
-body.practice-table-layout:not(.friend-mode) .player-seat-thought {
+body.practice-table-layout:not(.friend-mode) .player-seat-bar {
   display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4rem 0.85rem;
+  width: fit-content;
+  max-width: min(96vw, 840px);
+  min-height: var(--practice-pill-height);
+  padding: 10px 24px;
+  border: none;
+  border-radius: 40px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+body.practice-table-layout:not(.friend-mode) .player-seat-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent !important;
+  color: #1f5d28;
+  font-size: 0.875rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+body.practice-table-layout:not(.friend-mode) .player-seat-thought {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 0;
-  padding: 0 0.4rem;
-  border-right: 1px solid rgba(201, 147, 53, 0.35);
-  background: rgba(255, 251, 240, 0.88);
+  padding: 0 0.15rem;
+  border: none;
+  background: transparent;
 }
 
 body.practice-table-layout:not(.friend-mode) .player-seat-thought .puffly-thought {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  font-size: clamp(0.62rem, 1.8vw, 0.74rem);
-  font-weight: 700;
-  line-height: 1;
-  text-align: center;
-  color: #2f4a24;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
 body.practice-table-layout:not(.friend-mode) .player-seat-thought.is-thinking .puffly-thought {
@@ -604,42 +1200,128 @@ body.practice-table-layout:not(.friend-mode) .player-seat-thought:empty {
   display: none;
 }
 
+/* v418: borderless controls cluster — flat on pill (override global .controls box) */
 body.practice-table-layout:not(.friend-mode) .player-seat-controls {
-  display: contents;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+body.practice-table-layout:not(.friend-mode) #player-seat-controls::before {
+  content: "";
+  flex-shrink: 0;
+  width: 1px;
+  height: 24px;
+  background-color: rgba(0, 0, 0, 0.1);
+  margin-right: 0.85rem;
+}
+
+body.practice-table-layout:not(.friend-mode) #player-seat-thought:empty + #player-seat-controls::before {
+  display: none;
 }
 
 body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls {
-  display: contents;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.85rem;
+  position: static;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  grid-template-columns: unset;
 }
 
 body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls button {
   min-width: 0;
-  min-height: 44px;
+  min-height: 40px;
   margin: 0;
-  padding: 0 0.3rem;
-  border: 0;
-  border-left: 1px solid rgba(201, 147, 53, 0.35);
+  padding: 0 8px;
+  border: none;
   border-radius: 0;
-  background: rgba(255, 236, 180, 0.92);
-  font-size: clamp(0.62rem, 1.8vw, 0.74rem);
-  font-weight: 700;
+  background: transparent !important;
+  color: #2b2b2b !important;
+  font-size: 0.875rem;
+  font-weight: 600;
   line-height: 1.1;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls button#undo-btn,
+body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls button#restart-btn,
+body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls button#rules-btn {
+  color: #2b2b2b !important;
+  background: transparent !important;
+  font-weight: 600;
 }
 
 body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls button.hidden {
   display: none;
 }
 
+body.practice-table-layout:not(.friend-mode) .rules-popover-anchor {
+  position: relative;
+  flex-shrink: 0;
+}
+
 body.practice-table-layout:not(.friend-mode) .controls-home:empty {
   display: none;
 }
 
-/* Landscape / wide tablets */
+/* Landscape / wide tablets — v453 checkers board px lock; four max-width none */
 @media (min-width: 768px) and (orientation: landscape) {
-  body.practice-table-layout:not(.friend-mode) > .app-chrome {
+  body.practice-table-layout:not(.friend-mode) {
+    --practice-board-group-max: min(92vw, calc((100dvh - 14rem) * 0.98));
+    --practice-dealer-height: 200px;
+    --practice-stage-edge-top: max(18px, env(safe-area-inset-top, 0px));
+    --practice-stage-edge-bottom: max(22px, env(safe-area-inset-bottom, 0px));
+    --practice-stage-edge-x: max(12px, env(safe-area-inset-left, 0px));
+    --practice-nav-to-head-gap: 40px;
+    --practice-head-clearance: 56px;
+    --practice-seat-gap: 28px;
+    --practice-host-overlap: 36px;
+    --practice-board-tuck: 28px;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game {
+    --practice-board-tuck: 30px;
+    --practice-host-overlap: 40px;
+    --practice-seat-gap: 20px;
+    --practice-puffly-shift-y: -14px;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mini {
+    --practice-board-tuck: 16px;
+    --practice-host-overlap: 20px;
+    --practice-puffly-shift-y: -16px;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game #puffly-dealer-unit > #puffly-torso-layer,
+  body.practice-table-layout:not(.friend-mode).puzzle-game #puffly-dealer-unit > #rive-character-host {
+    transform:
+      translateX(var(--practice-puffly-shift-x, 0))
+      translateY(var(--practice-puffly-shift-y, 0));
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mini
+    #puffly-dealer-unit
+    > #puffly-torso-layer,
+  body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mini
+    #puffly-dealer-unit
+    > #rive-character-host {
+    transform:
+      translateX(
+        calc(
+          var(--practice-mini-group-shift-x, 0) + var(--practice-puffly-shift-x, 0)
+        )
+      )
+      translateY(var(--practice-puffly-shift-y, 0));
+  }
+
+  body.practice-table-layout:not(.friend-mode).practice-table-initializing > .app-chrome {
     max-width: clamp(520px, 92vw, 840px);
     width: 100%;
     margin-left: auto;
@@ -647,13 +1329,13 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
     align-self: center;
   }
 
-  body.practice-table-layout:not(.friend-mode) .app-header {
+  body.practice-table-layout:not(.friend-mode).practice-table-initializing .app-header {
     max-width: 100%;
   }
 
-  body.practice-table-layout:not(.friend-mode) .app-chrome .game-panel,
-  body.practice-table-layout:not(.friend-mode) .app-chrome .mode-panel,
-  body.practice-table-layout:not(.friend-mode) .app-chrome .control-card {
+  body.practice-table-layout:not(.friend-mode).practice-table-initializing .app-chrome .game-panel,
+  body.practice-table-layout:not(.friend-mode).practice-table-initializing .app-chrome .mode-panel,
+  body.practice-table-layout:not(.friend-mode).practice-table-initializing .app-chrome .control-card {
     max-width: clamp(520px, 92vw, 840px);
     width: 100%;
     margin-left: auto;
@@ -662,14 +1344,38 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
   }
 
   body.practice-table-layout:not(.friend-mode) #practice-table-scene {
-    grid-template-rows: minmax(238px, auto) minmax(0, 1fr) auto;
     container-type: inline-size;
     container-name: practice-table-scene;
-    max-width: clamp(520px, 92vw, 840px);
     width: 100%;
-    margin-left: auto;
-    margin-right: auto;
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
     overflow-y: clip;
+  }
+
+  body.practice-table-layout:not(.friend-mode) #practice-stage {
+    gap: 8px;
+  }
+
+  body.practice-table-layout:not(.friend-mode) #practice-stage-top {
+    margin-top: 12px;
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+  }
+
+  body.practice-table-layout:not(.friend-mode) #practice-play-cluster {
+    justify-content: flex-start;
+  }
+
+  body.practice-table-layout:not(.friend-mode) #puffly-torso-layer {
+    z-index: 2;
+  }
+
+  body.practice-table-layout:not(.friend-mode) #game-board-matrix {
+    z-index: 6;
+  }
+
+  body.practice-table-layout:not(.friend-mode) #rive-character-host {
+    z-index: 8;
   }
 
   body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-stage {
@@ -679,7 +1385,7 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
   body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-and-captures {
     flex: 0 0 auto;
     width: fit-content;
-    max-width: min(96vw, 840px);
+    max-width: var(--practice-board-group-max, min(92vw, calc((100dvh - 11rem) * 1.08)));
     margin-left: auto;
     margin-right: auto;
     grid-template-columns: 56px auto 56px;
@@ -690,6 +1396,11 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
   body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-wrap {
     width: max-content;
     min-width: 0;
+    align-self: stretch;
+  }
+
+  body.practice-table-layout:not(.friend-mode) #game-board-matrix .captured-tray {
+    align-self: stretch;
   }
 
   body.practice-table-layout:not(.friend-mode):not(.puzzle-game) #game-board-matrix .captured-tray {
@@ -698,28 +1409,46 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
   }
 
   body.practice-table-layout:not(.friend-mode) #puffly-torso-layer .puffly-skeleton-torso {
-    max-width: min(92cqw, 376px);
+    max-width: 376px;
   }
 
-  body.practice-table-layout:not(.friend-mode) .puffly-skeleton-arm {
-    top: 44px;
-    left: calc(50% - clamp(110px, 14cqw, 140px));
+  body.practice-table-layout:not(.friend-mode) #rive-character-host .puffly-skeleton-arm {
+    top: calc(var(--practice-dealer-height, 238px) * 0.12);
+    left: calc(50% - 102px);
     width: 145px;
+    transform: scale(0.88);
+    transform-origin: 45% 10%;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game #rive-character-host .puffly-skeleton-arm {
+    top: calc(var(--practice-dealer-height, 200px) * 0.197);
+    left: calc(50% - 102px);
+    width: 145px;
+    transform: none;
+    transform-origin: 45% 10%;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game #rive-character-host .puffly-skeleton-head {
+    bottom: calc(var(--practice-dealer-height, 200px) * 0.622);
+    left: calc(50% - 69.5px);
+    width: 139px;
   }
 
   body.practice-table-layout:not(.friend-mode) .puffly-skeleton-head {
-    bottom: 147px;
+    bottom: calc(var(--practice-dealer-height, 238px) * 0.622);
     width: 139px;
     left: calc(50% - 69.5px);
   }
 
-  body.practice-table-layout:not(.friend-mode) #game-board-matrix #board:not(.puzzle-board):not(.fourinarow) {
-    aspect-ratio: unset;
-    width: auto;
-    height: auto;
-    max-width: 100%;
+  body.practice-table-layout:not(.friend-mode):not(.puzzle-game):not(.fourinarow-game)
+    #game-board-matrix
+    #board:not(.puzzle-board):not(.fourinarow) {
+    width: fit-content;
+    height: fit-content;
+    max-width: none;
     max-height: none;
     min-width: 0;
+    min-height: 0;
   }
 
   body.practice-table-layout:not(.friend-mode) #game-board-matrix #board:not(.puzzle-board):not(.fourinarow) .square {
@@ -747,7 +1476,7 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
     aspect-ratio: unset;
     width: auto;
     height: fit-content;
-    max-width: 100%;
+    max-width: none;
     max-height: none;
     min-width: 0;
     min-height: 0;
@@ -765,23 +1494,55 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
   body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .board-and-captures {
     flex: 0 0 auto;
     width: fit-content;
-    max-width: min(96vw, 840px);
+    max-width: var(--practice-board-group-max, min(96vw, calc((100dvh - 11rem) * 1.08)));
     margin-left: auto;
     margin-right: auto;
-    grid-template-columns: 112px auto 112px;
+    grid-template-columns:
+      var(--practice-puzzle-tray-column-px, var(--puzzle-cell-px, 112px))
+      auto
+      var(--practice-puzzle-tray-column-px, var(--puzzle-cell-px, 112px));
     gap: 0.75rem;
-    align-items: start;
-    transform: scale(var(--puzzle-landscape-scale, 1));
-    transform-origin: top center;
+    align-items: stretch;
+    transform: none;
   }
 
   body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-classic #game-board-matrix .board-and-captures,
   body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mega #game-board-matrix .board-and-captures {
-    grid-template-columns: 112px auto 112px;
+    grid-template-columns:
+      var(--practice-puzzle-tray-column-px, var(--puzzle-cell-px, 112px))
+      auto
+      var(--practice-puzzle-tray-column-px, var(--puzzle-cell-px, 112px));
+  }
+
+  /* v449: Mini landscape — nudge captures with left (preserves arm z-index sandwich) */
+  body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mini
+    #game-board-matrix
+    .board-and-captures {
+    position: relative;
+    left: var(--practice-mini-group-shift-x, 0);
+    transform: none;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mini
+    #game-board-matrix
+    .board-wrap {
+    max-width: none;
+    min-width: max-content;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mini
+    #game-board-matrix
+    #board.puzzle-board {
+    min-width: max-content;
+  }
+
+  body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .board-wrap,
+  body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .captured-tray {
+    align-self: start;
   }
 
   body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .captured-tray {
-    width: 112px;
+    width: var(--practice-puzzle-tray-column-px, var(--puzzle-cell-px, 112px));
     flex-shrink: 0;
     overflow-x: clip;
     overflow-y: hidden;
@@ -790,7 +1551,7 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
 
   body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-classic #game-board-matrix .captured-tray,
   body.practice-table-layout:not(.friend-mode).puzzle-game.puzzle-grid-mega #game-board-matrix .captured-tray {
-    width: 112px;
+    width: var(--practice-puzzle-tray-column-px, var(--puzzle-cell-px, 112px));
   }
 
   body.practice-table-layout:not(.friend-mode).puzzle-game #game-board-matrix .captured-pile.puzzle-tray {
@@ -798,6 +1559,8 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
     align-items: center;
     padding-inline: 6px;
     box-sizing: border-box;
+    height: 100%;
+    min-height: 0;
     grid-auto-rows: var(--puzzle-cell-px, var(--puzzle-tray-piece-size, min-content));
   }
 
@@ -868,70 +1631,27 @@ body.practice-table-layout:not(.friend-mode) .controls-home:empty {
   }
 
   body.practice-table-layout:not(.friend-mode) #player-seat-row {
-    max-width: clamp(520px, 92vw, 840px);
-    margin-left: auto;
-    margin-right: auto;
-    background: rgba(255, 246, 225, 0.98);
-  }
-
-  body.practice-table-layout:not(.friend-mode) .player-seat-identity,
-  body.practice-table-layout:not(.friend-mode) .player-seat-thought .puffly-thought,
-  body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls button {
-    font-size: 0.76rem;
-    padding-inline: 0.45rem;
+    max-width: min(96vw, 840px);
+    margin-top: var(--practice-seat-gap, 28px);
+    margin-bottom: 12px;
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
   }
 }
 
-@media (min-width: 900px) {
-  body.practice-table-layout:not(.friend-mode) .app-chrome .game-panel,
-  body.practice-table-layout:not(.friend-mode) .app-chrome .mode-panel,
-  body.practice-table-layout:not(.friend-mode) .app-chrome .control-card {
-    max-width: clamp(520px, 92vw, 840px);
-    width: 100%;
-    margin-left: auto;
-    margin-right: auto;
-    box-sizing: border-box;
-  }
-
-  body.practice-table-layout:not(.friend-mode) .gameplay-layout {
-    max-height: calc(100dvh - 250px);
-    overflow: visible;
-  }
-
-  body.practice-table-layout:not(.friend-mode) #practice-table-scene {
-    container-type: inline-size;
-    container-name: practice-table-scene;
-    max-width: clamp(520px, 92vw, 840px);
-    width: 100%;
-    margin-left: auto;
-    margin-right: auto;
-  }
-
+@media (min-width: 900px) and (orientation: landscape) {
   body.practice-table-layout:not(.friend-mode) #game-board-matrix .board-stage {
     max-width: 100%;
     margin-left: auto;
     margin-right: auto;
   }
 
-  body.practice-table-layout:not(.friend-mode) .puffly-skeleton-arm {
-    left: calc(50% - clamp(110px, 14cqw, 140px));
-  }
-
-  body.practice-table-layout:not(.friend-mode) #player-seat-row {
-    max-width: clamp(520px, 92vw, 840px);
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  body.practice-table-layout:not(.friend-mode) .player-seat-identity,
-  body.practice-table-layout:not(.friend-mode) .player-seat-thought .puffly-thought,
-  body.practice-table-layout:not(.friend-mode) .player-seat-controls .controls button {
-    font-size: 0.68rem;
+  body.practice-table-layout:not(.friend-mode) #rive-character-host .puffly-skeleton-arm {
+    left: calc(50% - 102px);
   }
 }
 
 @media (min-width: 1024px) {
-  body.practice-table-layout:not(.friend-mode) .puffly-skeleton-arm {
+  body.practice-table-layout:not(.friend-mode) #rive-character-host .puffly-skeleton-arm {
     width: 150px;
   }
 }

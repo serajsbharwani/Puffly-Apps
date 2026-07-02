@@ -1587,15 +1587,124 @@ body.friend-mode .friend-chat-panel.hidden {
   background: #ffe89a;
 }
 
-.rules-panel {
-  background: #fff6e5;
-  border: 2px solid #d8b36d;
-  border-radius: 12px;
-  padding: 0.55rem 0.7rem;
+.rules-popover-anchor {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
+.rules-panel {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  width: min(340px, calc(100vw - 32px));
+  height: auto;
+  max-height: min(450px, calc(100dvh - 48px));
+  box-sizing: border-box;
+  z-index: 1500;
+  margin: 0;
+  background: rgba(255, 246, 225, 0.98);
+  border-radius: 24px 0 0 24px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-right: none;
+  box-shadow: -8px 8px 32px rgba(0, 0, 0, 0.08);
+  padding: 28px 24px;
+  color: #2b2b2b;
+  text-align: left;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  transform: translateY(-50%) translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* v424: steady closed — no CSS motion (WAAPI owns open/close) */
 .rules-panel.hidden {
+  transform: translateY(-50%) translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body.rules-panel-animating .rules-panel {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+body.rules-panel-animating #rules-panel-backdrop {
+  pointer-events: auto;
+}
+
+body.rules-panel-open .rules-panel {
+  transform: translateY(-50%) translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.rules-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(92, 74, 50, 0.12);
+}
+
+.rules-panel-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.rules-panel-close {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #5c4a32;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.rules-panel-close:hover,
+.rules-panel-close:focus-visible {
+  color: #2b2b2b;
+}
+
+.rules-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rules-panel li {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.rules-panel li.hidden {
   display: none;
+}
+
+#rules-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1490;
+  background: rgba(244, 239, 230, 0.55);
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.rules-panel-open #rules-panel-backdrop {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .puzzle-debug-strip.hidden,
@@ -1614,16 +1723,6 @@ body.friend-mode .friend-chat-panel.hidden {
   padding: 0.28rem 0.42rem;
   white-space: nowrap;
   overflow: auto;
-}
-
-.rules-panel h2 {
-  margin: 0 0 0.35rem;
-  font-size: 1rem;
-}
-
-.rules-panel ul {
-  margin: 0;
-  padding-left: 1rem;
 }
 
 .history-card {

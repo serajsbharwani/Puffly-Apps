@@ -81,6 +81,8 @@ const friendInviteLink = document.getElementById("friend-invite-link");
 const friendVoiceAudioHost = document.getElementById("friend-voice-audio");
 const historyList = document.getElementById("history-list");
 const rulesPanel = document.getElementById("rules-panel");
+const rulesPanelBackdrop = document.getElementById("rules-panel-backdrop");
+const rulesPanelClose = document.getElementById("rules-panel-close");
 const puzzleDebugStrip = document.getElementById("puzzle-debug-strip");
 const ruleLine1 = document.getElementById("rule-line-1");
 const ruleLine2 = document.getElementById("rule-line-2");
@@ -162,7 +164,6 @@ const PUZZLE_JIGSAW_BASE = 100;
 const PUZZLE_JIGSAW_TAB = 20;
 let celebrationTimers = [];
 let pufflyCheerTimer = null;
-let rulesAutoHideTimer = null;
 let remoteSession = null;
 let roomPollTimer = null;
 let roomChatMessages = [];
@@ -207,8 +208,13 @@ const MIN_TOUCH_CELL_PX = 44;
 /** Friend-mode side trays use 95% of board height (5% shorter than board). */
 const FRIEND_MODE_TRAY_HEIGHT_FACTOR = 0.95;
 const BOARD_GEOMETRY_RESIZE_DEBOUNCE_MS = 150;
+const PRACTICE_TABLE_ORIENTATION_RELAYOUT_DEFER_MS = 300;
+const PRACTICE_TABLE_ORIENTATION_RESIZE_COOLDOWN_MS = 500;
 const PWA_INSTALL_HINT_STORAGE_KEY = "puffly.pwaHintDismissed";
 let boardGeometryResizeTimer = null;
+let practiceTableOrientationRelayoutTimer = null;
+let practiceTableLayoutPassGeneration = 0;
+let lastPracticeTableOrientationChangeAt = 0;
 const AUTO_GAME_ID = getGameFromUrl();
 const AUTO_PUZZLE_SIZE = getPuzzleSizeFromUrl();
 
@@ -235,6 +241,7 @@ let puzzlePreFlipGeometryRefreshScheduled = false;
 let practiceTableLandscapePuzzleCellPx = 0;
 let practiceTableLandscapePuzzleBodyPx = 0;
 let practiceTableLandscapePuzzleBoardHeightPx = 0;
+let practiceTablePortraitPuzzleCellPx = 0;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const puzzleEdgeCache = new Map();
 
@@ -493,7 +500,7 @@ const INVITE_PAGE_LOCK_CODE_KEY = "puffly.inviteActiveCode";
 const INVITE_ORIGIN_STORAGE_KEY = "puffly.inviteOrigin";
 const DEFAULT_PUBLIC_INVITE_ORIGIN = "https://dev.playpuffly.org";
 /** Bumped with index.html app.js?v= so iPad cache mismatches are visible in friend status. */
-const CLIENT_BUILD = 382;
+const CLIENT_BUILD = 453;
 const VOICE_DEBUG_LOG_MAX = 200;
 const GUEST_HYDRATE_PAYLOAD_KEY = "puffly.guestHydratePayload";
 const GUEST_ATTACHED_FLAG_KEY = "puffly.guestAttached";
@@ -1691,6 +1698,9 @@ function updateGameButtons() {
     const gameId = normalizeGameId(button.dataset.game || DEFAULT_GAME_ID);
     button.classList.toggle("active", gameId === selectedGameId);
   }
+  if (practiceTableIsActive() && typeof window.pufflyRefreshPracticePillNavLabels === "function") {
+    window.pufflyRefreshPracticePillNavLabels();
+  }
 }
 
 function parseStoredFriendSessionRaw(raw) {
@@ -2133,12 +2143,24 @@ function clearPracticeTableViewportInlineStyles() {
   document.documentElement.style.height = "";
   document.body.style.width = "";
   document.body.style.height = "";
+  practiceTableClearFrameInsetVars();
+  document.documentElement.style.removeProperty("--practice-nav-band-top");
+  document.documentElement.style.removeProperty("--practice-nav-band-bottom");
 }
 
 function clearPracticeTableTrayInlineStyles() {
   if (typeof document === "undefined") {
     return;
   }
+  const cluster = document.getElementById("practice-play-cluster");
+  cluster?.style.removeProperty("--practice-mini-group-shift-x");
+  const captures = document.querySelector("#game-board-matrix .board-and-captures");
+  captures?.style.removeProperty("--practice-board-height");
+  captures?.style.removeProperty("--practice-mini-group-shift-x");
+  captures?.style.removeProperty("left");
+  captures?.style.removeProperty("transform");
+  document.getElementById("game-board-matrix")?.style.removeProperty("transform");
+  clearPracticeTableFootprintVars();
   const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
   for (const tray of trays) {
     tray.style.height = "";
@@ -2149,11 +2171,358 @@ function clearPracticeTableTrayInlineStyles() {
   }
 }
 
+function clearPracticeTableBoardInlineGeometry() {
+  if (!boardElement) {
+    return;
+  }
+  boardElement.style.removeProperty("width");
+  boardElement.style.removeProperty("height");
+  boardElement.style.removeProperty("grid-template-columns");
+  boardElement.style.removeProperty("grid-template-rows");
+  boardElement.style.removeProperty("aspect-ratio");
+  boardElement.style.removeProperty("max-width");
+  boardElement.style.removeProperty("min-width");
+  boardElement.style.removeProperty("min-height");
+  boardElement.style.removeProperty("max-height");
+  boardElement.style.removeProperty("align-content");
+  void boardElement.offsetHeight;
+}
+
+/** v451: clear orientation-specific inline layout (no generation bump). */
+function clearPracticeTableOrientationLayoutState() {
+  if (typeof document === "undefined" || !practiceTableIsActive()) {
+    return;
+  }
+  clearPracticeTableBoardInlineGeometry();
+  clearPracticeTablePufflyBoardAnchor();
+  clearPracticeTablePuzzleMiniLandscapeGroupCenter();
+  clearPracticeTablePuzzleLandscapeVars();
+  clearPracticeTableTrayInlineStyles();
+}
+
+/** v450/v451: bump generation + clear before orientation relayout. */
+function resetPracticeTableOrientationLayoutState() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  practiceTableLayoutPassGeneration += 1;
+  lastPracticeTableOrientationChangeAt = Date.now();
+  clearPracticeTableOrientationLayoutState();
+}
+
+function practiceTableOrientationRelayoutPass() {
+  if (isRulesPanelBlockingTableRelayout()) {
+    return;
+  }
+  if (
+    typeof document !== "undefined" &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode")
+  ) {
+    clearPracticeTableOrientationLayoutState();
+    boardGeometryLockedAt = 0;
+  }
+  if (
+    typeof document === "undefined" ||
+    !document.body.classList.contains("practice-table-layout") ||
+    document.body.classList.contains("friend-mode")
+  ) {
+    lockBoardGeometry(true);
+    render(lastStatusMessage);
+    return;
+  }
+  syncPracticeTableLayoutVarsFromDom();
+  lockBoardGeometry(true);
+  render(lastStatusMessage);
+}
+
+function schedulePracticeTableOrientationRelayout() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (boardGeometryResizeTimer) {
+    clearTimeout(boardGeometryResizeTimer);
+    boardGeometryResizeTimer = null;
+  }
+  if (practiceTableOrientationRelayoutTimer) {
+    clearTimeout(practiceTableOrientationRelayoutTimer);
+    practiceTableOrientationRelayoutTimer = null;
+  }
+  if (typeof document !== "undefined" && document.body.classList.contains("practice-table-layout")) {
+    document.documentElement.style.width = "100%";
+    document.body.style.width = "100%";
+  }
+  resetPracticeTableOrientationLayoutState();
+  boardGeometryLockedAt = 0;
+  const passGeneration = practiceTableLayoutPassGeneration;
+  practiceTableOrientationRelayoutPass();
+  window.requestAnimationFrame(() => {
+    if (passGeneration !== practiceTableLayoutPassGeneration) {
+      return;
+    }
+    practiceTableOrientationRelayoutPass();
+    window.requestAnimationFrame(() => {
+      if (passGeneration !== practiceTableLayoutPassGeneration) {
+        return;
+      }
+      practiceTableOrientationRelayoutPass();
+    });
+  });
+  practiceTableOrientationRelayoutTimer = setTimeout(() => {
+    practiceTableOrientationRelayoutTimer = null;
+    if (passGeneration !== practiceTableLayoutPassGeneration) {
+      return;
+    }
+    practiceTableOrientationRelayoutPass();
+  }, PRACTICE_TABLE_ORIENTATION_RELAYOUT_DEFER_MS);
+}
+
 function isFriendModeUiActive() {
   return (
     playMode === "friend" ||
     (typeof document !== "undefined" && document.body.classList.contains("friend-mode"))
   );
+}
+
+function clearPracticeTablePufflyBoardAnchor() {
+  const dealerUnit = document.getElementById("puffly-dealer-unit");
+  dealerUnit?.style.removeProperty("--practice-puffly-shift-x");
+  dealerUnit?.style.removeProperty("--practice-puffly-shift-y");
+  dealerUnit?.style.removeProperty("--practice-puffly-arm-offset-y");
+}
+
+function practiceTablePuzzleMiniLandscapeGroupCenterActive() {
+  return (
+    practiceTableIsActive() &&
+    selectedGameId === "puzzle" &&
+    practiceTableIsLandscapeTablet() &&
+    getPuzzleGridSizeFromState().rows === 2
+  );
+}
+
+function clearPracticeTablePuzzleMiniLandscapeGroupCenter() {
+  const cluster = document.getElementById("practice-play-cluster");
+  cluster?.style.removeProperty("--practice-mini-group-shift-x");
+  const captures = document.querySelector("#game-board-matrix .board-and-captures");
+  captures?.style.removeProperty("--practice-mini-group-shift-x");
+}
+
+function practiceTableMiniLandscapeGroupShiftPx(captures, scene, board) {
+  const sceneRect = scene.getBoundingClientRect();
+  const capturesRect = captures.getBoundingClientRect();
+  if (sceneRect.width <= 0 || capturesRect.width <= 0) {
+    return 0;
+  }
+  const leftGap = capturesRect.left - sceneRect.left;
+  const rightGap = sceneRect.right - capturesRect.right;
+  const gapShift = Math.round((rightGap - leftGap) / 2);
+
+  const boardRect = board?.getBoundingClientRect();
+  const seatRow = document.getElementById("player-seat-row");
+  let seatShift = 0;
+  if (boardRect && boardRect.width > 0 && seatRow) {
+    const seatRect = seatRow.getBoundingClientRect();
+    const seatCenterX = seatRect.left + seatRect.width / 2;
+    const boardCenterX = boardRect.left + boardRect.width / 2;
+    seatShift = Math.round(seatCenterX - boardCenterX);
+  }
+
+  if (Math.abs(rightGap - leftGap) >= 2) {
+    return gapShift;
+  }
+  if (Math.abs(seatShift) >= 1) {
+    return seatShift;
+  }
+  const sceneCenterX = sceneRect.left + sceneRect.width / 2;
+  const anchorCenterX =
+    boardRect && boardRect.width > 0
+      ? boardRect.left + boardRect.width / 2
+      : capturesRect.left + capturesRect.width / 2;
+  return Math.round(sceneCenterX - anchorCenterX);
+}
+
+function syncPracticeTablePuzzleMiniLandscapeGroupCenter() {
+  if (!practiceTablePuzzleMiniLandscapeGroupCenterActive()) {
+    clearPracticeTablePuzzleMiniLandscapeGroupCenter();
+    return;
+  }
+  const cluster = document.getElementById("practice-play-cluster");
+  const captures = document.querySelector("#game-board-matrix .board-and-captures");
+  const scene = document.getElementById("practice-table-scene");
+  const board = boardElement;
+  if (!cluster || !captures || !scene) {
+    return;
+  }
+  cluster.style.setProperty("--practice-mini-group-shift-x", "0px");
+  void cluster.offsetHeight;
+  const delta = practiceTableMiniLandscapeGroupShiftPx(captures, scene, board);
+  if (Math.abs(delta) < 1) {
+    cluster.style.removeProperty("--practice-mini-group-shift-x");
+    return;
+  }
+  cluster.style.setProperty("--practice-mini-group-shift-x", `${delta}px`);
+}
+
+function syncPracticeTablePuzzleLandscapeCharacterLayout() {
+  syncPracticeTablePuzzleMiniLandscapeGroupCenter();
+  syncPracticeTablePufflyBoardAnchor();
+  syncPracticeTablePufflyBodyLift();
+}
+
+function schedulePracticeTablePuzzleLandscapeCharacterLayout() {
+  const passGeneration = practiceTableLayoutPassGeneration;
+  syncPracticeTablePuzzleLandscapeCharacterLayout();
+  window.requestAnimationFrame(() => {
+    if (
+      passGeneration !== practiceTableLayoutPassGeneration ||
+      !practiceTableIsActive()
+    ) {
+      return;
+    }
+    syncPracticeTablePuzzleLandscapeCharacterLayout();
+    window.requestAnimationFrame(() => {
+      if (
+        passGeneration !== practiceTableLayoutPassGeneration ||
+        !practiceTableIsActive()
+      ) {
+        return;
+      }
+      syncPracticeTablePuzzleLandscapeCharacterLayout();
+    });
+  });
+}
+
+const PRACTICE_PUZZLE_LANDSCAPE_ARM_BOARD_GAP_PX = 10;
+const PRACTICE_PUZZLE_LANDSCAPE_BODY_LIFT_BASE_PX = -14;
+const PRACTICE_PUZZLE_LANDSCAPE_BODY_LIFT_MAX_PX = -22;
+const PRACTICE_PUZZLE_MINI_LANDSCAPE_ARM_BOARD_GAP_PX = 12;
+const PRACTICE_PUZZLE_MINI_LANDSCAPE_BODY_LIFT_BASE_PX = -18;
+const PRACTICE_PUZZLE_MINI_LANDSCAPE_BODY_LIFT_MAX_PX = -38;
+
+function syncPracticeTablePufflyBodyLift() {
+  if (
+    !practiceTableIsActive() ||
+    selectedGameId !== "puzzle" ||
+    !practiceTableIsLandscapeTablet()
+  ) {
+    return;
+  }
+  const dealerUnit = document.getElementById("puffly-dealer-unit");
+  const arm = document.querySelector("#rive-character-host .puffly-skeleton-arm");
+  const board = boardElement;
+  if (!dealerUnit || !arm || !board?.classList.contains("puzzle-board")) {
+    return;
+  }
+  const isMini = practiceTablePuzzleMiniLandscapeGroupCenterActive();
+  const armBoardGapPx = isMini
+    ? PRACTICE_PUZZLE_MINI_LANDSCAPE_ARM_BOARD_GAP_PX
+    : PRACTICE_PUZZLE_LANDSCAPE_ARM_BOARD_GAP_PX;
+  const bodyLiftBasePx = isMini
+    ? PRACTICE_PUZZLE_MINI_LANDSCAPE_BODY_LIFT_BASE_PX
+    : PRACTICE_PUZZLE_LANDSCAPE_BODY_LIFT_BASE_PX;
+  const bodyLiftMaxPx = isMini
+    ? PRACTICE_PUZZLE_MINI_LANDSCAPE_BODY_LIFT_MAX_PX
+    : PRACTICE_PUZZLE_LANDSCAPE_BODY_LIFT_MAX_PX;
+  dealerUnit.style.removeProperty("--practice-puffly-arm-offset-y");
+  dealerUnit.style.setProperty("--practice-puffly-shift-y", `${bodyLiftBasePx}px`);
+  void arm.offsetHeight;
+  const armRect = arm.getBoundingClientRect();
+  const boardRect = board.getBoundingClientRect();
+  if (armRect.height <= 0 || boardRect.height <= 0) {
+    return;
+  }
+  const currentGap = boardRect.top - armRect.bottom;
+  let shiftY = bodyLiftBasePx;
+  if (currentGap < armBoardGapPx) {
+    shiftY = Math.max(
+      bodyLiftMaxPx,
+      shiftY + Math.round(currentGap - armBoardGapPx),
+    );
+  }
+  dealerUnit.style.setProperty("--practice-puffly-shift-y", `${shiftY}px`);
+}
+
+function syncPracticeTablePufflyBoardAnchor() {
+  if (
+    !practiceTableIsActive() ||
+    selectedGameId !== "puzzle" ||
+    !practiceTableIsLandscapeTablet()
+  ) {
+    clearPracticeTablePufflyBoardAnchor();
+    return;
+  }
+  const dealerUnit = document.getElementById("puffly-dealer-unit");
+  const board = boardElement;
+  if (!dealerUnit || !board?.classList.contains("puzzle-board")) {
+    clearPracticeTablePufflyBoardAnchor();
+    return;
+  }
+  const anchorEl = board;
+  const dealerRect = dealerUnit.getBoundingClientRect();
+  const anchorRect = anchorEl.getBoundingClientRect();
+  if (dealerRect.width <= 0 || anchorRect.width <= 0) {
+    return;
+  }
+  let pufflyCenterX = dealerRect.left + dealerRect.width / 2;
+  if (practiceTablePuzzleMiniLandscapeGroupCenterActive()) {
+    const torso = document.querySelector("#puffly-torso-layer .puffly-skeleton-torso");
+    const torsoRect = torso?.getBoundingClientRect();
+    if (torsoRect && torsoRect.width > 0) {
+      pufflyCenterX = torsoRect.left + torsoRect.width / 2;
+    }
+  }
+  const anchorCenterX = anchorRect.left + anchorRect.width / 2;
+  const delta = Math.round(anchorCenterX - pufflyCenterX);
+  if (Math.abs(delta) < 1) {
+    clearPracticeTablePufflyBoardAnchor();
+    return;
+  }
+  dealerUnit.style.setProperty("--practice-puffly-shift-x", `${delta}px`);
+}
+
+function syncPracticeTableTrayHeights() {
+  if (!practiceTableIsActive() || !boardElement) {
+    return;
+  }
+  const boardWrap = boardElement.parentElement;
+  if (!boardWrap) {
+    return;
+  }
+  const captures = boardWrap.closest(".board-and-captures");
+  let boardHeight;
+  if (practiceTableIsLandscapeTablet() && selectedGameId === "puzzle") {
+    boardHeight = Math.round(boardElement.getBoundingClientRect().height);
+  } else if (
+    practiceTableIsLandscapeTablet() &&
+    (selectedGameId === "checkers" || selectedGameId === "fourinarow")
+  ) {
+    boardHeight = Math.round(boardElement.getBoundingClientRect().height);
+  } else if (practiceTableIsLandscapeTablet()) {
+    boardHeight = Math.round(boardWrap.getBoundingClientRect().height);
+  } else {
+    boardHeight = Math.round(
+      boardElement.getBoundingClientRect().height || boardWrap.getBoundingClientRect().height,
+    );
+  }
+  if (practiceTableFootprintUnificationActive() && captures) {
+    const footprintHeight = Number.parseFloat(
+      captures.style.getPropertyValue("--practice-footprint-board-height"),
+    );
+    if (footprintHeight > 0 && selectedGameId !== "fourinarow") {
+      boardHeight = Math.round(footprintHeight);
+    }
+  }
+  if (boardHeight <= 0) {
+    return;
+  }
+  if (captures) {
+    captures.style.setProperty("--practice-board-height", `${boardHeight}px`);
+  }
+  const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
+  for (const tray of trays) {
+    tray.style.height = `${boardHeight}px`;
+    tray.style.maxHeight = `${boardHeight}px`;
+  }
 }
 
 function syncFriendModeTrayHeights() {
@@ -2240,6 +2609,16 @@ function finalizeBoardGeometryLock() {
   boardGeometryLockedAt = Date.now();
   if (isFriendModeUiActive()) {
     scheduleFriendModeTrayLayoutSync();
+    return;
+  }
+  if (practiceTableIsActive()) {
+    syncPracticeTableTrayHeights();
+    schedulePracticeTablePuzzleLandscapeCharacterLayout();
+    window.requestAnimationFrame(() => {
+      if (practiceTableIsActive()) {
+        syncPracticeTableTrayHeights();
+      }
+    });
   }
 }
 
@@ -2247,7 +2626,7 @@ function suspendPracticeTableLayoutForFriendMode() {
   if (typeof document === "undefined") {
     return;
   }
-  document.body.classList.remove("practice-table-layout", "practice-table-initializing");
+  document.body.classList.remove("practice-table-layout", "practice-table-initializing", "practice-setup-tray-open");
   clearPracticeTableViewportInlineStyles();
   clearPracticeTableTrayInlineStyles();
   lastPracticeTableChromeKey = "off";
@@ -2261,7 +2640,7 @@ function restorePracticeTableLayoutIfEnabled() {
     return;
   }
   if (!practiceTableUiStoredEnabled()) {
-    document.body.classList.remove("practice-table-layout", "practice-table-initializing");
+    document.body.classList.remove("practice-table-layout", "practice-table-initializing", "practice-setup-tray-open");
     clearPracticeTableViewportInlineStyles();
     return;
   }
@@ -2271,16 +2650,28 @@ function restorePracticeTableLayoutIfEnabled() {
   }
 }
 
+function isRulesPanelBlockingTableRelayout() {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  return (
+    document.body.classList.contains("rules-panel-open") ||
+    document.body.classList.contains("rules-panel-animating")
+  );
+}
+
 function schedulePracticeTableRelayoutIfNeeded() {
   updatePracticeTableChrome();
   if (
     typeof document === "undefined" ||
     !document.body.classList.contains("practice-table-layout") ||
-    document.body.classList.contains("friend-mode")
+    document.body.classList.contains("friend-mode") ||
+    isRulesPanelBlockingTableRelayout()
   ) {
     return;
   }
   window.requestAnimationFrame(() => {
+    syncPracticeTableLayoutVarsFromDom();
     lockBoardGeometry(true);
   });
 }
@@ -2297,6 +2688,9 @@ function updatePracticeTableChrome() {
       lastPracticeTableChromeKey = "off";
       document.body.classList.remove("practice-table-initializing");
     }
+    if (typeof window.pufflyClosePracticeSetupTray === "function") {
+      window.pufflyClosePracticeSetupTray();
+    }
     const needsDomFlatten =
       wasTableChrome ||
       playMode === "friend" ||
@@ -2312,18 +2706,98 @@ function updatePracticeTableChrome() {
   }
   const initializing = isStarterFlipPending();
   const chromeKey = initializing ? "init" : "play";
+  if (initializing && typeof window.pufflyClosePracticeSetupTray === "function") {
+    window.pufflyClosePracticeSetupTray();
+  }
   if (chromeKey === lastPracticeTableChromeKey) {
     document.body.classList.toggle("practice-table-initializing", initializing);
+    syncPracticeTableLayoutVarsFromDom();
     return;
   }
   lastPracticeTableChromeKey = chromeKey;
   document.body.classList.toggle("practice-table-initializing", initializing);
+  if (
+    chromeKey === "play" &&
+    typeof window.pufflyClosePracticeSetupTray === "function"
+  ) {
+    window.pufflyClosePracticeSetupTray();
+  }
   if (typeof window.pufflySyncPracticeTableDom === "function") {
     window.pufflySyncPracticeTableDom({ initializing, useTableLayout: true });
   }
   window.requestAnimationFrame(() => {
+    syncPracticeTableLayoutVarsFromDom();
     lockBoardGeometry(true);
+    window.requestAnimationFrame(() => {
+      syncPracticeTableLayoutVarsFromDom();
+      lockBoardGeometry(true);
+    });
   });
+}
+
+const PRACTICE_ART_CANVAS_PX = 1024;
+const PRACTICE_ART_SAFE_PORTRAIT = { top: 0.11, bottom: 0.13, x: 0.05 };
+const PRACTICE_ART_SAFE_LANDSCAPE = { top: 0.09, bottom: 0.11, x: 0.06 };
+
+function practiceTableArtSafeInsets() {
+  const portrait = Boolean(window.matchMedia?.("(orientation: portrait)")?.matches);
+  return portrait ? PRACTICE_ART_SAFE_PORTRAIT : PRACTICE_ART_SAFE_LANDSCAPE;
+}
+
+function practiceTableClearFrameInsetVars() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const root = document.documentElement;
+  root.style.removeProperty("--practice-stage-inset-top");
+  root.style.removeProperty("--practice-stage-inset-right");
+  root.style.removeProperty("--practice-stage-inset-bottom");
+  root.style.removeProperty("--practice-stage-inset-left");
+  document.body.classList.remove("practice-table-frame-synced");
+}
+
+function practiceTableClampFrameInset(value, sceneSpan) {
+  return Math.max(0, Math.min(sceneSpan, value));
+}
+
+/** v401/v402: map stage insets to cover-scaled 1024 art safe zones (single pass, no contain letterbox). */
+function practiceTableSyncFrameInsets() {
+  if (typeof document === "undefined" || !practiceTableIsActive()) {
+    practiceTableClearFrameInsetVars();
+    return;
+  }
+  const scene = document.getElementById("practice-table-scene");
+  if (!scene) {
+    return;
+  }
+  const sceneWidth = scene.clientWidth;
+  const sceneHeight = scene.clientHeight;
+  if (sceneWidth <= 0 || sceneHeight <= 0) {
+    return;
+  }
+  const safe = practiceTableArtSafeInsets();
+  const scale = Math.max(sceneWidth / PRACTICE_ART_CANVAS_PX, sceneHeight / PRACTICE_ART_CANVAS_PX);
+  const visibleArt = PRACTICE_ART_CANVAS_PX * scale;
+  const offsetX = (sceneWidth - visibleArt) / 2;
+  const offsetY = (sceneHeight - visibleArt) / 2;
+  const insetTop = practiceTableClampFrameInset(offsetY + visibleArt * safe.top, sceneHeight);
+  const insetBottom = practiceTableClampFrameInset(offsetY + visibleArt * safe.bottom, sceneHeight);
+  const insetLeft = practiceTableClampFrameInset(offsetX + visibleArt * safe.x, sceneWidth);
+  const insetRight = practiceTableClampFrameInset(offsetX + visibleArt * safe.x, sceneWidth);
+  const root = document.documentElement;
+  root.style.setProperty("--practice-stage-inset-top", `${Math.round(insetTop)}px`);
+  root.style.setProperty("--practice-stage-inset-bottom", `${Math.round(insetBottom)}px`);
+  root.style.setProperty("--practice-stage-inset-left", `${Math.round(insetLeft)}px`);
+  root.style.setProperty("--practice-stage-inset-right", `${Math.round(insetRight)}px`);
+  document.body.classList.add("practice-table-frame-synced");
+}
+
+function syncPracticeTableLayoutVarsFromDom() {
+  practiceTableSyncFrameInsets();
+  schedulePracticeTablePuzzleLandscapeCharacterLayout();
+  if (typeof window.pufflySyncPracticeTableNavVars === "function") {
+    window.pufflySyncPracticeTableNavVars();
+  }
 }
 
 function practiceTableIsDesktopWide() {
@@ -2335,13 +2809,25 @@ function practiceTableIsDesktopWide() {
   );
 }
 
+function practiceTableViewportIsLandscapeLayout() {
+  return typeof window !== "undefined" && window.innerWidth > window.innerHeight;
+}
+
 function practiceTableIsLandscapeTablet() {
   return (
     typeof window !== "undefined" &&
     window.innerWidth >= 768 &&
-    window.matchMedia?.("(orientation: landscape)")?.matches &&
+    practiceTableViewportIsLandscapeLayout() &&
     document.body.classList.contains("practice-table-layout") &&
     !document.body.classList.contains("friend-mode")
+  );
+}
+
+function practiceTableIsPortraitTablet() {
+  return (
+    typeof window !== "undefined" &&
+    !practiceTableViewportIsLandscapeLayout() &&
+    practiceTableIsActive()
   );
 }
 
@@ -2368,7 +2854,23 @@ function practiceTableSeatTopHeightBudget(wrapRect, padTop, padBottom, clearance
   );
 }
 
+function practiceTablePlayClusterBoardHeightBudget(clearancePx = 8) {
+  const cluster = document.getElementById("practice-play-cluster");
+  const wrap = document.querySelector("#game-board-matrix .board-wrap");
+  const playerSeat = document.getElementById("player-seat-row");
+  if (!cluster || !wrap || cluster.clientHeight <= 0) {
+    return null;
+  }
+  const clusterRect = cluster.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const seatTop = playerSeat?.getBoundingClientRect().top ?? clusterRect.bottom;
+  const capBottom = Math.min(clusterRect.bottom, seatTop);
+  return Math.max(0, capBottom - wrapRect.top - clearancePx);
+}
+
 const PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX = (3 + 4) * 2;
+const PRACTICE_TABLE_PORTRAIT_TRAY_COLUMN_PX = 56;
+const PRACTICE_TABLE_PUZZLE_PORTRAIT_TRAY_COLUMN_PX = 98;
 
 function practiceTablePuzzleTrayTargetVisible(rows) {
   if (rows === 2) {
@@ -2383,8 +2885,148 @@ function practiceTablePuzzleTrayTargetVisible(rows) {
   return 4;
 }
 
-function practiceTablePuzzleLandscapeTrayColumnPx() {
+function practiceTableLandscapeCheckersTrayBudgetPx() {
   return 112;
+}
+
+function practiceTableLandscapeBoardInnerWidthPx(
+  landscapeTrayBudgetPx,
+  trayGapPx,
+  boardBorderPx,
+) {
+  const scene = document.getElementById("practice-table-scene");
+  if (!scene) {
+    return 0;
+  }
+  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 0;
+  const sceneWidth = scene.clientWidth > 0 ? scene.clientWidth : viewportWidth;
+  const groupCap = practiceTableLandscapeBoardMaxWidthPx();
+  const layoutWidth = Math.min(
+    sceneWidth > 0 ? sceneWidth : viewportWidth,
+    viewportWidth > 0 ? viewportWidth : sceneWidth,
+    groupCap > 0 ? groupCap : sceneWidth,
+  );
+  return Math.max(
+    0,
+    layoutWidth - landscapeTrayBudgetPx - trayGapPx * 2 - boardBorderPx,
+  );
+}
+
+function applyPracticeTableCheckersLandscapeBoardStyles() {
+  if (!boardElement || selectedGameId !== "checkers") {
+    return;
+  }
+  if (!practiceTableIsLandscapeTablet() || !practiceTableIsActive()) {
+    boardElement.style.removeProperty("max-width");
+    boardElement.style.removeProperty("min-width");
+    boardElement.style.removeProperty("max-height");
+    return;
+  }
+  boardElement.style.setProperty("max-width", "none");
+  boardElement.style.setProperty("min-width", "0");
+  boardElement.style.setProperty("min-height", "0");
+  boardElement.style.setProperty("max-height", "none");
+}
+
+function applyPracticeTableFourLandscapeBoardStyles() {
+  if (!boardElement || selectedGameId !== "fourinarow") {
+    return;
+  }
+  if (!practiceTableIsLandscapeTablet() || !practiceTableIsActive()) {
+    boardElement.style.removeProperty("max-width");
+    boardElement.style.removeProperty("min-width");
+    return;
+  }
+  boardElement.style.setProperty("max-width", "none");
+  boardElement.style.setProperty("min-width", "0");
+}
+
+function practiceTablePuzzleLandscapeTrayColumnPx() {
+  if (practiceTableLandscapePuzzleCellPx > 0) {
+    return practiceTableLandscapePuzzleCellPx;
+  }
+  return 112;
+}
+
+function computePracticeTableLandscapePuzzleCell(
+  innerContentWidth,
+  innerContentHeight,
+  rows,
+  cols,
+  tableBoardScale,
+) {
+  const puzzleInnerWidth = Math.max(
+    0,
+    innerContentWidth - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX,
+  );
+  const puzzleInnerHeight = Math.max(
+    0,
+    innerContentHeight - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX,
+  );
+  const refCell = computePracticeTableCheckersReferenceCell(
+    innerContentWidth,
+    innerContentHeight,
+    tableBoardScale,
+  );
+  const cellFromRef = Math.floor((refCell * BOARD_SIZE) / cols);
+  const cellFromWidth = Math.floor((puzzleInnerWidth * tableBoardScale) / cols);
+  const cellFromHeight = Math.floor((puzzleInnerHeight * tableBoardScale) / rows);
+  return Math.max(
+    1,
+    Math.min(cellFromRef, cellFromWidth, cellFromHeight),
+  );
+}
+
+function applyPracticeTablePuzzleBoardCellStyles(cell, rows, cols) {
+  const boardWidth = cell * cols + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+  const boardHeight = cell * rows + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+  boardElement.style.width = `${boardWidth}px`;
+  boardElement.style.height = `${boardHeight}px`;
+  boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
+  boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
+}
+
+function practiceTablePuzzleBoardBottomPx() {
+  return boardElement?.getBoundingClientRect().bottom ?? 0;
+}
+
+function syncPracticeTablePuzzleTrayHeightsToBoardElement() {
+  if (!boardElement) {
+    return;
+  }
+  const boardHeight = Math.round(boardElement.getBoundingClientRect().height);
+  if (boardHeight <= 0) {
+    return;
+  }
+  const captures = boardElement.parentElement?.closest(".board-and-captures");
+  if (captures) {
+    captures.style.setProperty("--practice-board-height", `${boardHeight}px`);
+  }
+  const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
+  for (const tray of trays) {
+    tray.style.height = `${boardHeight}px`;
+    tray.style.maxHeight = `${boardHeight}px`;
+  }
+}
+
+function shrinkPracticeTablePuzzleLandscapeCellForSeat(cell, rows, cols, clearancePx) {
+  const playerSeat = document.getElementById("player-seat-row");
+  if (!playerSeat || !practiceTableIsLandscapeTablet() || cell <= 1) {
+    return cell;
+  }
+  const minCell = Math.max(1, Math.min(cell, MIN_TOUCH_CELL_PX));
+  let testCell = cell;
+  while (testCell > minCell) {
+    applyPracticeTablePuzzleBoardCellStyles(testCell, rows, cols);
+    syncPracticeTablePuzzleTrayHeightsToBoardElement();
+    void boardElement.offsetHeight;
+    const seatTop = playerSeat.getBoundingClientRect().top;
+    if (practiceTablePuzzleBoardBottomPx() <= seatTop - clearancePx) {
+      break;
+    }
+    testCell -= 1;
+  }
+  return testCell;
 }
 
 function syncPracticeTablePuzzleGridBodyClasses() {
@@ -2440,6 +3082,7 @@ function clearPracticeTablePuzzleLandscapeVars() {
   practiceTableLandscapePuzzleCellPx = 0;
   practiceTableLandscapePuzzleBodyPx = 0;
   practiceTableLandscapePuzzleBoardHeightPx = 0;
+  practiceTablePortraitPuzzleCellPx = 0;
   const matrix = document.getElementById("game-board-matrix");
   if (!matrix) {
     return;
@@ -2447,10 +3090,15 @@ function clearPracticeTablePuzzleLandscapeVars() {
   matrix.style.removeProperty("--puzzle-cell-px");
   matrix.style.removeProperty("--puzzle-piece-body-px");
   matrix.style.removeProperty("--puzzle-landscape-scale");
+  matrix.style.removeProperty("--practice-puzzle-tray-column-px");
 }
 
 function syncPracticeTablePuzzleLandscapeScale(matrix, cell, rows, cols) {
   if (!matrix || !practiceTableIsLandscapeTablet()) {
+    return;
+  }
+  if (practiceTableIsActive()) {
+    matrix.style.removeProperty("--puzzle-landscape-scale");
     return;
   }
   const captures = matrix.querySelector(".board-and-captures");
@@ -2466,12 +3114,53 @@ function syncPracticeTablePuzzleLandscapeScale(matrix, cell, rows, cols) {
   const trayWidth = practiceTablePuzzleLandscapeTrayColumnPx();
   const boardWidth = cell * cols + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
   const naturalWidth = trayWidth * 2 + gapPx * 2 + boardWidth;
-  const maxWidth = Math.min(window.innerWidth * 0.96, 840);
+  const scene = document.getElementById("practice-table-scene");
+  const sceneWidth = scene?.clientWidth > 0 ? scene.clientWidth : window.innerWidth;
+  const maxWidth = practiceTableLandscapeBoardMaxWidthPx() || Math.floor(sceneWidth * 0.96);
   if (naturalWidth > maxWidth && naturalWidth > 0) {
     matrix.style.setProperty("--puzzle-landscape-scale", String(maxWidth / naturalWidth));
     return;
   }
   matrix.style.removeProperty("--puzzle-landscape-scale");
+}
+
+function applyPracticeTablePuzzlePortraitVars(cell, rows, cols, isPracticeTablePuzzle) {
+  const matrix = document.getElementById("game-board-matrix");
+  if (
+    !isPracticeTablePuzzle ||
+    !practiceTableFootprintUnificationActive() ||
+    !matrix ||
+    cell <= 0
+  ) {
+    practiceTablePortraitPuzzleCellPx = 0;
+    return;
+  }
+  practiceTablePortraitPuzzleCellPx = cell;
+  const bodyPx = practiceTablePuzzlePieceBodyPx(cell);
+  matrix.style.setProperty("--puzzle-cell-px", `${cell}px`);
+  matrix.style.setProperty("--puzzle-piece-body-px", `${bodyPx}px`);
+}
+
+function practiceTableActivePuzzleBoardCellPx() {
+  if (practiceTableIsLandscapeTablet() && practiceTableLandscapePuzzleCellPx > 0) {
+    return practiceTableLandscapePuzzleCellPx;
+  }
+  if (practiceTablePortraitPuzzleCellPx > 0) {
+    return practiceTablePortraitPuzzleCellPx;
+  }
+  const matrix = document.getElementById("game-board-matrix");
+  const fromVar = Number.parseFloat(matrix?.style.getPropertyValue("--puzzle-cell-px"));
+  if (fromVar > 0) {
+    return fromVar;
+  }
+  if (boardElement && selectedGameId === "puzzle") {
+    const { cols } = getPuzzleGridSizeFromState();
+    const boardWidth = boardElement.getBoundingClientRect().width;
+    if (boardWidth > 0 && cols > 0) {
+      return Math.max(1, Math.floor((boardWidth - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX) / cols));
+    }
+  }
+  return 0;
 }
 
 function applyPracticeTablePuzzleLandscapeVars(cell, rows, cols, isPracticeTablePuzzle) {
@@ -2486,6 +3175,7 @@ function applyPracticeTablePuzzleLandscapeVars(cell, rows, cols, isPracticeTable
   practiceTableLandscapePuzzleBoardHeightPx = cell * rows + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
   matrix.style.setProperty("--puzzle-cell-px", `${cell}px`);
   matrix.style.setProperty("--puzzle-piece-body-px", `${bodyPx}px`);
+  matrix.style.setProperty("--practice-puzzle-tray-column-px", `${cell}px`);
   syncPracticeTablePuzzleLandscapeScale(matrix, cell, rows, cols);
 }
 
@@ -2493,15 +3183,11 @@ function syncPracticeTablePuzzleTrayLandscapeTrayCaps() {
   if (!practiceTableIsActive() || selectedGameId !== "puzzle") {
     return;
   }
-  const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
-  if (practiceTableIsLandscapeTablet() && practiceTableLandscapePuzzleBoardHeightPx > 0) {
-    const boardHeight = practiceTableLandscapePuzzleBoardHeightPx;
-    for (const tray of trays) {
-      tray.style.maxHeight = `${boardHeight}px`;
-      tray.style.height = "";
-    }
+  if (practiceTableIsLandscapeTablet()) {
+    syncPracticeTableTrayHeights();
     return;
   }
+  const trays = document.querySelectorAll("#game-board-matrix .captured-tray");
   for (const tray of trays) {
     tray.style.height = "";
     tray.style.maxHeight = "";
@@ -2509,10 +3195,13 @@ function syncPracticeTablePuzzleTrayLandscapeTrayCaps() {
 }
 
 function schedulePracticeTablePuzzleTrayPieceSizeSync() {
+  if (isRulesPanelBlockingTableRelayout()) {
+    return;
+  }
   window.requestAnimationFrame(() => {
     syncPracticeTablePuzzleTrayLandscapeTrayCaps();
     syncPracticeTablePuzzleTrayPieceSizes();
-    if (practiceTableIsLandscapeTablet()) {
+    if (practiceTableIsLandscapeTablet() || practiceTableFootprintUnificationActive()) {
       window.requestAnimationFrame(() => {
         syncPracticeTablePuzzleTrayLandscapeTrayCaps();
         syncPracticeTablePuzzleTrayPieceSizes();
@@ -2549,6 +3238,10 @@ function syncPracticeTablePuzzleTrayPieceSizes() {
       Math.floor((innerHeight - gapPx * (slotCount - 1)) / slotCount),
     );
     let pieceSize = Math.min(innerWidth, fromHeight);
+    const boardCellPx = practiceTableActivePuzzleBoardCellPx();
+    if (boardCellPx > 0) {
+      pieceSize = Math.min(innerWidth, boardCellPx, fromHeight);
+    }
     if (isLandscape && practiceTableLandscapePuzzleCellPx > 0) {
       pieceSize = Math.min(innerWidth, practiceTableLandscapePuzzleCellPx);
     } else if (fromHeight >= MIN_TOUCH_CELL_PX) {
@@ -2578,12 +3271,269 @@ function touchTargetCellSize(innerContentWidth, innerContentHeight, tableBoardSc
   return touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
 }
 
-function practiceTableBoardMaxContentWidth() {
-  if (!practiceTableIsDesktopWide() && !practiceTableIsLandscapeTablet()) {
-    return null;
+function practiceTablePracticeFrameInsetX() {
+  const stage = document.getElementById("practice-stage");
+  const scene = document.getElementById("practice-table-scene");
+  if (!stage || !scene) {
+    return 0;
+  }
+  const sceneRect = scene.getBoundingClientRect();
+  const stageRect = stage.getBoundingClientRect();
+  if (sceneRect.width <= 0) {
+    return 0;
+  }
+  if (document.body.classList.contains("practice-table-frame-synced")) {
+    return Math.max(0, stageRect.left - sceneRect.left);
+  }
+  const sideInset = Math.max(0, (sceneRect.width - stageRect.width) / 2);
+  const leftGap = Math.max(0, stageRect.left - sceneRect.left);
+  return sideInset + leftGap;
+}
+
+function practiceTableLandscapeChromeReservePx() {
+  if (
+    practiceTableIsLandscapeTablet() &&
+    selectedGameId === "puzzle" &&
+    practiceTableIsActive()
+  ) {
+    return 340;
+  }
+  return 320;
+}
+
+function practiceTableBoardSeatClearancePx() {
+  if (
+    practiceTableIsLandscapeTablet() &&
+    selectedGameId === "puzzle" &&
+    practiceTableIsActive()
+  ) {
+    return 16;
+  }
+  return 8;
+}
+
+function practiceTableLandscapeBoardMaxWidthPx() {
+  if (typeof window === "undefined") {
+    return 840;
   }
   const scene = document.getElementById("practice-table-scene");
+  const sceneWidth = scene?.clientWidth > 0 ? scene.clientWidth : window.innerWidth;
+  const heightBudget = Math.max(
+    320,
+    window.innerHeight - practiceTableLandscapeChromeReservePx(),
+  );
+  return Math.min(Math.floor(sceneWidth * 0.96), Math.floor(heightBudget * 0.98));
+}
+
+function practiceTableBoardGroupMaxWidthPx() {
+  if (typeof window === "undefined") {
+    return 640;
+  }
+  if (practiceTableIsLandscapeTablet()) {
+    return practiceTableLandscapeBoardMaxWidthPx();
+  }
+  return Math.min(Math.floor(window.innerWidth * 0.68), 640);
+}
+
+function practiceTableFootprintUnificationActive() {
+  return practiceTableIsPortraitTablet() && practiceTableIsActive();
+}
+
+function practiceTablePortraitTrayColumnPx() {
+  if (practiceTableFootprintUnificationActive()) {
+    if (selectedGameId === "puzzle") {
+      return PRACTICE_TABLE_PUZZLE_PORTRAIT_TRAY_COLUMN_PX;
+    }
+    return PRACTICE_TABLE_PORTRAIT_TRAY_COLUMN_PX;
+  }
+  if (selectedGameId === "puzzle" && practiceTableIsActive()) {
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 860px)").matches) {
+      return 98;
+    }
+    return 128;
+  }
+  return PRACTICE_TABLE_PORTRAIT_TRAY_COLUMN_PX;
+}
+
+function practiceTableCheckersBoardBorderPx(boardComputed) {
+  if (!boardComputed || boardComputed.boxSizing !== "border-box") {
+    return 0;
+  }
+  return (
+    (Number.parseFloat(boardComputed.borderTopWidth) || 0) +
+    (Number.parseFloat(boardComputed.borderBottomWidth) || 0) +
+    (Number.parseFloat(boardComputed.borderLeftWidth) || 0) +
+    (Number.parseFloat(boardComputed.borderRightWidth) || 0)
+  );
+}
+
+function practiceTableCheckersBoardPixelsFromCell(cell, boardBorderPx) {
+  return cell * BOARD_SIZE + boardBorderPx;
+}
+
+function computePracticeTableCheckersReferenceCell(
+  innerContentWidth,
+  innerContentHeight,
+  tableBoardScale,
+) {
+  const cellFromWidth = Math.floor((innerContentWidth * tableBoardScale) / BOARD_SIZE);
+  const cellFromHeight = Math.floor((innerContentHeight * tableBoardScale) / BOARD_SIZE);
+  return touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+}
+
+function shrinkPracticeTableReferenceCellForSeat(
+  cell,
+  boardBorderPx,
+  wrapRect,
+  padTop,
+  padBottom,
+) {
+  if (!practiceTableFootprintUnificationActive() || cell <= 1) {
+    return cell;
+  }
+  const playerSeat = document.getElementById("player-seat-row");
+  if (!playerSeat) {
+    return cell;
+  }
+  const seatTop = playerSeat.getBoundingClientRect().top;
+  let testCell = cell;
+  while (testCell > 1) {
+    const boardPixels = practiceTableCheckersBoardPixelsFromCell(testCell, boardBorderPx);
+    const estimatedBottom = wrapRect.top + padTop + boardPixels;
+    if (estimatedBottom <= seatTop - 4) {
+      break;
+    }
+    testCell -= 1;
+  }
+  return testCell;
+}
+
+function resolvePracticeTableCheckersFootprint(
+  innerContentWidth,
+  innerContentHeight,
+  tableBoardScale,
+  wrapRect,
+  padTop,
+  padBottom,
+  boardComputed,
+) {
+  const boardBorderPx = practiceTableCheckersBoardBorderPx(boardComputed);
+  let cell = computePracticeTableCheckersReferenceCell(
+    innerContentWidth,
+    innerContentHeight,
+    tableBoardScale,
+  );
+  cell = shrinkPracticeTableReferenceCellForSeat(
+    cell,
+    boardBorderPx,
+    wrapRect,
+    padTop,
+    padBottom,
+  );
+  const boardPixels = practiceTableCheckersBoardPixelsFromCell(cell, boardBorderPx);
+  return {
+    cell,
+    boardBorderPx,
+    boardPixels,
+    centerPx: cell * BOARD_SIZE,
+  };
+}
+
+function applyPracticeTableFootprintVars(footprint) {
+  if (!footprint || !practiceTableFootprintUnificationActive()) {
+    return;
+  }
+  const captures = document.querySelector("#game-board-matrix .board-and-captures");
+  if (!captures) {
+    return;
+  }
+  captures.style.setProperty("--practice-reference-cell", `${footprint.cell}px`);
+  captures.style.setProperty("--practice-footprint-center", `${footprint.centerPx}px`);
+  captures.style.setProperty("--practice-footprint-board-height", `${footprint.boardPixels}px`);
+}
+
+function clearPracticeTableFootprintVars() {
+  const captures = document.querySelector("#game-board-matrix .board-and-captures");
+  captures?.style.removeProperty("--practice-reference-cell");
+  captures?.style.removeProperty("--practice-footprint-center");
+  captures?.style.removeProperty("--practice-footprint-board-height");
+}
+
+function practiceTablePortraitBoardGroupWidthPx() {
+  const scene = document.getElementById("practice-table-scene");
+  const stage = document.getElementById("practice-stage");
   if (!scene) {
+    return 0;
+  }
+  const layoutWidth = stage && stage.clientWidth > 0 ? stage.clientWidth : scene.clientWidth;
+  if (layoutWidth <= 0) {
+    return 0;
+  }
+  return Math.min(layoutWidth, practiceTableBoardGroupMaxWidthPx());
+}
+
+function practiceTablePortraitCenterColumnBudgetPx() {
+  const groupCap = practiceTablePortraitBoardGroupWidthPx();
+  if (groupCap <= 0) {
+    return 0;
+  }
+  const captures = document.querySelector("#game-board-matrix .board-and-captures");
+  const capturesStyle = captures ? window.getComputedStyle(captures) : null;
+  const trayGapPx = capturesStyle
+    ? Number.parseFloat(capturesStyle.columnGap) ||
+      Number.parseFloat(capturesStyle.gap) ||
+      0
+    : 0;
+  const trayColumnPx = practiceTablePortraitTrayColumnPx();
+  return Math.max(0, groupCap - trayColumnPx * 2 - trayGapPx * 2);
+}
+
+function practiceTablePuzzlePortraitCenterBudgetPx(wrap) {
+  const centerBudget = practiceTablePortraitCenterColumnBudgetPx();
+  if (centerBudget > 0) {
+    return centerBudget;
+  }
+  if (!wrap) {
+    return null;
+  }
+  if (wrap.clientWidth > 0) {
+    return wrap.clientWidth;
+  }
+  const captures = wrap.closest(".board-and-captures");
+  if (!captures || captures.clientWidth <= 0) {
+    return null;
+  }
+  const capturesStyle = window.getComputedStyle(captures);
+  const trayGapPx =
+    Number.parseFloat(capturesStyle.columnGap) ||
+    Number.parseFloat(capturesStyle.gap) ||
+    0;
+  const trayColumnPx = practiceTablePortraitTrayColumnPx();
+  return Math.max(0, captures.clientWidth - trayColumnPx * 2 - trayGapPx * 2);
+}
+
+function practiceTableFourInARowFootprintCell(practiceFootprint, fourBoardChrome) {
+  const cellFromWidth = Math.floor((practiceFootprint.centerPx - fourBoardChrome) / FOUR_COLS);
+  const cellFromHeight = Math.floor((practiceFootprint.boardPixels - fourBoardChrome) / FOUR_ROWS);
+  return touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+}
+
+function practiceTableBoardMaxContentWidth() {
+  const scene = document.getElementById("practice-table-scene");
+  const stage = document.getElementById("practice-stage");
+  if (!scene) {
+    return null;
+  }
+  const layoutWidth = stage && stage.clientWidth > 0 ? stage.clientWidth : scene.clientWidth;
+  if (practiceTableIsPortraitTablet()) {
+    const centerBudget = practiceTablePortraitCenterColumnBudgetPx();
+    if (centerBudget > 0) {
+      return centerBudget;
+    }
+    const groupCap = Math.min(layoutWidth, practiceTableBoardGroupMaxWidthPx());
+    return Math.max(0, groupCap - 112 - 12);
+  }
+  if (!practiceTableIsDesktopWide() && !practiceTableIsLandscapeTablet()) {
     return null;
   }
   return Math.max(0, scene.clientWidth);
@@ -2618,11 +3568,25 @@ function practiceTablePuzzleBoardCellSize(
 }
 
 function scheduleBoardGeometryRelayout() {
+  if (
+    lastPracticeTableOrientationChangeAt > 0 &&
+    Date.now() - lastPracticeTableOrientationChangeAt <
+      PRACTICE_TABLE_ORIENTATION_RESIZE_COOLDOWN_MS
+  ) {
+    return;
+  }
   if (boardGeometryResizeTimer) {
     clearTimeout(boardGeometryResizeTimer);
   }
   boardGeometryResizeTimer = setTimeout(() => {
     boardGeometryResizeTimer = null;
+    if (
+      lastPracticeTableOrientationChangeAt > 0 &&
+      Date.now() - lastPracticeTableOrientationChangeAt <
+        PRACTICE_TABLE_ORIENTATION_RESIZE_COOLDOWN_MS
+    ) {
+      return;
+    }
     lockBoardGeometry(true);
     render(lastStatusMessage);
   }, BOARD_GEOMETRY_RESIZE_DEBOUNCE_MS);
@@ -2677,6 +3641,9 @@ function initPwaInstallHint() {
 }
 
 function lockBoardGeometry(force = false) {
+  if (isRulesPanelBlockingTableRelayout()) {
+    return;
+  }
   if (!force && Date.now() - boardGeometryLockedAt < BOARD_GEOMETRY_LOCK_TTL_MS) {
     return;
   }
@@ -2710,13 +3677,23 @@ function lockBoardGeometry(force = false) {
         (Number.parseFloat(boardComputed.borderLeftWidth) || 0) +
         (Number.parseFloat(boardComputed.borderRightWidth) || 0);
       const landscapeTrayBudgetPx =
-        selectedGameId === "puzzle"
-          ? practiceTablePuzzleLandscapeTrayColumnPx() * 2
-          : 112;
-      innerContentWidth = Math.max(
-        0,
-        scene.clientWidth - landscapeTrayBudgetPx - trayGapPx * 2 - boardBorderPx,
-      );
+        selectedGameId === "puzzle" && practiceTableIsActive()
+          ? practiceTableLandscapeCheckersTrayBudgetPx()
+          : selectedGameId === "puzzle"
+            ? practiceTablePuzzleLandscapeTrayColumnPx() * 2
+            : practiceTableLandscapeCheckersTrayBudgetPx();
+      if (selectedGameId === "checkers") {
+        innerContentWidth = practiceTableLandscapeBoardInnerWidthPx(
+          landscapeTrayBudgetPx,
+          trayGapPx,
+          boardBorderPx,
+        );
+      } else {
+        innerContentWidth = Math.max(
+          0,
+          scene.clientWidth - landscapeTrayBudgetPx - trayGapPx * 2 - boardBorderPx,
+        );
+      }
     }
   }
   const sceneBoardCap = practiceTableBoardMaxContentWidth();
@@ -2726,41 +3703,61 @@ function lockBoardGeometry(force = false) {
   const wrapRect = wrap.getBoundingClientRect();
   let remainingViewportHeight = Math.max(0, window.innerHeight - wrapRect.top - bodyBottomPadding - 8);
   if (practiceTableIsActive()) {
-    const useSeatTopCap = practiceTableIsLandscapeTablet() || selectedGameId === "puzzle";
-    if (useSeatTopCap) {
-      const seatBudget = practiceTableSeatTopHeightBudget(wrapRect, padTop, padBottom, 12);
-      if (seatBudget != null) {
-        remainingViewportHeight = Math.min(remainingViewportHeight, seatBudget);
-      }
-    } else {
-      const matrix = document.getElementById("game-board-matrix");
-      if (matrix) {
-        const matrixRect = matrix.getBoundingClientRect();
-        remainingViewportHeight = Math.min(
-          remainingViewportHeight,
-          Math.max(0, matrixRect.bottom - wrapRect.top - padTop - padBottom - 4),
-        );
-      }
+    const seatClearance = practiceTableBoardSeatClearancePx();
+    const seatBudget = practiceTableSeatTopHeightBudget(wrapRect, padTop, padBottom, seatClearance);
+    if (seatBudget != null) {
+      remainingViewportHeight = Math.min(remainingViewportHeight, seatBudget);
+    }
+    const clusterBudget = practiceTablePlayClusterBoardHeightBudget(seatClearance);
+    if (clusterBudget != null) {
+      remainingViewportHeight = Math.min(remainingViewportHeight, clusterBudget);
     }
   }
   const innerContentHeight = Math.max(0, remainingViewportHeight - padTop - padBottom);
+  const boardComputed = window.getComputedStyle(boardElement);
+  const footprintUnificationActive = practiceTableFootprintUnificationActive();
+  let practiceFootprint = null;
+  if (footprintUnificationActive) {
+    const unifiedWidthCap = practiceTableBoardMaxContentWidth();
+    if (unifiedWidthCap != null) {
+      innerContentWidth = unifiedWidthCap;
+    }
+    practiceFootprint = resolvePracticeTableCheckersFootprint(
+      innerContentWidth,
+      innerContentHeight,
+      tableBoardScale,
+      wrapRect,
+      padTop,
+      padBottom,
+      boardComputed,
+    );
+    applyPracticeTableFootprintVars(practiceFootprint);
+  } else {
+    clearPracticeTableFootprintVars();
+  }
+
   if (selectedGameId === "fourinarow") {
     // Account for board border + inner padding so edge circles never clip.
     const fourBoardChrome = (3 + 4) * 2;
-    const availableWidth = Math.max(0, Math.floor((innerContentWidth - fourBoardChrome) * tableBoardScale));
-    const availableHeight = Math.max(0, Math.floor((innerContentHeight - fourBoardChrome) * tableBoardScale));
-    const cellFromWidth = Math.floor(availableWidth / FOUR_COLS);
-    const cellFromHeight = Math.floor(availableHeight / FOUR_ROWS);
-    const cell = touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+    let cell;
+    if (footprintUnificationActive && practiceFootprint) {
+      cell = practiceTableFourInARowFootprintCell(practiceFootprint, fourBoardChrome);
+    } else {
+      const availableWidth = Math.max(0, Math.floor((innerContentWidth - fourBoardChrome) * tableBoardScale));
+      const availableHeight = Math.max(0, Math.floor((innerContentHeight - fourBoardChrome) * tableBoardScale));
+      const cellFromWidth = Math.floor(availableWidth / FOUR_COLS);
+      const cellFromHeight = Math.floor(availableHeight / FOUR_ROWS);
+      cell = touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+    }
     boardElement.style.width = `${cell * FOUR_COLS + fourBoardChrome}px`;
     boardElement.style.gridTemplateColumns = `repeat(${FOUR_COLS}, ${cell}px)`;
     boardElement.style.gridTemplateRows = `repeat(${FOUR_ROWS}, ${cell}px)`;
     if (practiceTableIsActive()) {
       boardElement.style.aspectRatio = "auto";
-      boardElement.style.maxWidth = "100%";
       boardElement.style.minHeight = "0";
-      boardElement.style.height = "";
+      boardElement.style.height = `${cell * FOUR_ROWS + fourBoardChrome}px`;
       boardElement.style.alignContent = "start";
+      applyPracticeTableFourLandscapeBoardStyles();
     } else {
       boardElement.style.minHeight = "";
       boardElement.style.alignContent = "";
@@ -2778,30 +3775,40 @@ function lockBoardGeometry(force = false) {
       puzzleInnerWidth = Math.max(0, innerContentWidth - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX);
       puzzleInnerHeight = Math.max(0, innerContentHeight - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX);
     }
-    const capByLandscapeTray =
-      isPracticeTablePuzzle && practiceTableIsLandscapeTablet();
-    let cell = practiceTablePuzzleBoardCellSize(
-      puzzleInnerWidth,
-      puzzleInnerHeight,
-      tableBoardScale,
-      rows,
-      cols,
-      capByLandscapeTray,
-    );
+    const capByLandscapeTray = false;
+    let cell;
     if (
       isPracticeTablePuzzle &&
       practiceTableIsLandscapeTablet() &&
-      rows >= 4 &&
-      cell > 1
+      !footprintUnificationActive
     ) {
-      const seatBudget = practiceTableSeatTopHeightBudget(wrapRect, padTop, padBottom, 12);
-      if (seatBudget != null) {
-        let shrinkSteps = 0;
-        while (cell > 1 && cell * rows > seatBudget * 0.65 && shrinkSteps < 2) {
-          cell -= 1;
-          shrinkSteps += 1;
-        }
-      }
+      cell = computePracticeTableLandscapePuzzleCell(
+        innerContentWidth,
+        innerContentHeight,
+        rows,
+        cols,
+        tableBoardScale,
+      );
+    } else if (footprintUnificationActive && practiceFootprint) {
+      const centerBudget =
+        practiceTablePuzzlePortraitCenterBudgetPx(wrap) ?? practiceFootprint.centerPx;
+      const innerCenter = Math.max(0, centerBudget - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX);
+      const innerFootprintHeight = Math.max(
+        0,
+        practiceFootprint.centerPx - PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX,
+      );
+      const cellFromWidth = Math.floor(innerCenter / cols);
+      const cellFromHeight = Math.floor(innerFootprintHeight / rows);
+      cell = Math.max(1, Math.min(cellFromWidth, cellFromHeight));
+    } else {
+      cell = practiceTablePuzzleBoardCellSize(
+        puzzleInnerWidth,
+        puzzleInnerHeight,
+        tableBoardScale,
+        rows,
+        cols,
+        capByLandscapeTray,
+      );
     }
     let boardWidth = cell * cols;
     let boardHeight = cell * rows;
@@ -2814,21 +3821,32 @@ function lockBoardGeometry(force = false) {
     boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
     boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
     if (isPracticeTablePuzzle) {
-      const playerSeat = document.getElementById("player-seat-row");
       if (
-        playerSeat &&
-        boardElement.getBoundingClientRect().bottom > playerSeat.getBoundingClientRect().top - 2 &&
-        cell > 1
+        practiceTableIsLandscapeTablet() &&
+        !footprintUnificationActive
       ) {
-        cell -= 1;
-        boardWidth = cell * cols + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
-        boardHeight = cell * rows + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
-        boardElement.style.width = `${boardWidth}px`;
-        boardElement.style.height = `${boardHeight}px`;
-        boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
-        boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
+        const seatClearance = practiceTableBoardSeatClearancePx();
+        cell = shrinkPracticeTablePuzzleLandscapeCellForSeat(cell, rows, cols, seatClearance);
+        applyPracticeTablePuzzleBoardCellStyles(cell, rows, cols);
+      } else {
+        const playerSeat = document.getElementById("player-seat-row");
+        if (
+          !footprintUnificationActive &&
+          playerSeat &&
+          boardElement.getBoundingClientRect().bottom > playerSeat.getBoundingClientRect().top - 2 &&
+          cell > 1
+        ) {
+          cell -= 1;
+          boardWidth = cell * cols + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+          boardHeight = cell * rows + PRACTICE_TABLE_PUZZLE_BOARD_CHROME_PX;
+          boardElement.style.width = `${boardWidth}px`;
+          boardElement.style.height = `${boardHeight}px`;
+          boardElement.style.gridTemplateColumns = `repeat(${cols}, ${cell}px)`;
+          boardElement.style.gridTemplateRows = `repeat(${rows}, ${cell}px)`;
+        }
       }
       applyPracticeTablePuzzleLandscapeVars(cell, rows, cols, isPracticeTablePuzzle);
+      applyPracticeTablePuzzlePortraitVars(cell, rows, cols, isPracticeTablePuzzle);
       schedulePracticeTablePuzzleTrayPieceSizeSync();
     } else {
       clearPracticeTablePuzzleLandscapeVars();
@@ -2840,7 +3858,6 @@ function lockBoardGeometry(force = false) {
   const isPracticeTableCheckers =
     document.body.classList.contains("practice-table-layout") &&
     !document.body.classList.contains("friend-mode");
-  const boardComputed = window.getComputedStyle(boardElement);
   let heightForCell = innerContentHeight;
   if (practiceTableIsLandscapeTablet() && isPracticeTableCheckers) {
     const boardBorderY =
@@ -2849,16 +3866,17 @@ function lockBoardGeometry(force = false) {
     heightForCell = Math.max(0, innerContentHeight - boardBorderY);
   }
 
-  const cellFromWidth = Math.floor((innerContentWidth * tableBoardScale) / BOARD_SIZE);
-  const cellFromHeight = Math.floor((heightForCell * tableBoardScale) / BOARD_SIZE);
-  let cell = touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+  let cell;
+  if (footprintUnificationActive && practiceFootprint) {
+    cell = practiceFootprint.cell;
+  } else {
+    const cellFromWidth = Math.floor((innerContentWidth * tableBoardScale) / BOARD_SIZE);
+    const cellFromHeight = Math.floor((heightForCell * tableBoardScale) / BOARD_SIZE);
+    cell = touchTargetCellSizeFromAxes(cellFromWidth, cellFromHeight);
+  }
   let boardPixels = cell * BOARD_SIZE;
-  if (isPracticeTableCheckers && boardComputed.boxSizing === "border-box") {
-    const boardBorderPx =
-      (Number.parseFloat(boardComputed.borderTopWidth) || 0) +
-      (Number.parseFloat(boardComputed.borderBottomWidth) || 0) +
-      (Number.parseFloat(boardComputed.borderLeftWidth) || 0) +
-      (Number.parseFloat(boardComputed.borderRightWidth) || 0);
+  const boardBorderPx = practiceTableCheckersBoardBorderPx(boardComputed);
+  if (isPracticeTableCheckers && boardBorderPx > 0) {
     boardPixels += boardBorderPx;
   }
 
@@ -2867,28 +3885,22 @@ function lockBoardGeometry(force = false) {
   boardElement.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, ${cell}px)`;
   boardElement.style.gridTemplateRows = `repeat(${BOARD_SIZE}, ${cell}px)`;
 
-  if (practiceTableIsLandscapeTablet() && isPracticeTableCheckers) {
+  if (isPracticeTableCheckers) {
     const playerSeat = document.getElementById("player-seat-row");
     if (
+      !footprintUnificationActive &&
       playerSeat &&
       boardElement.getBoundingClientRect().bottom > playerSeat.getBoundingClientRect().top - 4 &&
       cell > 1
     ) {
       cell -= 1;
-      boardPixels = cell * BOARD_SIZE;
-      if (boardComputed.boxSizing === "border-box") {
-        const boardBorderPx =
-          (Number.parseFloat(boardComputed.borderTopWidth) || 0) +
-          (Number.parseFloat(boardComputed.borderBottomWidth) || 0) +
-          (Number.parseFloat(boardComputed.borderLeftWidth) || 0) +
-          (Number.parseFloat(boardComputed.borderRightWidth) || 0);
-        boardPixels += boardBorderPx;
-      }
+      boardPixels = practiceTableCheckersBoardPixelsFromCell(cell, boardBorderPx);
       boardElement.style.width = `${boardPixels}px`;
       boardElement.style.height = `${boardPixels}px`;
       boardElement.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, ${cell}px)`;
       boardElement.style.gridTemplateRows = `repeat(${BOARD_SIZE}, ${cell}px)`;
     }
+    applyPracticeTableCheckersLandscapeBoardStyles();
   }
 
   finalizeBoardGeometryLock();
@@ -7794,6 +8806,9 @@ function updateDifficultyButtons() {
     button.classList.toggle("active", level === difficulty);
     button.disabled = busy || playMode !== "puffly";
   }
+  if (practiceTableIsActive() && typeof window.pufflyRefreshPracticePillNavLabels === "function") {
+    window.pufflyRefreshPracticePillNavLabels();
+  }
 }
 
 function updateFriendDifficultyButtons() {
@@ -8109,24 +9124,347 @@ function setPufflyState(mode, text, options = {}) {
   }
 }
 
-function hideRulesPanel() {
-  if (rulesAutoHideTimer) {
-    window.clearTimeout(rulesAutoHideTimer);
-    rulesAutoHideTimer = null;
+const RULES_DRAWER_DURATION_MS = 350;
+const RULES_DRAWER_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+const RULES_PANEL_Y_CENTER = "translateY(-50%)";
+const RULES_PANEL_CLOSED_TRANSFORM = `${RULES_PANEL_Y_CENTER} translateX(100%)`;
+const RULES_PANEL_OPEN_TRANSFORM = `${RULES_PANEL_Y_CENTER} translateX(0)`;
+
+let rulesDrawerGeneration = 0;
+
+function rulesDrawerPanelSlideWidthPx() {
+  if (!rulesPanel) {
+    return 340;
   }
-  rulesPanel?.classList.add("hidden");
+  const rect = rulesPanel.getBoundingClientRect();
+  const width = rect.width || rulesPanel.offsetWidth;
+  return Math.max(1, Math.round(width));
 }
 
-function showRulesPanel() {
-  rulesPanel?.classList.remove("hidden");
-  if (rulesAutoHideTimer) {
-    window.clearTimeout(rulesAutoHideTimer);
-  }
-  rulesAutoHideTimer = window.setTimeout(() => {
-    rulesPanel?.classList.add("hidden");
-    rulesAutoHideTimer = null;
-  }, 30000);
+function rulesDrawerPanelClosedSlideTransform() {
+  return `${RULES_PANEL_Y_CENTER} translateX(${rulesDrawerPanelSlideWidthPx()}px)`;
 }
+
+function rulesDrawerPanelOpenSlideTransform() {
+  return `${RULES_PANEL_Y_CENTER} translateX(0px)`;
+}
+
+function mountRulesDrawerToBody() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  if (rulesPanelBackdrop && rulesPanelBackdrop.parentElement !== document.body) {
+    document.body.appendChild(rulesPanelBackdrop);
+  }
+  if (!rulesPanel) {
+    return;
+  }
+  if (rulesPanel.parentElement === document.body) {
+    return;
+  }
+  if (rulesPanelBackdrop && rulesPanelBackdrop.parentElement === document.body) {
+    document.body.insertBefore(rulesPanel, rulesPanelBackdrop.nextSibling);
+    return;
+  }
+  document.body.appendChild(rulesPanel);
+}
+
+function isRulesPanelOpen() {
+  return (
+    document.body.classList.contains("rules-panel-open") ||
+    document.body.classList.contains("rules-panel-animating")
+  );
+}
+
+function cancelRulesDrawerAnimations() {
+  rulesPanel?.getAnimations().forEach((animation) => animation.cancel());
+  rulesPanelBackdrop?.getAnimations().forEach((animation) => animation.cancel());
+}
+
+function commitRulesDrawerAnimations() {
+  for (const animation of rulesPanel?.getAnimations() ?? []) {
+    animation.commitStyles?.();
+  }
+  for (const animation of rulesPanelBackdrop?.getAnimations() ?? []) {
+    animation.commitStyles?.();
+  }
+}
+
+function clearRulesDrawerInlineStyles() {
+  if (rulesPanel) {
+    rulesPanel.style.transition = "";
+    rulesPanel.style.transform = "";
+    rulesPanel.style.visibility = "";
+    rulesPanel.style.opacity = "";
+    rulesPanel.style.willChange = "";
+  }
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.style.transition = "";
+    rulesPanelBackdrop.style.opacity = "";
+    rulesPanelBackdrop.style.willChange = "";
+  }
+}
+
+function flushRulesDrawerLayout() {
+  if (!rulesPanel) {
+    return;
+  }
+  void rulesPanel.offsetWidth;
+  rulesPanel.getBoundingClientRect();
+}
+
+function nextRulesDrawerAnimationFrame() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(resolve);
+  });
+}
+
+async function waitRulesDrawerOpenFrame() {
+  await nextRulesDrawerAnimationFrame();
+  if (selectedGameId !== "puzzle") {
+    return;
+  }
+  await nextRulesDrawerAnimationFrame();
+  await nextRulesDrawerAnimationFrame();
+}
+
+function setRulesDrawerClosedVisual() {
+  if (rulesPanel) {
+    rulesPanel.style.transition = "none";
+    rulesPanel.style.transform = rulesDrawerPanelClosedSlideTransform();
+    // v425+: visible off-screen so WAAPI can paint on heavy Puzzle layout
+    rulesPanel.style.visibility = "visible";
+  }
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.style.transition = "none";
+    rulesPanelBackdrop.style.opacity = "0";
+  }
+}
+
+function setRulesDrawerOpenVisual() {
+  if (rulesPanel) {
+    rulesPanel.style.transition = "none";
+    rulesPanel.style.transform = rulesDrawerPanelOpenSlideTransform();
+    rulesPanel.style.visibility = "visible";
+  }
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.style.transition = "none";
+    rulesPanelBackdrop.style.opacity = "1";
+  }
+}
+
+function rulesDrawerPanelTransformKeyframe() {
+  if (!rulesPanel) {
+    return RULES_PANEL_CLOSED_TRANSFORM;
+  }
+  const transform = getComputedStyle(rulesPanel).transform;
+  return transform && transform !== "none" ? transform : RULES_PANEL_CLOSED_TRANSFORM;
+}
+
+function rulesDrawerBackdropOpacityKeyframe() {
+  if (!rulesPanelBackdrop) {
+    return 0;
+  }
+  const opacity = Number.parseFloat(getComputedStyle(rulesPanelBackdrop).opacity);
+  return Number.isFinite(opacity) ? opacity : 0;
+}
+
+function runRulesDrawerAnimation(panelKeyframes, backdropKeyframes) {
+  if (rulesPanel) {
+    rulesPanel.style.willChange = "transform";
+  }
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.style.willChange = "opacity";
+  }
+  const animations = [];
+  if (rulesPanel && typeof rulesPanel.animate === "function") {
+    animations.push(
+      rulesPanel.animate(panelKeyframes, {
+        duration: RULES_DRAWER_DURATION_MS,
+        easing: RULES_DRAWER_EASING,
+        fill: "forwards",
+      }),
+    );
+  }
+  if (rulesPanelBackdrop && typeof rulesPanelBackdrop.animate === "function") {
+    animations.push(
+      rulesPanelBackdrop.animate(backdropKeyframes, {
+        duration: RULES_DRAWER_DURATION_MS,
+        easing: "ease",
+        fill: "forwards",
+      }),
+    );
+  }
+  if (animations.length === 0) {
+    return Promise.resolve();
+  }
+  return Promise.all(animations.map((animation) => animation.finished)).catch(() => {});
+}
+
+function applyRulesDrawerOpenState() {
+  document.body.classList.remove("rules-panel-animating");
+  document.body.classList.add("rules-panel-open");
+  clearRulesDrawerInlineStyles();
+  rulesPanel?.classList.remove("hidden");
+  rulesPanel?.setAttribute("aria-hidden", "false");
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.hidden = false;
+    rulesPanelBackdrop.setAttribute("aria-hidden", "false");
+  }
+  rulesButton?.setAttribute("aria-expanded", "true");
+}
+
+function applyRulesDrawerClosedState() {
+  document.body.classList.remove("rules-panel-open", "rules-panel-animating");
+  clearRulesDrawerInlineStyles();
+  rulesPanel?.classList.add("hidden");
+  rulesPanel?.setAttribute("aria-hidden", "true");
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.hidden = true;
+    rulesPanelBackdrop.setAttribute("aria-hidden", "true");
+  }
+  rulesButton?.setAttribute("aria-expanded", "false");
+}
+
+async function showRulesPanel() {
+  if (
+    document.body.classList.contains("practice-setup-tray-open") &&
+    typeof window.pufflyClosePracticeSetupTray === "function"
+  ) {
+    window.pufflyClosePracticeSetupTray();
+  }
+  if (typeof window.pufflyClosePracticePillClusters === "function") {
+    window.pufflyClosePracticePillClusters();
+  }
+
+  const generation = (rulesDrawerGeneration += 1);
+  commitRulesDrawerAnimations();
+  cancelRulesDrawerAnimations();
+  mountRulesDrawerToBody();
+  document.body.classList.remove("rules-panel-open", "rules-panel-animating");
+  clearRulesDrawerInlineStyles();
+
+  rulesPanel?.classList.remove("hidden");
+  rulesPanel?.setAttribute("aria-hidden", "false");
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.hidden = false;
+    rulesPanelBackdrop.setAttribute("aria-hidden", "false");
+  }
+  rulesButton?.setAttribute("aria-expanded", "true");
+
+  setRulesDrawerClosedVisual();
+  flushRulesDrawerLayout();
+  await waitRulesDrawerOpenFrame();
+  if (generation !== rulesDrawerGeneration) {
+    return;
+  }
+  document.body.classList.add("rules-panel-animating");
+  if (selectedGameId === "puzzle") {
+    await nextRulesDrawerAnimationFrame();
+    await nextRulesDrawerAnimationFrame();
+  }
+  if (generation !== rulesDrawerGeneration) {
+    return;
+  }
+
+  const panelClosedTransform = rulesDrawerPanelClosedSlideTransform();
+  const panelOpenTransform = rulesDrawerPanelOpenSlideTransform();
+  if (rulesPanel) {
+    rulesPanel.style.transition = "none";
+    rulesPanel.style.transform = panelClosedTransform;
+    rulesPanel.style.visibility = "visible";
+  }
+  flushRulesDrawerLayout();
+
+  await runRulesDrawerAnimation(
+    [
+      { transform: panelClosedTransform },
+      { transform: panelOpenTransform },
+    ],
+    [{ opacity: 0 }, { opacity: 1 }],
+  );
+
+  if (generation !== rulesDrawerGeneration) {
+    return;
+  }
+
+  commitRulesDrawerAnimations();
+  cancelRulesDrawerAnimations();
+  applyRulesDrawerOpenState();
+}
+
+async function hideRulesPanel() {
+  const wasOpen = document.body.classList.contains("rules-panel-open");
+  const wasAnimating = document.body.classList.contains("rules-panel-animating");
+  const generation = (rulesDrawerGeneration += 1);
+
+  mountRulesDrawerToBody();
+  commitRulesDrawerAnimations();
+  cancelRulesDrawerAnimations();
+  document.body.classList.remove("rules-panel-open", "rules-panel-animating");
+  clearRulesDrawerInlineStyles();
+
+  if (!wasOpen && !wasAnimating && rulesPanel?.classList.contains("hidden")) {
+    applyRulesDrawerClosedState();
+    return;
+  }
+
+  rulesButton?.setAttribute("aria-expanded", "false");
+  rulesPanel?.setAttribute("aria-hidden", "true");
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.setAttribute("aria-hidden", "true");
+  }
+
+  if (!rulesPanel) {
+    applyRulesDrawerClosedState();
+    return;
+  }
+
+  if (!wasOpen && !wasAnimating) {
+    applyRulesDrawerClosedState();
+    return;
+  }
+
+  if (rulesPanelBackdrop) {
+    rulesPanelBackdrop.hidden = false;
+  }
+  rulesPanel.classList.remove("hidden");
+
+  const panelFromTransform =
+    wasOpen || !wasAnimating ? rulesDrawerPanelOpenSlideTransform() : rulesDrawerPanelTransformKeyframe();
+  const panelClosedTransform = rulesDrawerPanelClosedSlideTransform();
+  const backdropFromOpacity = wasOpen || !wasAnimating ? 1 : rulesDrawerBackdropOpacityKeyframe();
+
+  setRulesDrawerOpenVisual();
+  if (!wasOpen && wasAnimating) {
+    if (rulesPanel) {
+      rulesPanel.style.transform = panelFromTransform;
+    }
+    if (rulesPanelBackdrop) {
+      rulesPanelBackdrop.style.opacity = String(backdropFromOpacity);
+    }
+  }
+  flushRulesDrawerLayout();
+  document.body.classList.add("rules-panel-animating");
+
+  await runRulesDrawerAnimation(
+    [
+      { transform: panelFromTransform },
+      { transform: panelClosedTransform },
+    ],
+    [{ opacity: backdropFromOpacity }, { opacity: 0 }],
+  );
+
+  if (generation !== rulesDrawerGeneration) {
+    return;
+  }
+
+  commitRulesDrawerAnimations();
+  cancelRulesDrawerAnimations();
+  applyRulesDrawerClosedState();
+}
+
+window.pufflyHideRulesPanel = hideRulesPanel;
 
 function isFriendStatusAlert(text) {
   return /could not|unable|timed out|denied|invalid|error|failed|slow down|not found|unavailable|switch to friend|tap play/i.test(
@@ -8712,6 +10050,7 @@ function updateRulesForMode() {
   const isPuzzle = selectedGameId === "puzzle";
   if (playMode === "friend") {
     ruleLine1.classList.add("hidden");
+    ruleLine2.classList.remove("hidden");
     const team = remoteSession ? resolveFriendSessionColor(remoteSession) ?? remoteSession.color : null;
     const myColor = team ? playerDisplayName(team).toUpperCase() : null;
     ruleLine2.textContent = myColor
@@ -8721,12 +10060,14 @@ function updateRulesForMode() {
     ruleLine1.classList.remove("hidden");
     if (isPuzzle) {
       ruleLine1.textContent = "Blue Puffly Team and Green Team solve together.";
-      ruleLine2.textContent = "Flip to decide who places the first piece.";
+      ruleLine2.classList.add("hidden");
     } else if (isFour) {
-      ruleLine1.textContent = "Blue Puffly Team drops first and is computer controlled.";
+      ruleLine1.textContent = "Blue Puffly Team is computer controlled.";
+      ruleLine2.classList.remove("hidden");
       ruleLine2.textContent = "Green team is your side.";
     } else {
       ruleLine1.textContent = "Blue Puffly Team is computer controlled.";
+      ruleLine2.classList.remove("hidden");
       ruleLine2.textContent = "Green Frog Team is your side.";
     }
   }
@@ -10288,7 +11629,13 @@ async function flipStarter() {
     }
   }
   if (playMode === "puffly" && state.currentPlayer === computerPlayer) {
-    await runComputerTurn();
+    try {
+      await runComputerTurn();
+    } catch (error) {
+      console.error("[flipStarter] computer turn failed", error);
+      busy = false;
+      render(lastStatusMessage || "Make your move.", { suppressStatusVoice: true });
+    }
   }
 }
 
@@ -10766,14 +12113,15 @@ function beginPuzzleDrag(pieceId, source, event) {
 function render(statusMessage = "Make your move.", options = {}) {
   try {
     updateFriendLockOverlay();
-    renderUi(statusMessage, options);
     updatePracticeTableChrome();
+    renderUi(statusMessage, options);
   } catch (error) {
     console.error("[render] recover after error", error);
     state = createStateForGame(selectedGameId);
     releasePuzzleInteractionLocks();
     busy = false;
     try {
+      updatePracticeTableChrome();
       renderUi(statusMessage, options);
     } catch (retryError) {
       console.error("[render] fatal", retryError);
@@ -10800,6 +12148,7 @@ function renderUi(statusMessage = "Make your move.", options = {}) {
   undoButton?.classList.toggle("hidden", isPuzzleGame);
   controlsPanel?.classList.toggle("puzzle-no-undo", isPuzzleGame);
   document.body.classList.toggle("puzzle-game", selectedGameId === "puzzle");
+  document.body.classList.toggle("fourinarow-game", selectedGameId === "fourinarow");
   syncPracticeTablePuzzleGridBodyClasses();
   ensureRenderableGameState();
   if (!boardElement) {
@@ -12328,12 +13677,32 @@ undoButton?.addEventListener("click", async () => {
   }
 });
 
-rulesButton?.addEventListener("click", () => {
-  if (rulesPanel?.classList.contains("hidden")) {
-    showRulesPanel();
-  } else {
+rulesButton?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (isRulesPanelOpen()) {
     hideRulesPanel();
+    rulesButton.focus();
+  } else {
+    showRulesPanel();
   }
+});
+
+rulesPanelBackdrop?.addEventListener("click", () => {
+  hideRulesPanel();
+  rulesButton?.focus();
+});
+
+rulesPanelClose?.addEventListener("click", () => {
+  hideRulesPanel();
+  rulesButton?.focus();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !isRulesPanelOpen()) {
+    return;
+  }
+  hideRulesPanel();
+  rulesButton?.focus();
 });
 
 function switchGame(nextGameId) {
@@ -12961,7 +14330,7 @@ celebrationClose?.addEventListener("click", () => {
 
 if (typeof window !== "undefined") {
   window.addEventListener("resize", scheduleBoardGeometryRelayout);
-  window.addEventListener("orientationchange", scheduleBoardGeometryRelayout);
+  window.addEventListener("orientationchange", schedulePracticeTableOrientationRelayout);
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", scheduleBoardGeometryRelayout);
   }
@@ -13489,6 +14858,11 @@ if (typeof window !== "undefined") {
   window.pufflyRelayoutTableBoard = () => {
     schedulePracticeTableRelayoutIfNeeded();
   };
+  window.pufflySchedulePracticeTableOrientationRelayout = schedulePracticeTableOrientationRelayout;
+  window.pufflyResetPracticeTableOrientationLayoutState = resetPracticeTableOrientationLayoutState;
+  window.pufflyClearPracticeTableOrientationLayoutState = clearPracticeTableOrientationLayoutState;
+  window.pufflySyncPracticeTableFrameInsets = practiceTableSyncFrameInsets;
+  window.pufflySyncPracticeTableLayoutVars = syncPracticeTableLayoutVarsFromDom;
   window.pufflyPrimeVoice = primePufflyVoiceFromGesture;
   window.pufflyPrimeVoiceForRoomAction = () =>
     primePufflyVoiceFromGesture({ dismissFriendStart: speechNeedsInteractionUnlock });
@@ -13499,6 +14873,41 @@ if (typeof window !== "undefined") {
   window.pufflyPlayConnectedFromTap = playConnectedFromTap;
   window.pufflySpeechBuild = SPEECH_BUILD;
   window.pufflyClientBuild = CLIENT_BUILD;
+  window.pufflyDebugMiniLandscapeCenter = () => {
+    const cap = document.querySelector("#game-board-matrix .board-and-captures");
+    const board = boardElement;
+    const scene = document.getElementById("practice-table-scene");
+    const cluster = document.getElementById("practice-play-cluster");
+    const seatRow = document.getElementById("player-seat-row");
+    const torso = document.querySelector("#puffly-torso-layer .puffly-skeleton-torso");
+    const cx = (el) => {
+      const rect = el?.getBoundingClientRect();
+      return rect ? rect.left + rect.width / 2 : null;
+    };
+    const capRect = cap?.getBoundingClientRect();
+    const sceneRect = scene?.getBoundingClientRect();
+    return {
+      active: practiceTablePuzzleMiniLandscapeGroupCenterActive(),
+      shiftVar: cluster?.style.getPropertyValue("--practice-mini-group-shift-x") || "",
+      computedShift: cluster
+        ? getComputedStyle(cluster).getPropertyValue("--practice-mini-group-shift-x").trim()
+        : "",
+      gapShift: cap && scene ? practiceTableMiniLandscapeGroupShiftPx(cap, scene, board) : 0,
+      leftGap:
+        capRect && sceneRect ? Math.round(capRect.left - sceneRect.left) : null,
+      rightGap:
+        capRect && sceneRect ? Math.round(sceneRect.right - capRect.right) : null,
+      deltaSceneVsBoard:
+        scene && board ? Math.round(cx(scene) - cx(board)) : null,
+      deltaSeatVsBoard:
+        seatRow && board ? Math.round(cx(seatRow) - cx(board)) : null,
+      pufflyShiftX: getComputedStyle(document.getElementById("puffly-dealer-unit") || document.body)
+        .getPropertyValue("--practice-puffly-shift-x")
+        .trim(),
+      torsoCenterX: cx(torso),
+      boardCenterX: cx(board),
+    };
+  };
   window.pufflyGetInviteLinkOrigin = getInviteLinkOrigin;
   window.pufflyFriendYourTurn = () => isFriendYourTurnNow();
   window.pufflyVoiceDebugDump = pufflyVoiceDebugDump;

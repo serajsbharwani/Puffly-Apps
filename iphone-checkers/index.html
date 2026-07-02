@@ -80,8 +80,8 @@
         window.location.replace(dest.toString());
       })();
     </script>
-    <link rel="stylesheet" href="./styles.css?v=119" />
-    <link rel="stylesheet" href="./styles/practice-table.css?v=65" />
+    <link rel="stylesheet" href="./styles.css?v=125" />
+    <link rel="stylesheet" href="./styles/practice-table.css?v=121" />
   </head>
   <body>
     <script>
@@ -113,56 +113,63 @@
       </button>
     </div>
     <div class="app-chrome">
-      <header class="app-header">
-        <h1 id="app-title">Puffly Checkers</h1>
-      </header>
+      <div id="practice-setup-chrome-home" class="practice-setup-chrome-home">
+        <div id="practice-setup-rows" class="practice-setup-rows">
+          <header class="app-header">
+            <h1 id="app-title">Puffly Checkers</h1>
+          </header>
 
-      <section class="game-panel" aria-label="Game selector">
-        <div class="game-buttons" role="group" aria-label="Choose game">
-          <button class="game-btn active" type="button" data-game="checkers">Checkers</button>
-          <button class="game-btn" type="button" data-game="fourinarow">Four-in-a-Row</button>
-          <button class="game-btn" type="button" data-game="puzzle">Puzzle</button>
+          <section class="game-panel" aria-label="Game selector">
+            <div class="game-buttons" role="group" aria-label="Choose game">
+              <button class="game-btn active" type="button" data-game="checkers">Checkers</button>
+              <button class="game-btn" type="button" data-game="fourinarow">Four-in-a-Row</button>
+              <button class="game-btn" type="button" data-game="puzzle">Puzzle</button>
+            </div>
+          </section>
+
+          <section class="mode-panel" aria-label="Play mode">
+            <button
+              id="play-puffly-btn"
+              class="mode-btn active"
+              type="button"
+              data-play-mode="puffly"
+              onclick="window.pufflyOnPufflyModeTap && window.pufflyOnPufflyModeTap(event)"
+            >
+              Practice with Puffly
+            </button>
+            <button
+              id="play-friend-btn"
+              class="mode-btn"
+              type="button"
+              data-play-mode="friend"
+              onclick="window.pufflyOnFriendModeTap && window.pufflyOnFriendModeTap(event)"
+            >
+              Play with a Friend
+            </button>
+          </section>
+
+          <section class="control-card practice-puffly-control-card">
+            <div id="puffly-controls" class="puffly-controls">
+              <div class="difficulty-buttons" aria-label="Practice level">
+                <button id="difficulty-easy-btn" class="difficulty-btn" type="button" data-difficulty="easy">Silly</button>
+                <button id="difficulty-medium-btn" class="difficulty-btn active" type="button" data-difficulty="medium">Playful</button>
+                <button id="difficulty-hard-btn" class="difficulty-btn" type="button" data-difficulty="hard">Clever</button>
+              </div>
+              <button
+                id="audio-toggle-btn"
+                class="toggle-btn audio-toggle is-on"
+                type="button"
+                aria-pressed="true"
+                aria-label="Audio guide for game prompts"
+              >
+                AUDIO GUIDE
+              </button>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
 
-      <section class="mode-panel" aria-label="Play mode">
-        <button
-          id="play-puffly-btn"
-          class="mode-btn active"
-          type="button"
-          data-play-mode="puffly"
-          onclick="window.pufflyOnPufflyModeTap && window.pufflyOnPufflyModeTap(event)"
-        >
-          Practice with Puffly
-        </button>
-        <button
-          id="play-friend-btn"
-          class="mode-btn"
-          type="button"
-          data-play-mode="friend"
-          onclick="window.pufflyOnFriendModeTap && window.pufflyOnFriendModeTap(event)"
-        >
-          Play with a Friend
-        </button>
-      </section>
-
-      <section class="control-card">
-        <div id="puffly-controls" class="puffly-controls">
-          <div class="difficulty-buttons" aria-label="Practice level">
-            <button id="difficulty-easy-btn" class="difficulty-btn" type="button" data-difficulty="easy">Silly</button>
-            <button id="difficulty-medium-btn" class="difficulty-btn active" type="button" data-difficulty="medium">Playful</button>
-            <button id="difficulty-hard-btn" class="difficulty-btn" type="button" data-difficulty="hard">Clever</button>
-          </div>
-          <button
-            id="audio-toggle-btn"
-            class="toggle-btn audio-toggle is-on"
-            type="button"
-            aria-pressed="true"
-            aria-label="Audio guide for game prompts"
-          >
-            AUDIO GUIDE
-          </button>
-        </div>
+      <section class="control-card friend-mode-control-card">
         <div id="friend-controls" class="friend-controls hidden">
           <div class="friend-toolbar">
             <button
@@ -247,62 +254,153 @@
         <section class="controls">
           <button id="undo-btn" type="button">Undo Last Turn</button>
           <button id="restart-btn" type="button">Play Again</button>
-          <button id="rules-btn" type="button">Game Rules</button>
+          <div class="rules-popover-anchor">
+            <button
+              id="rules-btn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="rules-panel"
+            >
+              How to Play
+            </button>
+          </div>
         </section>
       </div>
     </div>
 
     <main class="app-shell">
-      <section id="rules-panel" class="rules-panel hidden" aria-live="polite">
-        <h2>Game Rules</h2>
-        <ul>
-          <li id="rule-line-1">Blue Puffly Team is computer controlled.</li>
-          <li id="rule-line-2">Green Frog Team is your side.</li>
-          <li id="rule-line-3">Jumps are required when available.</li>
-          <li id="rule-line-4">Kinging adds a cap or crown accessory.</li>
-        </ul>
-      </section>
-
       <section id="puzzle-debug-strip" class="puzzle-debug-strip hidden" aria-live="polite" hidden></section>
 
       <section class="gameplay-layout">
         <!-- Stage 2: co-op / Friend turn alternation — body.friend-mode.practice-table-layout hooks (not enabled) -->
         <div id="practice-table-scene" data-component="practice-table-scene">
           <div
+            id="practice-setup-tray-backdrop"
+            class="practice-setup-tray-backdrop"
+            hidden
+            aria-hidden="true"
+          ></div>
+          <div
             id="practice-flip-overlay"
             class="practice-flip-overlay"
             data-component="practice-flip-overlay"
             aria-hidden="true"
           ></div>
-          <div
-            id="puffly-torso-layer"
-            class="puffly-torso-layer"
-            data-component="puffly-torso-layer"
-            aria-hidden="true"
-          >
-            <img
-              class="puffly-skeleton-img puffly-skeleton-torso"
-              src="./assets/Puffly/skeleton/Puffly_Torso.png?v=37"
-              alt=""
-              decoding="async"
-            />
-          </div>
-          <header id="rive-character-host" data-component="rive-character-host" aria-label="Dealer">
-            <div class="puffly-skeleton-stack" aria-hidden="true">
-              <img
-                class="puffly-skeleton-img puffly-skeleton-head"
-                src="./assets/Puffly/skeleton/Puffly_Head.png?v=37"
-                alt=""
-                decoding="async"
-              />
-              <img
-                class="puffly-skeleton-img puffly-skeleton-arm"
-                src="./assets/Puffly/skeleton/Puffly_Arm.png?v=37"
-                alt=""
-                decoding="async"
-              />
-            </div>
-          </header>
+          <div id="practice-stage" class="practice-stage" data-component="practice-stage">
+            <header id="practice-stage-top" class="practice-stage-top" aria-label="Game setup">
+              <button
+                type="button"
+                id="practice-setup-menu-btn"
+                class="practice-setup-menu-btn"
+                aria-expanded="false"
+                aria-controls="practice-setup-tray"
+                aria-label="Open game settings"
+              >
+                ⚙️ Menu
+              </button>
+              <div
+                id="practice-setup-tray"
+                class="practice-setup-tray"
+                role="dialog"
+                aria-label="Game setup"
+                aria-hidden="true"
+                hidden
+              >
+                <nav id="practice-setup-pill-nav" class="practice-setup-pill-nav" aria-label="Game setup">
+                  <div class="practice-pill-cluster" data-cluster="game">
+                    <button
+                      type="button"
+                      class="practice-pill-trigger"
+                      id="practice-pill-game-trigger"
+                      aria-expanded="false"
+                      aria-haspopup="listbox"
+                      aria-controls="practice-pill-game-list"
+                    >
+                      <span class="practice-pill-prefix">Game</span>
+                      <span class="practice-pill-value" id="practice-pill-game-value">Checkers</span>
+                      <span class="practice-pill-caret" aria-hidden="true">▾</span>
+                    </button>
+                  </div>
+                  <div class="practice-pill-cluster" data-cluster="mode">
+                    <button
+                      type="button"
+                      class="practice-pill-trigger"
+                      id="practice-pill-mode-trigger"
+                      aria-expanded="false"
+                      aria-haspopup="listbox"
+                      aria-controls="practice-pill-mode-list"
+                    >
+                      <span class="practice-pill-prefix">Mode</span>
+                      <span class="practice-pill-value" id="practice-pill-mode-value">Practice</span>
+                      <span class="practice-pill-caret" aria-hidden="true">▾</span>
+                    </button>
+                  </div>
+                  <div class="practice-pill-cluster" data-cluster="trait">
+                    <button
+                      type="button"
+                      class="practice-pill-trigger"
+                      id="practice-pill-trait-trigger"
+                      aria-expanded="false"
+                      aria-haspopup="listbox"
+                      aria-controls="practice-pill-trait-list"
+                    >
+                      <span class="practice-pill-prefix" id="practice-pill-trait-prefix">Trait</span>
+                      <span class="practice-pill-value" id="practice-pill-trait-value">Playful</span>
+                      <span class="practice-pill-caret" aria-hidden="true">▾</span>
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    class="practice-pill-audio"
+                    id="practice-pill-audio-btn"
+                    aria-pressed="true"
+                    aria-label="Audio guide for game prompts"
+                  >
+                    Audio guide
+                  </button>
+                </nav>
+              </div>
+            </header>
+            <div
+              id="practice-play-cluster"
+              class="practice-play-cluster"
+              data-component="practice-play-cluster"
+            >
+              <div
+                id="puffly-dealer-unit"
+                class="puffly-dealer-unit"
+                data-component="puffly-dealer-unit"
+              >
+                <div
+                  id="puffly-torso-layer"
+                  class="puffly-torso-layer"
+                  data-component="puffly-torso-layer"
+                  aria-hidden="true"
+                >
+                  <img
+                    class="puffly-skeleton-img puffly-skeleton-torso"
+                    src="./assets/Puffly/skeleton/Puffly_Torso.png?v=37"
+                    alt=""
+                    decoding="async"
+                  />
+                </div>
+                <header id="rive-character-host" data-component="rive-character-host" aria-label="Dealer">
+                  <div class="puffly-skeleton-stack" aria-hidden="true">
+                    <img
+                      class="puffly-skeleton-img puffly-skeleton-head"
+                      src="./assets/Puffly/skeleton/Puffly_Head.png?v=37"
+                      alt=""
+                      decoding="async"
+                    />
+                    <img
+                      class="puffly-skeleton-img puffly-skeleton-arm"
+                      src="./assets/Puffly/skeleton/Puffly_Arm.png?v=37"
+                      alt=""
+                      decoding="async"
+                    />
+                  </div>
+                </header>
+              </div>
 
           <section id="game-board-matrix" data-component="game-board-matrix" aria-label="Game board">
             <section class="board-stage">
@@ -345,6 +443,7 @@
               </aside>
             </section>
           </section>
+            </div>
 
           <footer id="player-seat-row" data-component="player-seat-row" aria-label="Player seat">
             <div class="player-seat-bar">
@@ -356,6 +455,7 @@
               <div id="player-seat-controls" class="player-seat-controls"></div>
             </div>
           </footer>
+          </div>
         </div>
 
         <aside id="friend-chat-panel" class="friend-chat-panel hidden" aria-live="polite">
@@ -422,18 +522,65 @@
           document.body.classList.add("practice-table-layout");
         }
 
+        function syncPracticeTableNavVars() {
+          if (
+            !document.body.classList.contains("practice-table-layout") ||
+            document.body.classList.contains("friend-mode") ||
+            document.body.classList.contains("practice-table-initializing")
+          ) {
+            return;
+          }
+          var stageTop = document.getElementById("practice-stage-top");
+          if (!stageTop) {
+            return;
+          }
+          var rect = stageTop.getBoundingClientRect();
+          if (rect.top >= 0) {
+            document.documentElement.style.setProperty("--practice-nav-band-top", rect.top + "px");
+          }
+          if (rect.bottom > 0) {
+            document.documentElement.style.setProperty("--practice-nav-band-bottom", rect.bottom + "px");
+          }
+        }
+
+        function syncPracticeTableLayoutVars() {
+          if (typeof window.pufflySyncPracticeTableFrameInsets === "function") {
+            window.pufflySyncPracticeTableFrameInsets();
+          }
+          syncPracticeTableNavVars();
+        }
+
+        function practiceTableRelayoutAfterTrayChange() {
+          syncPracticeTableLayoutVars();
+          window.requestAnimationFrame(function () {
+            syncPracticeTableLayoutVars();
+            if (typeof window.pufflyRelayoutTableBoard === "function") {
+              window.pufflyRelayoutTableBoard();
+            }
+          });
+        }
+
         function refreshPracticeTableViewport() {
           if (!document.body.classList.contains("practice-table-layout")) {
             return;
           }
+          if (typeof window.pufflySchedulePracticeTableOrientationRelayout === "function") {
+            window.pufflySchedulePracticeTableOrientationRelayout();
+            return;
+          }
           document.documentElement.style.width = "100%";
           document.body.style.width = "100%";
+          syncPracticeTableLayoutVars();
           window.requestAnimationFrame(function () {
-            window.dispatchEvent(new Event("resize"));
+            syncPracticeTableLayoutVars();
+            if (typeof window.pufflyRelayoutTableBoard === "function") {
+              window.pufflyRelayoutTableBoard();
+            }
           });
         }
         window.pufflyRefreshPracticeTableViewport = refreshPracticeTableViewport;
-        window.addEventListener("orientationchange", refreshPracticeTableViewport);
+        window.pufflySyncPracticeTableNavVars = syncPracticeTableNavVars;
+        window.pufflySyncPracticeTableLayoutVars = syncPracticeTableLayoutVars;
         window.addEventListener("pageshow", refreshPracticeTableViewport);
 
         function syncPracticeTableDom(options) {
@@ -455,6 +602,23 @@
           var flipOverlay = document.getElementById("practice-flip-overlay");
           var thoughtSlot = document.getElementById("player-seat-thought");
           var boardStage = document.querySelector("#game-board-matrix .board-stage");
+          var setupRows = document.getElementById("practice-setup-rows");
+          var chromeHome = document.getElementById("practice-setup-chrome-home");
+          var setupTray = document.getElementById("practice-setup-tray");
+          var setupInTray = useTableLayout && !inFriend;
+          if (setupRows && chromeHome && setupTray) {
+            var setupParent = setupInTray ? setupTray : chromeHome;
+            if (setupRows.parentElement !== setupParent) {
+              setupParent.appendChild(setupRows);
+            }
+          }
+          pufflySyncPracticePillDropdownPanels(setupInTray);
+          if (!setupInTray && typeof window.pufflyClosePracticeSetupTray === "function") {
+            window.pufflyClosePracticeSetupTray();
+          }
+          if (typeof window.pufflySyncPracticePillNav === "function") {
+            window.pufflySyncPracticePillNav({ inTray: setupInTray });
+          }
           if (controls && controlsHome && seatControls) {
             if (useTableLayout || inFriend) {
               if (controls.parentElement !== seatControls) {
@@ -505,6 +669,360 @@
           }
         }
         window.pufflySyncPracticeTableDom = syncPracticeTableDom;
+
+        function pufflySyncPracticePillDropdownPanels(setupInTray) {
+          var setupRows = document.getElementById("practice-setup-rows");
+          var gamePanel = document.querySelector(".game-panel");
+          var modePanel = document.querySelector(".mode-panel");
+          var traitPanel = document.querySelector(".practice-puffly-control-card");
+          var gameCluster = document.querySelector('.practice-pill-cluster[data-cluster="game"]');
+          var modeCluster = document.querySelector('.practice-pill-cluster[data-cluster="mode"]');
+          var traitCluster = document.querySelector('.practice-pill-cluster[data-cluster="trait"]');
+          if (!setupRows || !gamePanel || !modePanel || !traitPanel) {
+            return;
+          }
+          if (setupInTray && gameCluster && modeCluster && traitCluster) {
+            if (gamePanel.parentElement !== gameCluster) {
+              gameCluster.appendChild(gamePanel);
+            }
+            if (modePanel.parentElement !== modeCluster) {
+              modeCluster.appendChild(modePanel);
+            }
+            if (traitPanel.parentElement !== traitCluster) {
+              traitCluster.appendChild(traitPanel);
+            }
+            return;
+          }
+          var header = setupRows.querySelector(".app-header");
+          var anchor = header ? header.nextSibling : setupRows.firstChild;
+          if (gamePanel.parentElement !== setupRows) {
+            setupRows.insertBefore(gamePanel, anchor);
+          }
+          if (modePanel.parentElement !== setupRows) {
+            setupRows.insertBefore(modePanel, gamePanel.nextSibling);
+          }
+          if (traitPanel.parentElement !== setupRows) {
+            setupRows.insertBefore(traitPanel, modePanel.nextSibling);
+          }
+        }
+        window.pufflySyncPracticePillDropdownPanels = pufflySyncPracticePillDropdownPanels;
+
+        function pufflyMountPracticeSetupTrayToScene() {
+          var tray = document.getElementById("practice-setup-tray");
+          var scene = document.getElementById("practice-table-scene");
+          if (!tray || !scene || tray.parentElement === scene) {
+            return;
+          }
+          scene.appendChild(tray);
+        }
+
+        function pufflyRestorePracticeSetupTrayToStageTop() {
+          var tray = document.getElementById("practice-setup-tray");
+          var stageTop = document.getElementById("practice-stage-top");
+          var menuBtn = document.getElementById("practice-setup-menu-btn");
+          if (!tray || !stageTop || tray.parentElement === stageTop) {
+            return;
+          }
+          if (menuBtn && menuBtn.parentElement === stageTop) {
+            stageTop.insertBefore(tray, menuBtn.nextSibling);
+          } else {
+            stageTop.appendChild(tray);
+          }
+        }
+
+        function pufflyClosePracticeSetupTray() {
+          document.body.classList.remove("practice-setup-tray-open");
+          if (typeof window.pufflyClosePracticePillClusters === "function") {
+            window.pufflyClosePracticePillClusters();
+          }
+          var menuBtn = document.getElementById("practice-setup-menu-btn");
+          var tray = document.getElementById("practice-setup-tray");
+          var backdrop = document.getElementById("practice-setup-tray-backdrop");
+          if (menuBtn) {
+            menuBtn.setAttribute("aria-expanded", "false");
+          }
+          if (tray) {
+            tray.setAttribute("aria-hidden", "true");
+            tray.hidden = true;
+          }
+          pufflyRestorePracticeSetupTrayToStageTop();
+          if (backdrop) {
+            backdrop.hidden = true;
+            backdrop.setAttribute("aria-hidden", "true");
+          }
+          practiceTableRelayoutAfterTrayChange();
+        }
+        window.pufflyClosePracticeSetupTray = pufflyClosePracticeSetupTray;
+
+        function pufflyOpenPracticeSetupTray() {
+          if (typeof window.pufflyHideRulesPanel === "function") {
+            window.pufflyHideRulesPanel();
+          }
+          var menuBtn = document.getElementById("practice-setup-menu-btn");
+          var tray = document.getElementById("practice-setup-tray");
+          var backdrop = document.getElementById("practice-setup-tray-backdrop");
+          if (
+            !document.body.classList.contains("practice-table-layout") ||
+            document.body.classList.contains("friend-mode") ||
+            document.body.classList.contains("practice-table-initializing") ||
+            !tray
+          ) {
+            return;
+          }
+          if (typeof syncPracticeTableNavVars === "function") {
+            syncPracticeTableNavVars();
+          }
+          document.body.classList.add("practice-setup-tray-open");
+          tray.hidden = false;
+          tray.setAttribute("aria-hidden", "false");
+          pufflyMountPracticeSetupTrayToScene();
+          var pillNav = document.getElementById("practice-setup-pill-nav");
+          if (pillNav) {
+            pillNav.hidden = false;
+          }
+          if (typeof window.pufflySyncPracticePillNav === "function") {
+            window.pufflySyncPracticePillNav({ inTray: true });
+          }
+          if (backdrop) {
+            backdrop.hidden = false;
+            backdrop.setAttribute("aria-hidden", "false");
+          }
+          if (menuBtn) {
+            menuBtn.setAttribute("aria-expanded", "true");
+            if (typeof window.pufflyRefreshPracticePillNavLabels === "function") {
+              window.pufflyRefreshPracticePillNavLabels();
+            }
+            practiceTableRelayoutAfterTrayChange();
+            var firstFocusable =
+              pillNav &&
+              pillNav.querySelector(
+                "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+              );
+            if (firstFocusable instanceof HTMLElement) {
+              firstFocusable.focus();
+            }
+          }
+        }
+        window.pufflyOpenPracticeSetupTray = pufflyOpenPracticeSetupTray;
+
+        function pufflyTogglePracticeSetupTray() {
+          if (document.body.classList.contains("practice-setup-tray-open")) {
+            pufflyClosePracticeSetupTray();
+            var menuBtn = document.getElementById("practice-setup-menu-btn");
+            if (menuBtn) {
+              menuBtn.focus();
+            }
+          } else {
+            pufflyOpenPracticeSetupTray();
+          }
+        }
+        window.pufflyTogglePracticeSetupTray = pufflyTogglePracticeSetupTray;
+
+        (function installPracticeSetupTrayUi() {
+          var menuBtn = document.getElementById("practice-setup-menu-btn");
+          var backdrop = document.getElementById("practice-setup-tray-backdrop");
+          var tray = document.getElementById("practice-setup-tray");
+          if (!menuBtn || !backdrop || !tray) {
+            return;
+          }
+          menuBtn.addEventListener("click", function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            pufflyTogglePracticeSetupTray();
+          });
+          backdrop.addEventListener("click", function () {
+            pufflyClosePracticeSetupTray();
+            menuBtn.focus();
+          });
+          tray.addEventListener("click", function (event) {
+            if (
+              event.target.closest(
+                ".game-btn, .mode-btn, .difficulty-btn, #audio-toggle-btn, .practice-pill-audio",
+              )
+            ) {
+              if (typeof window.pufflyRefreshPracticePillNavLabels === "function") {
+                window.pufflyRefreshPracticePillNavLabels();
+              }
+              if (event.target.closest(".game-btn, .mode-btn, .difficulty-btn")) {
+                pufflyClosePracticeSetupTray();
+                menuBtn.focus();
+              }
+            }
+          });
+          document.addEventListener("keydown", function (event) {
+            if (event.key !== "Escape" || !document.body.classList.contains("practice-setup-tray-open")) {
+              return;
+            }
+            if (document.body.classList.contains("practice-pill-cluster-open")) {
+              if (typeof window.pufflyClosePracticePillClusters === "function") {
+                window.pufflyClosePracticePillClusters();
+              }
+              return;
+            }
+            pufflyClosePracticeSetupTray();
+            menuBtn.focus();
+          });
+        })();
+
+        (function installPracticeSetupPillNav() {
+          var GAME_LABELS = {
+            checkers: "Checkers",
+            fourinarow: "Four-in-a-Row",
+            puzzle: "Puzzle",
+          };
+          var MODE_LABELS = {
+            puffly: "Practice",
+            friend: "Friend",
+          };
+          var TRAIT_LABELS = {
+            easy: "Silly",
+            medium: "Playful",
+            hard: "Clever",
+          };
+          var PUZZLE_SIZE_LABELS = {
+            easy: "Mini",
+            medium: "Classic",
+            hard: "Mega",
+          };
+          var CLUSTER_CLASSES = [
+            "practice-pill-cluster-open-game",
+            "practice-pill-cluster-open-mode",
+            "practice-pill-cluster-open-trait",
+          ];
+
+          function refreshPracticePillNavLabels() {
+            var gameValue = document.getElementById("practice-pill-game-value");
+            var modeValue = document.getElementById("practice-pill-mode-value");
+            var traitValue = document.getElementById("practice-pill-trait-value");
+            var traitPrefix = document.getElementById("practice-pill-trait-prefix");
+            var audioBtn = document.getElementById("practice-pill-audio-btn");
+            var activeGame = document.querySelector("#practice-setup-tray .game-btn.active")
+              || document.querySelector("#practice-setup-rows .game-btn.active");
+            var activeMode = document.querySelector("#practice-setup-tray .mode-btn.active")
+              || document.querySelector("#practice-setup-rows .mode-btn.active");
+            var activeTrait = document.querySelector("#practice-setup-tray .difficulty-btn.active")
+              || document.querySelector("#practice-setup-rows .difficulty-btn.active");
+            var audioToggle = document.getElementById("audio-toggle-btn");
+            var gameId = activeGame ? activeGame.getAttribute("data-game") || "checkers" : "checkers";
+            if (gameValue && activeGame) {
+              gameValue.textContent = GAME_LABELS[gameId] || activeGame.textContent.trim();
+            }
+            if (modeValue && activeMode) {
+              var modeId = activeMode.getAttribute("data-play-mode") || "puffly";
+              modeValue.textContent = MODE_LABELS[modeId] || activeMode.textContent.trim();
+            }
+            if (traitPrefix) {
+              traitPrefix.textContent = gameId === "puzzle" ? "Size" : "Trait";
+            }
+            if (traitValue && activeTrait) {
+              var traitId = activeTrait.getAttribute("data-difficulty") || "medium";
+              var traitLabels = gameId === "puzzle" ? PUZZLE_SIZE_LABELS : TRAIT_LABELS;
+              traitValue.textContent =
+                traitLabels[traitId] || activeTrait.textContent.trim();
+            }
+            if (audioBtn && audioToggle) {
+              var on = audioToggle.classList.contains("is-on");
+              audioBtn.setAttribute("aria-pressed", on ? "true" : "false");
+              audioBtn.classList.toggle("is-on", on);
+              audioBtn.textContent = on ? "Audio guide" : "Audio off";
+            }
+          }
+          window.pufflyRefreshPracticePillNavLabels = refreshPracticePillNavLabels;
+
+          function closePracticePillClusters() {
+            document.body.classList.remove(
+              "practice-pill-cluster-open",
+              "practice-pill-cluster-open-game",
+              "practice-pill-cluster-open-mode",
+              "practice-pill-cluster-open-trait",
+            );
+            ["game", "mode", "trait"].forEach(function (cluster) {
+              var trigger = document.getElementById("practice-pill-" + cluster + "-trigger");
+              if (trigger) {
+                trigger.setAttribute("aria-expanded", "false");
+              }
+            });
+          }
+          window.pufflyClosePracticePillClusters = closePracticePillClusters;
+
+          function openPracticePillCluster(cluster) {
+            var openClass = "practice-pill-cluster-open-" + cluster;
+            var isOpen = document.body.classList.contains(openClass);
+            closePracticePillClusters();
+            if (!isOpen) {
+              document.body.classList.add("practice-pill-cluster-open", openClass);
+              var trigger = document.getElementById("practice-pill-" + cluster + "-trigger");
+              if (trigger) {
+                trigger.setAttribute("aria-expanded", "true");
+              }
+            }
+          }
+
+          function syncPracticePillNav(options) {
+            options = options || {};
+            var pillNav = document.getElementById("practice-setup-pill-nav");
+            if (!pillNav) {
+              return;
+            }
+            pillNav.hidden = !options.inTray;
+            if (!options.inTray) {
+              closePracticePillClusters();
+            } else {
+              refreshPracticePillNavLabels();
+            }
+          }
+          window.pufflySyncPracticePillNav = syncPracticePillNav;
+
+          var pillNav = document.getElementById("practice-setup-pill-nav");
+          if (!pillNav) {
+            return;
+          }
+
+          ["game", "mode", "trait"].forEach(function (cluster) {
+            var trigger = document.getElementById("practice-pill-" + cluster + "-trigger");
+            if (!trigger) {
+              return;
+            }
+            trigger.addEventListener("click", function (event) {
+              event.preventDefault();
+              event.stopPropagation();
+              openPracticePillCluster(cluster);
+            });
+          });
+
+          var audioProxy = document.getElementById("practice-pill-audio-btn");
+          var audioToggle = document.getElementById("audio-toggle-btn");
+          if (audioProxy && audioToggle) {
+            audioProxy.addEventListener("click", function (event) {
+              event.preventDefault();
+              event.stopPropagation();
+              audioToggle.click();
+              refreshPracticePillNavLabels();
+            });
+          }
+
+          var setupRows = document.getElementById("practice-setup-rows");
+          if (setupRows) {
+            setupRows.addEventListener("click", function () {
+              window.requestAnimationFrame(refreshPracticePillNavLabels);
+            });
+          }
+
+          document.addEventListener("click", function (event) {
+            if (!document.body.classList.contains("practice-pill-cluster-open")) {
+              return;
+            }
+            if (
+              event.target.closest(".practice-pill-cluster") ||
+              event.target.closest("#practice-setup-tray .game-panel") ||
+              event.target.closest("#practice-setup-tray .mode-panel") ||
+              event.target.closest("#practice-setup-tray .practice-puffly-control-card")
+            ) {
+              return;
+            }
+            closePracticePillClusters();
+          });
+        })();
 
         function pufflySetFriendStatus(text) {
           var el = document.getElementById("friend-status");
@@ -627,7 +1145,11 @@
         function applyPlayModeChrome(mode) {
           var isFriend = mode === "friend";
           if (isFriend) {
-            document.body.classList.remove("practice-table-layout", "practice-table-initializing");
+            document.body.classList.remove(
+              "practice-table-layout",
+              "practice-table-initializing",
+              "practice-setup-tray-open",
+            );
             document.documentElement.style.width = "";
             document.documentElement.style.height = "";
             document.body.style.width = "";
@@ -1153,6 +1675,33 @@
         }
       })();
     </script>
-    <script type="module" src="./src/app.js?v=382"></script>
+    <div
+      id="rules-panel-backdrop"
+      class="rules-panel-backdrop"
+      hidden
+      aria-hidden="true"
+    ></div>
+    <section
+      id="rules-panel"
+      class="rules-panel hidden"
+      role="dialog"
+      aria-labelledby="rules-panel-title"
+      aria-hidden="true"
+      aria-live="polite"
+    >
+      <div class="rules-panel-header">
+        <h2 id="rules-panel-title">How to Play</h2>
+        <button type="button" id="rules-panel-close" class="rules-panel-close" aria-label="Close How to Play">
+          Close
+        </button>
+      </div>
+      <ul>
+        <li id="rule-line-1">Blue Puffly Team is computer controlled.</li>
+        <li id="rule-line-2">Green Frog Team is your side.</li>
+        <li id="rule-line-3">Jumps are required when available.</li>
+        <li id="rule-line-4">Kinging adds a cap or crown accessory.</li>
+      </ul>
+    </section>
+    <script type="module" src="./src/app.js?v=453"></script>
   </body>
 </html>

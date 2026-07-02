@@ -1,7 +1,7 @@
 # Puffly App Map
 
 Concise reference for global state, shell architecture, UI/voice constraints, and how new games plug in.  
-**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v382** — PWA home page + unified PlayPuffly test build; Practice + Friend regression baseline).
+**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v386** — Puffly skeleton distortion fix; unified torso/head offset).
 
 Related docs (in `iphone-checkers/`): `TEST_BUILD.md`, `VOICE.md`, `FRIEND_VOICE_BACKLOG.md`, `PLAN.md`.
 
@@ -36,7 +36,7 @@ checkers/                         # repo root (this file)
     guest-join.html               # Minimal guest attach page → hydrate index with session
     install.html                  # PWA install helper (unified PlayPuffly test build)
     manifest.json                 # PWA manifest (start_url → home.html?source=pwa&tableUi=1)
-    TEST_BUILD.md                 # Regression checklist (Home + Practice + Friend, v382+)
+    TEST_BUILD.md                 # Regression checklist (Home + Practice + Friend, v386+)
     styles.css                    # Layout, friend/practice chrome, overlays, tray team colors
     styles/practice-table.css     # Practice table layout (body.practice-table-layout)
     src/
@@ -103,7 +103,7 @@ checkers/                         # repo root (this file)
 
 **Bootstrap paths**
 
-- **PWA / Mac+iPad test:** `install.html` or `home.html?source=pwa&tableUi=1&cb=382` → Add to Home Screen → **PlayPuffly** → **LET'S PLAY** → game shell (see `TEST_BUILD.md`)
+- **PWA / Mac+iPad test:** `install.html` or `home.html?source=pwa&tableUi=1&cb=384` → Add to Home Screen → **PlayPuffly** → **LET'S PLAY** → game shell (see `TEST_BUILD.md`)
 - **Mac host:** Friend tab → **OPEN GAME ROOM** → welcome voice → **INVITE FRIEND** (Messages link)
 - **iPad guest:** invite URL in Messages → Safari → `guest-join.html` → `index.html?friendAttached=1` → `hydrateRoomSession()`
 - Invite links with `?join=` on index redirect to `guest-join.html`
@@ -158,6 +158,10 @@ Status strings are mostly **silent** in friend mode (`speakFromStatus` filters b
 
 - `body.friend-mode` toggles visible panels (`syncPlayModeChrome()` / `pufflyApplyPlayModeChrome()` in `index.html`).
 - `body.practice-table-layout` enables table scene (`styles/practice-table.css`); stripped in friend mode.
+- **v383:** During active practice play, setup rows move into `#practice-setup-tray`; top-left `← Menu` on `#practice-table-scene`. Flip screen keeps rows in `.app-chrome`.
+- **v384:** Tray is a floating pill-nav row (Game / Mode / Trait / Audio guide) with borderless popovers; light parchment backdrop.
+- **v385:** Top safe area (`--practice-top-safe`); setup pill Y-aligned with ⚙️ Menu; floating bottom player-seat pill; gear hidden when tray open.
+- **v386:** Puffly skeleton fix — torso + dealer host offset together; no scene padding.
 - Practice: difficulty buttons + **AUDIO GUIDE** toggle (`#audio-toggle-btn`); friend: room toolbar + puzzle size when game is puzzle.
 - Friend voice sidebar (`#friend-chat-panel`): Voice Chat subtitle (Connected / Not Connected), avatars, audio guide slot; stretches with bottom navbar on iPad.
 - Side **captured trays**: team borders/tints (blue `#eef5ff`, green `#f0fff0`); `.your-tray` adds stronger glow for the local player.
@@ -273,4 +277,4 @@ Keep **no DOM or `fetch`** in game modules.
 
 ---
 
-*Last updated: v382 — PWA home page (`home.html`); unified test PWA; see TEST_BUILD.md for regression matrix.*
+*Last updated: v386 — Puffly skeleton fix; see TEST_BUILD.md for regression matrix.*
