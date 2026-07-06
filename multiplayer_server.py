@@ -148,6 +148,15 @@ def is_fresh_puzzle_pre_flip_state(state: Optional[Dict[str, Any]]) -> bool:
   return all(not piece.get("placed") for piece in pieces)
 
 
+def is_puzzle_complete(state: Optional[Dict[str, Any]]) -> bool:
+  if not isinstance(state, dict):
+    return False
+  pieces = state.get("pieces")
+  if not isinstance(pieces, list) or not pieces:
+    return False
+  return all(piece.get("placed") for piece in pieces)
+
+
 def puzzle_flip_turn_for_round(puzzle_round: int) -> str:
   """Odd rounds: Blue flips first. Even rounds: Green flips first."""
   normalized_round = max(1, int(puzzle_round or 1))
@@ -564,10 +573,17 @@ class RoomStore:
     if player.color != "dark":
       raise ValueError("Only the room host can change puzzle size.")
     game_state = room.get("state") or {}
-    if game_state.get("starterFlipDone"):
-      raise ValueError("Puzzle size is locked after the flip.")
     level = normalize_puzzle_difficulty(puzzle_difficulty)
-    flip_turn = puzzle_flip_turn_for_room(room)
+    if is_fresh_puzzle_pre_flip_state(game_state):
+      flip_turn = puzzle_flip_turn_for_room(room)
+    elif is_puzzle_complete(game_state):
+      current_flip = puzzle_flip_turn_for_room(room)
+      flip_turn = "light" if current_flip == "dark" else "dark"
+      room["puzzleRound"] = int(room.get("puzzleRound") or 1) + 1
+      room["puzzleFlipTurn"] = flip_turn
+    else:
+      # Mid-game size switch: fresh board at new size, same flip assignment.
+      flip_turn = puzzle_flip_turn_for_room(room)
     room["puzzleDifficulty"] = level
     room["state"] = create_puzzle_initial_state(level, flip_turn=flip_turn)
     room["undoStack"] = []

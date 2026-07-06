@@ -412,6 +412,11 @@ body.friend-mode.puzzle-game .captured-pile.puzzle-tray {
   grid-auto-rows: var(--puzzle-tray-piece-size, min-content);
 }
 
+/* Table Friend: piles stay within board-height trays (v462) */
+body.practice-table-layout.friend-mode.puzzle-game .captured-pile.puzzle-tray {
+  max-height: 100%;
+}
+
 body.friend-mode.puzzle-game .puzzle-tray .puzzle-piece {
   width: 100%;
   height: var(--puzzle-tray-piece-size, auto);
@@ -536,6 +541,14 @@ body.friend-mode #practice-table-scene {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* Legacy Friend (no tableUi): hide Practice stage chrome */
+body.friend-mode:not(.practice-table-layout) #practice-stage-top,
+body.friend-mode:not(.practice-table-layout) #practice-setup-menu-btn,
+body.friend-mode:not(.practice-table-layout) #practice-setup-tray,
+body.friend-mode:not(.practice-table-layout) #practice-setup-tray-backdrop {
+  display: none !important;
 }
 
 body.friend-mode #friend-chat-panel:not(.hidden) {
@@ -725,13 +738,9 @@ body.friend-mode .player-seat-bar {
   width: 100%;
 }
 
-body.friend-mode .player-seat-controls {
-  width: 100%;
-}
-
-body.friend-mode .player-seat-controls .controls {
-  width: 100%;
-  margin: 0;
+body.practice-table-layout.friend-mode .player-seat-controls,
+body.practice-table-layout.friend-mode .player-seat-controls .controls {
+  width: auto;
 }
 
 body.friend-mode .controls-home:empty {
@@ -1857,6 +1866,7 @@ body.rules-panel-open #rules-panel-backdrop {
   background: rgba(39, 24, 3, 0.55);
   padding: 1rem;
   overflow: hidden;
+  pointer-events: none;
 }
 
 .celebration-overlay.hidden {
@@ -1872,6 +1882,7 @@ body.rules-panel-open #rules-panel-backdrop {
   border-radius: 14px;
   padding: 1rem;
   text-align: center;
+  pointer-events: auto;
 }
 
 .celebration-fx {

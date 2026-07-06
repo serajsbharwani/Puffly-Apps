@@ -80,8 +80,8 @@
         window.location.replace(dest.toString());
       })();
     </script>
-    <link rel="stylesheet" href="./styles.css?v=125" />
-    <link rel="stylesheet" href="./styles/practice-table.css?v=121" />
+    <link rel="stylesheet" href="./styles.css?v=134" />
+    <link rel="stylesheet" href="./styles/practice-table.css?v=151" />
   </head>
   <body>
     <script>
@@ -242,7 +242,7 @@
         </div>
       </section>
 
-      <section id="friend-puzzle-difficulty" class="control-card friend-puzzle-panel hidden" aria-label="Puzzle size">
+      <section id="friend-puzzle-difficulty" class="control-card friend-puzzle-panel friend-context-card hidden" aria-label="Puzzle size">
         <div class="friend-puzzle-buttons">
           <button class="toggle-btn friend-difficulty-btn is-off" type="button" data-difficulty="easy">Mini</button>
           <button class="toggle-btn friend-difficulty-btn is-on" type="button" data-difficulty="medium">Classic</button>
@@ -349,6 +349,59 @@
                       <span class="practice-pill-caret" aria-hidden="true">▾</span>
                     </button>
                   </div>
+                  <div
+                    class="practice-pill-cluster"
+                    data-cluster="room"
+                    id="practice-pill-room-cluster"
+                    hidden
+                  >
+                    <button
+                      type="button"
+                      class="practice-pill-trigger"
+                      id="practice-pill-room-trigger"
+                      aria-expanded="false"
+                      aria-haspopup="menu"
+                      aria-controls="practice-pill-room-menu"
+                    >
+                      <span class="practice-pill-prefix">Room</span>
+                      <span class="practice-pill-value" id="practice-pill-room-value">Setup</span>
+                      <span class="practice-pill-caret" aria-hidden="true">▾</span>
+                    </button>
+                    <div
+                      id="practice-pill-room-menu"
+                      class="practice-pill-room-menu friend-context-card"
+                      role="menu"
+                      aria-label="Room actions"
+                    >
+                      <p id="practice-pill-room-info" class="practice-pill-room-info friend-context-info"></p>
+                      <button
+                        type="button"
+                        id="friend-pill-open-room-btn"
+                        class="practice-pill-room-action friend-context-action"
+                        role="menuitem"
+                      >
+                        Open Game Room
+                      </button>
+                      <button
+                        type="button"
+                        id="friend-pill-invite-btn"
+                        class="practice-pill-room-action friend-context-action"
+                        role="menuitem"
+                        hidden
+                      >
+                        ✉️ Send Invite Link
+                      </button>
+                      <button
+                        type="button"
+                        id="friend-pill-leave-btn"
+                        class="practice-pill-room-action friend-context-action is-danger"
+                        role="menuitem"
+                        hidden
+                      >
+                        Leave Room
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     class="practice-pill-audio"
@@ -402,6 +455,38 @@
                 </header>
               </div>
 
+              <div
+                id="friend-avatar-band"
+                class="friend-avatar-band"
+                hidden
+                aria-label="Friend players"
+              >
+                <div
+                  id="friend-avatar-blue"
+                  class="friend-avatar friend-avatar--blue"
+                  aria-label="Blue team"
+                >
+                  <div class="puffly-face friend-avatar-mascot" aria-hidden="true">
+                    <span class="puffly-ear left"></span>
+                    <span class="puffly-ear right"></span>
+                    <span class="puffly-eye left"></span>
+                    <span class="puffly-eye right"></span>
+                    <span class="puffly-muzzle"></span>
+                    <span class="puffly-nose"></span>
+                  </div>
+                </div>
+                <div id="friend-flip-mount" class="friend-flip-mount" aria-label="Coin flip"></div>
+                <div
+                  id="friend-avatar-green"
+                  class="friend-avatar friend-avatar--green"
+                  aria-label="Green team"
+                >
+                  <div class="frog-mascot friend-avatar-mascot" aria-hidden="true">
+                    <span class="frog-mascot-icon">🐸</span>
+                  </div>
+                </div>
+              </div>
+
           <section id="game-board-matrix" data-component="game-board-matrix" aria-label="Game board">
             <section class="board-stage">
               <div class="board-and-captures">
@@ -447,12 +532,64 @@
 
           <footer id="player-seat-row" data-component="player-seat-row" aria-label="Player seat">
             <div class="player-seat-bar">
-              <div class="player-seat-identity player-indicator" aria-label="Your seat — Green team">
-                <span class="player-indicator-icon" aria-hidden="true">🐸</span>
-                <span class="player-indicator-label">You · Green</span>
+              <div class="friend-seat-bar-main">
+                <div class="player-seat-identity player-indicator" aria-label="Your seat — Green team">
+                  <span class="player-indicator-icon" aria-hidden="true">🐸</span>
+                  <span class="player-indicator-label">You · Green</span>
+                </div>
+                <p id="friend-seat-status" class="friend-seat-status" aria-live="polite" hidden></p>
+                <div
+                  id="friend-puzzle-size-confirm"
+                  class="friend-puzzle-size-confirm"
+                  role="group"
+                  aria-label="Confirm puzzle size switch"
+                  hidden
+                >
+                  <button
+                    type="button"
+                    id="friend-puzzle-size-switch-btn"
+                    class="friend-puzzle-size-confirm-btn friend-puzzle-size-confirm-switch"
+                  >
+                    Switch
+                  </button>
+                  <button
+                    type="button"
+                    id="friend-puzzle-size-keep-btn"
+                    class="friend-puzzle-size-confirm-btn friend-puzzle-size-confirm-keep"
+                  >
+                    Keep
+                  </button>
+                </div>
+                <div id="player-seat-thought" class="player-seat-thought" aria-live="polite"></div>
+                <div class="friend-seat-actions">
+                  <div id="player-seat-controls" class="player-seat-controls"></div>
+                  <div id="friend-voice-pill-wrap" class="friend-voice-pill-wrap">
+                    <button
+                      type="button"
+                      id="friend-voice-pill-btn"
+                      class="friend-voice-pill-btn"
+                      aria-expanded="false"
+                      aria-haspopup="menu"
+                      aria-controls="friend-voice-pill-menu"
+                    >
+                      🗣️ Voice Chat <span id="friend-voice-pill-value" class="visually-hidden">OFF</span><span class="practice-pill-caret" aria-hidden="true">▾</span>
+                    </button>
+                    <div
+                      id="friend-voice-pill-menu"
+                      class="friend-voice-pill-menu friend-context-card"
+                      role="menu"
+                      aria-label="Voice chat"
+                    >
+                      <button type="button" id="friend-voice-toggle-btn" class="friend-voice-pill-action friend-context-action" role="menuitem">
+                        Turn Voice ON
+                      </button>
+                      <button type="button" id="friend-voice-mute-btn" class="friend-voice-pill-action friend-context-action" role="menuitem">
+                        Mute Mic
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div id="player-seat-thought" class="player-seat-thought" aria-live="polite"></div>
-              <div id="player-seat-controls" class="player-seat-controls"></div>
             </div>
           </footer>
           </div>
@@ -525,7 +662,6 @@
         function syncPracticeTableNavVars() {
           if (
             !document.body.classList.contains("practice-table-layout") ||
-            document.body.classList.contains("friend-mode") ||
             document.body.classList.contains("practice-table-initializing")
           ) {
             return;
@@ -588,8 +724,7 @@
           var useTableLayout =
             options.useTableLayout !== undefined
               ? options.useTableLayout
-              : document.body.classList.contains("practice-table-layout") &&
-                !document.body.classList.contains("friend-mode");
+              : document.body.classList.contains("practice-table-layout");
           var inFriend =
             options.friendMode === true ||
             (options.friendMode !== false && document.body.classList.contains("friend-mode"));
@@ -605,19 +740,37 @@
           var setupRows = document.getElementById("practice-setup-rows");
           var chromeHome = document.getElementById("practice-setup-chrome-home");
           var setupTray = document.getElementById("practice-setup-tray");
-          var setupInTray = useTableLayout && !inFriend;
+          var setupInTray = useTableLayout;
           if (setupRows && chromeHome && setupTray) {
             var setupParent = setupInTray ? setupTray : chromeHome;
             if (setupRows.parentElement !== setupParent) {
               setupParent.appendChild(setupRows);
             }
           }
-          pufflySyncPracticePillDropdownPanels(setupInTray);
+          pufflySyncPracticePillDropdownPanels(setupInTray, inFriend);
           if (!setupInTray && typeof window.pufflyClosePracticeSetupTray === "function") {
             window.pufflyClosePracticeSetupTray();
           }
+          if (inFriend && useTableLayout && setupTray) {
+            setupTray.hidden = false;
+            setupTray.setAttribute("aria-hidden", "false");
+            document.body.classList.remove("practice-setup-tray-open");
+            if (typeof window.pufflyRestorePracticeSetupTrayToStageTop === "function") {
+              window.pufflyRestorePracticeSetupTrayToStageTop();
+            } else {
+              var stageTop = document.getElementById("practice-stage-top");
+              var menuBtn = document.getElementById("practice-setup-menu-btn");
+              if (stageTop && setupTray.parentElement !== stageTop) {
+                if (menuBtn && menuBtn.parentElement === stageTop) {
+                  stageTop.insertBefore(setupTray, menuBtn.nextSibling);
+                } else {
+                  stageTop.appendChild(setupTray);
+                }
+              }
+            }
+          }
           if (typeof window.pufflySyncPracticePillNav === "function") {
-            window.pufflySyncPracticePillNav({ inTray: setupInTray });
+            window.pufflySyncPracticePillNav({ inTray: setupInTray, friendMode: inFriend });
           }
           if (controls && controlsHome && seatControls) {
             if (useTableLayout || inFriend) {
@@ -670,11 +823,16 @@
         }
         window.pufflySyncPracticeTableDom = syncPracticeTableDom;
 
-        function pufflySyncPracticePillDropdownPanels(setupInTray) {
+        function pufflySyncPracticePillDropdownPanels(setupInTray, inFriendMode) {
           var setupRows = document.getElementById("practice-setup-rows");
           var gamePanel = document.querySelector(".game-panel");
           var modePanel = document.querySelector(".mode-panel");
-          var traitPanel = document.querySelector(".practice-puffly-control-card");
+          var practiceTraitPanel = document.querySelector(".practice-puffly-control-card");
+          var friendSizePanel = document.getElementById("friend-puzzle-difficulty");
+          var inFriend =
+            inFriendMode === true ||
+            (inFriendMode !== false && document.body.classList.contains("friend-mode"));
+          var traitPanel = inFriend && friendSizePanel ? friendSizePanel : practiceTraitPanel;
           var gameCluster = document.querySelector('.practice-pill-cluster[data-cluster="game"]');
           var modeCluster = document.querySelector('.practice-pill-cluster[data-cluster="mode"]');
           var traitCluster = document.querySelector('.practice-pill-cluster[data-cluster="trait"]');
@@ -691,6 +849,18 @@
             if (traitPanel.parentElement !== traitCluster) {
               traitCluster.appendChild(traitPanel);
             }
+            if (inFriend && practiceTraitPanel && practiceTraitPanel.parentElement === traitCluster) {
+              var chromeHome = document.getElementById("practice-setup-chrome-home");
+              if (chromeHome) {
+                chromeHome.appendChild(practiceTraitPanel);
+              }
+            }
+            if (!inFriend && friendSizePanel && friendSizePanel.parentElement === traitCluster) {
+              var friendCardHost = document.querySelector(".friend-mode-control-card");
+              if (friendCardHost && friendCardHost.parentElement) {
+                friendCardHost.parentElement.insertBefore(friendSizePanel, friendCardHost.nextSibling);
+              }
+            }
             return;
           }
           var header = setupRows.querySelector(".app-header");
@@ -701,8 +871,8 @@
           if (modePanel.parentElement !== setupRows) {
             setupRows.insertBefore(modePanel, gamePanel.nextSibling);
           }
-          if (traitPanel.parentElement !== setupRows) {
-            setupRows.insertBefore(traitPanel, modePanel.nextSibling);
+          if (practiceTraitPanel && practiceTraitPanel.parentElement !== setupRows) {
+            setupRows.insertBefore(practiceTraitPanel, modePanel.nextSibling);
           }
         }
         window.pufflySyncPracticePillDropdownPanels = pufflySyncPracticePillDropdownPanels;
@@ -729,6 +899,7 @@
             stageTop.appendChild(tray);
           }
         }
+        window.pufflyRestorePracticeSetupTrayToStageTop = pufflyRestorePracticeSetupTrayToStageTop;
 
         function pufflyClosePracticeSetupTray() {
           document.body.classList.remove("practice-setup-tray-open");
@@ -745,11 +916,14 @@
             tray.setAttribute("aria-hidden", "true");
             tray.hidden = true;
           }
-          pufflyRestorePracticeSetupTrayToStageTop();
           if (backdrop) {
             backdrop.hidden = true;
             backdrop.setAttribute("aria-hidden", "true");
           }
+          if (document.body.classList.contains("friend-mode")) {
+            return;
+          }
+          pufflyRestorePracticeSetupTrayToStageTop();
           practiceTableRelayoutAfterTrayChange();
         }
         window.pufflyClosePracticeSetupTray = pufflyClosePracticeSetupTray;
@@ -837,15 +1011,25 @@
           tray.addEventListener("click", function (event) {
             if (
               event.target.closest(
-                ".game-btn, .mode-btn, .difficulty-btn, #audio-toggle-btn, .practice-pill-audio",
+                ".game-btn, .mode-btn, .difficulty-btn, .friend-difficulty-btn, #audio-toggle-btn, .practice-pill-audio",
               )
             ) {
               if (typeof window.pufflyRefreshPracticePillNavLabels === "function") {
                 window.pufflyRefreshPracticePillNavLabels();
               }
-              if (event.target.closest(".game-btn, .mode-btn, .difficulty-btn")) {
-                pufflyClosePracticeSetupTray();
-                menuBtn.focus();
+              if (
+                event.target.closest(".game-btn, .mode-btn, .difficulty-btn, .friend-difficulty-btn")
+              ) {
+                if (document.body.classList.contains("friend-mode")) {
+                  if (typeof window.pufflyClosePracticePillClusters === "function") {
+                    window.requestAnimationFrame(function () {
+                      window.pufflyClosePracticePillClusters();
+                    });
+                  }
+                } else {
+                  pufflyClosePracticeSetupTray();
+                  menuBtn.focus();
+                }
               }
             }
           });
@@ -888,6 +1072,7 @@
             "practice-pill-cluster-open-game",
             "practice-pill-cluster-open-mode",
             "practice-pill-cluster-open-trait",
+            "practice-pill-cluster-open-room",
           ];
 
           function refreshPracticePillNavLabels() {
@@ -896,20 +1081,34 @@
             var traitValue = document.getElementById("practice-pill-trait-value");
             var traitPrefix = document.getElementById("practice-pill-trait-prefix");
             var audioBtn = document.getElementById("practice-pill-audio-btn");
+            var roomCluster = document.getElementById("practice-pill-room-cluster");
             var activeGame = document.querySelector("#practice-setup-tray .game-btn.active")
               || document.querySelector("#practice-setup-rows .game-btn.active");
             var activeMode = document.querySelector("#practice-setup-tray .mode-btn.active")
               || document.querySelector("#practice-setup-rows .mode-btn.active");
-            var activeTrait = document.querySelector("#practice-setup-tray .difficulty-btn.active")
-              || document.querySelector("#practice-setup-rows .difficulty-btn.active");
-            var audioToggle = document.getElementById("audio-toggle-btn");
+            var isFriend = document.body.classList.contains("friend-mode");
             var gameId = activeGame ? activeGame.getAttribute("data-game") || "checkers" : "checkers";
+            var activeTrait =
+              isFriend && gameId === "puzzle"
+                ? document.querySelector(".friend-difficulty-btn.is-on")
+                : null;
+            if (!activeTrait) {
+              activeTrait =
+                document.querySelector("#practice-setup-tray .difficulty-btn.active")
+                || document.querySelector("#practice-setup-rows .difficulty-btn.active")
+                || document.querySelector(".friend-difficulty-btn.is-on");
+            }
+            var audioToggle = document.getElementById("audio-toggle-btn");
             if (gameValue && activeGame) {
               gameValue.textContent = GAME_LABELS[gameId] || activeGame.textContent.trim();
             }
-            if (modeValue && activeMode) {
-              var modeId = activeMode.getAttribute("data-play-mode") || "puffly";
-              modeValue.textContent = MODE_LABELS[modeId] || activeMode.textContent.trim();
+            if (modeValue) {
+              if (activeMode) {
+                var modeId = activeMode.getAttribute("data-play-mode") || "puffly";
+                modeValue.textContent = MODE_LABELS[modeId] || activeMode.textContent.trim();
+              } else if (isFriend) {
+                modeValue.textContent = "Friend";
+              }
             }
             if (traitPrefix) {
               traitPrefix.textContent = gameId === "puzzle" ? "Size" : "Trait";
@@ -926,6 +1125,12 @@
               audioBtn.classList.toggle("is-on", on);
               audioBtn.textContent = on ? "Audio guide" : "Audio off";
             }
+            if (roomCluster) {
+              roomCluster.hidden = !isFriend;
+            }
+            if (typeof window.pufflyRefreshFriendRoomPill === "function") {
+              window.pufflyRefreshFriendRoomPill();
+            }
           }
           window.pufflyRefreshPracticePillNavLabels = refreshPracticePillNavLabels;
 
@@ -935,8 +1140,9 @@
               "practice-pill-cluster-open-game",
               "practice-pill-cluster-open-mode",
               "practice-pill-cluster-open-trait",
+              "practice-pill-cluster-open-room",
             );
-            ["game", "mode", "trait"].forEach(function (cluster) {
+            ["game", "mode", "trait", "room"].forEach(function (cluster) {
               var trigger = document.getElementById("practice-pill-" + cluster + "-trigger");
               if (trigger) {
                 trigger.setAttribute("aria-expanded", "false");
@@ -955,6 +1161,12 @@
               if (trigger) {
                 trigger.setAttribute("aria-expanded", "true");
               }
+              if (
+                cluster === "trait" &&
+                typeof window.pufflySyncFriendPuzzleSizePanel === "function"
+              ) {
+                window.pufflySyncFriendPuzzleSizePanel();
+              }
             }
           }
 
@@ -964,8 +1176,9 @@
             if (!pillNav) {
               return;
             }
-            pillNav.hidden = !options.inTray;
-            if (!options.inTray) {
+            var showNav = Boolean(options.inTray) || Boolean(options.friendMode);
+            pillNav.hidden = !showNav;
+            if (!showNav) {
               closePracticePillClusters();
             } else {
               refreshPracticePillNavLabels();
@@ -978,7 +1191,7 @@
             return;
           }
 
-          ["game", "mode", "trait"].forEach(function (cluster) {
+          ["game", "mode", "trait", "room"].forEach(function (cluster) {
             var trigger = document.getElementById("practice-pill-" + cluster + "-trigger");
             if (!trigger) {
               return;
@@ -1016,7 +1229,9 @@
               event.target.closest(".practice-pill-cluster") ||
               event.target.closest("#practice-setup-tray .game-panel") ||
               event.target.closest("#practice-setup-tray .mode-panel") ||
-              event.target.closest("#practice-setup-tray .practice-puffly-control-card")
+              event.target.closest("#practice-setup-tray .practice-puffly-control-card") ||
+              event.target.closest("#friend-puzzle-difficulty") ||
+              event.target.closest("#practice-pill-room-menu")
             ) {
               return;
             }
@@ -1142,30 +1357,52 @@
           return "";
         }
 
-        function applyPlayModeChrome(mode) {
-          var isFriend = mode === "friend";
-          if (isFriend) {
-            document.body.classList.remove(
-              "practice-table-layout",
-              "practice-table-initializing",
-              "practice-setup-tray-open",
+        function tableUiEnabledInline() {
+          try {
+            return (
+              new URLSearchParams(window.location.search || "").get("tableUi") === "1" ||
+              localStorage.getItem("puffly.tableUi") === "1"
             );
-            document.documentElement.style.width = "";
-            document.documentElement.style.height = "";
-            document.body.style.width = "";
-            document.body.style.height = "";
-            document.querySelectorAll("#game-board-matrix .captured-tray").forEach(function (tray) {
-              tray.style.height = "";
-              tray.style.maxHeight = "";
-            });
-            ["blue-captured-pile", "green-captured-pile"].forEach(function (pileId) {
-              var pile = document.getElementById(pileId);
-              if (pile) {
-                pile.style.removeProperty("--puzzle-tray-piece-size");
+          } catch (e) {
+            return false;
+          }
+        }
+
+        function applyPlayModeChrome(mode, options) {
+          options = options || {};
+          var isFriend = mode === "friend";
+          var useTable = tableUiEnabledInline();
+          if (isFriend) {
+            document.body.classList.remove("practice-table-initializing", "practice-setup-tray-open");
+            if (useTable) {
+              document.body.classList.add("practice-table-layout");
+            } else {
+              document.body.classList.remove("practice-table-layout");
+              document.documentElement.style.width = "";
+              document.documentElement.style.height = "";
+              document.body.style.width = "";
+              document.body.style.height = "";
+            }
+            if (!options.skipDomSync) {
+              if (!useTable) {
+                document.querySelectorAll("#game-board-matrix .captured-tray").forEach(function (tray) {
+                  tray.style.height = "";
+                  tray.style.maxHeight = "";
+                });
+                ["blue-captured-pile", "green-captured-pile"].forEach(function (pileId) {
+                  var pile = document.getElementById(pileId);
+                  if (pile) {
+                    pile.style.removeProperty("--puzzle-tray-piece-size");
+                  }
+                });
               }
-            });
-            if (typeof window.pufflySyncPracticeTableDom === "function") {
-              window.pufflySyncPracticeTableDom({ useTableLayout: false, friendMode: true });
+              if (typeof window.pufflySyncPracticeTableDom === "function") {
+                window.pufflySyncPracticeTableDom({
+                  useTableLayout: useTable,
+                  friendMode: true,
+                  initializing: false,
+                });
+              }
             }
           } else if (mode === "puffly") {
             try {
@@ -1178,6 +1415,18 @@
             } catch (e) {}
           }
           document.body.classList.toggle("friend-mode", isFriend);
+          if (
+            isFriend &&
+            (document.body.classList.contains("practice-table-layout") ||
+              document.body.classList.contains("practice-table-initializing") ||
+              document.body.classList.contains("practice-setup-tray-open"))
+          ) {
+            document.body.classList.remove(
+              "practice-table-layout",
+              "practice-table-initializing",
+              "practice-setup-tray-open",
+            );
+          }
           var pufflyControls = document.getElementById("puffly-controls");
           var friendControls = document.getElementById("friend-controls");
           var playPuffly = document.getElementById("play-puffly-btn");
@@ -1206,7 +1455,10 @@
           if (typeof window.pufflyRefreshSpeechUnlockOverlay === "function") {
             window.pufflyRefreshSpeechUnlockOverlay();
           }
-          if (typeof window.pufflyUpdatePracticeTableChrome === "function") {
+          if (
+            !options.skipTableChromeUpdate &&
+            typeof window.pufflyUpdatePracticeTableChrome === "function"
+          ) {
             window.pufflyUpdatePracticeTableChrome();
           }
           if (
@@ -1410,26 +1662,19 @@
           } else if (mode === "friend") {
             window.__pufflyUserChosePufflyMode = false;
           }
-          applyPlayModeChrome(mode);
           if (mode === "friend") {
-            playFriendLobbyInline({ fromGesture: true });
-            if (typeof window.pufflyPrimeVoiceForRoomAction === "function") {
-              window.pufflyPrimeVoiceForRoomAction();
-            } else if (typeof window.pufflyPrimeVoice === "function") {
-              window.pufflyPrimeVoice();
-            }
             if (typeof window.pufflyActivateFriendMode === "function") {
               window.pufflyActivateFriendMode();
-            }
-            if (typeof window.pufflyBootFriendLobbyVoice === "function") {
-              window.pufflyBootFriendLobbyVoice();
-            } else if (typeof window.pufflyAnnounceFriendLobby === "function") {
-              window.pufflyAnnounceFriendLobby();
+            } else {
+              applyPlayModeChrome("friend");
+              playFriendLobbyInline({ fromGesture: true });
             }
             return;
           }
-          if (mode === "puffly" && typeof window.pufflyActivatePufflyMode === "function") {
+          if (typeof window.pufflyActivatePufflyMode === "function") {
             window.pufflyActivatePufflyMode();
+          } else {
+            applyPlayModeChrome("puffly");
           }
         }
 
@@ -1449,16 +1694,7 @@
 
         window.pufflyApplyPlayModeChrome = applyPlayModeChrome;
 
-        function routeModeTap(event) {
-          var btn = event.target && event.target.closest && event.target.closest("[data-play-mode]");
-          if (!btn) {
-            return;
-          }
-          event.preventDefault();
-          runPlayMode(btn.getAttribute("data-play-mode"));
-        }
-
-        document.addEventListener("click", routeModeTap, true);
+        /* Mode taps: button onclick handlers only (no duplicate capture listener). */
 
         function friendLobbyClipUrl() {
           var search = new URLSearchParams(window.location.search || "");
@@ -1702,6 +1938,6 @@
         <li id="rule-line-4">Kinging adds a cap or crown accessory.</li>
       </ul>
     </section>
-    <script type="module" src="./src/app.js?v=453"></script>
+    <script type="module" src="./src/app.js?v=491"></script>
   </body>
 </html>
