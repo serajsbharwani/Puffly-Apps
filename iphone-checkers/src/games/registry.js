@@ -16,7 +16,7 @@ export const GAME_REGISTRY = {
   },
 };
 
-export const DEFAULT_GAME_ID = "checkers";
+export const DEFAULT_GAME_ID = "fourinarow";
 
 export function normalizeGameId(gameId) {
   const normalized = String(gameId || "").trim().toLowerCase();

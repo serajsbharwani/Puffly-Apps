@@ -1,0 +1,82 @@
+{
+  "asset_name": "Puffly Home Hero",
+  "file_path": "assets/Puffly/riv/home/Puffly_home_hero.riv",
+  "version": "1.1.0",
+  "description": "Home hero: concurrent tracks handling ambient sway, blink, CTA hover scale, and decoupled belly proximity eye-tracking.",
+  "setup": {
+    "artboard": "Puffly_Home_Page",
+    "state_machine": "Home_HeroSM"
+  },
+  "inputs": {
+    "Hover": {
+      "type": "boolean",
+      "default": false,
+      "notes": "Driven externally by HTML #home-lets-play-btn hover/focus events or internally by Rive listeners to drive CTA scale pop."
+    },
+    "Eye_Look_Position": {
+      "type": "number",
+      "default": 0,
+      "range": [0, 100],
+      "values": {
+        "idle": 0,
+        "look_down": 100
+      },
+      "notes": "Driven completely natively inside Rive by the Button and Belly hit targets. Retained as an exposed value for potential code-level debugging. Do NOT write from HTML."
+    }
+  },
+  "button": {
+    "html_id": "home-lets-play-btn",
+    "click_owner": "html",
+    "hover_owner": "dual",
+    "rive_input": "Hover",
+    "states": ["Hovered", "Not Hovered"],
+    "notes": "Rive Button/Belly listeners drive Hover + Eye_Look_Position natively. HTML pointerenter/leave and focus/blur may also set Hover=true/false for accessibility when the HTML hit rect is used; do NOT set Eye_Look_Position from HTML."
+  },
+  "hit_targets": [
+    {
+      "name": "Button",
+      "type": "vector_shape",
+      "purpose": "CTA touch bounds. Fires Hover=true/false and Eye_Look_Position=100/0. Overlays Belly shape to prioritize click execution."
+    },
+    {
+      "name": "Belly",
+      "type": "vector_shape",
+      "opacity": 0,
+      "purpose": "Expands proximity touch radius over Puffly's entire white fur stomach. Natively fires Belly Poke (Eye_Look_Position=100) and Belly UnPoke (Eye_Look_Position=0 / Hover=false backup reset)."
+    }
+  ],
+  "layers": [
+    {
+      "track_name": "Layer 1",
+      "purpose": "Automatic storybook blinking routine",
+      "states": ["Blink", "Idle Eyes Open", "Double Blink"]
+    },
+    {
+      "track_name": "Layer 2",
+      "purpose": "Premium button micro-interactions (scale highlight)",
+      "states": ["Hovered", "Not Hovered"],
+      "driven_by": "Hover"
+    },
+    {
+      "track_name": "Layer 3",
+      "purpose": "Low-velocity organic looping body pendulum sway from the beam",
+      "states": ["Sway Idle"]
+    },
+    {
+      "track_name": "Layer 4",
+      "purpose": "Responsive eye-tracking system (smooth state-to-state interpolation)",
+      "states": ["Idle Eyes Open", "Eyes Look Down"],
+      "driven_by": "Hover / Native Listeners"
+    }
+  ],
+  "fallback": {
+    "static_hero": "assets/Puffly/skeleton/PlayPuffly_HomePage_Hero_New_Transparent.png"
+  },
+  "wiring": {
+    "html_hover_to_rive": "pointerenter/focus → Hover=true; pointerleave/blur → Hover=false. Eye look-down is fully automated by Rive Button/Belly targets — do not set Eye_Look_Position from HTML.",
+    "rive_listeners": "Enable Rive listeners (shouldDisableRiveListeners=false) so Button/Belly hit targets receive pointer events.",
+    "pointer_events": "Allow pointer events on the Rive canvas host so Belly can be poked outside the HTML CTA rect. Keep #home-lets-play-btn above the canvas for click ownership.",
+    "click": "Keep existing #home-lets-play-btn click mapping → index.html",
+    "reduced_motion": "If prefers-reduced-motion media query is active, bypass Rive canvas completely and swap for static fallback PNG."
+  }
+}

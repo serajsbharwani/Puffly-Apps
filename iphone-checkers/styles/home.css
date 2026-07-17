@@ -1,7 +1,8 @@
-/* PlayPuffly home page — flex stack + framed hero (v382+) */
+/* PlayPuffly home — v513: landscape CTA target centered lower on button */
 
 :root {
   --home-parchment: #f4efe6;
+  --home-brand-band: calc(env(safe-area-inset-top, 0px) + 4.75rem);
 }
 
 *,
@@ -12,84 +13,156 @@
 
 html {
   height: 100%;
+  height: -webkit-fill-available;
   -webkit-text-size-adjust: 100%;
+  background-color: var(--home-parchment);
 }
 
 body {
   margin: 0;
   min-height: 100%;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
   color: #2b2b2b;
-  background: var(--home-parchment);
+  background-color: var(--home-parchment);
   overflow: hidden;
 }
 
 #puffly-home-container {
+  position: relative;
   width: 100vw;
+  width: 100dvw;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
   height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
+  height: 100svh;
   overflow: hidden;
-  padding:
-    max(4vh, env(safe-area-inset-top))
-    max(1rem, env(safe-area-inset-right))
-    max(4vh, env(safe-area-inset-bottom))
-    max(1rem, env(safe-area-inset-left));
   background-color: var(--home-parchment);
 }
 
-.brand-wrapper {
-  flex: 0 0 auto;
-  width: 100%;
-  max-width: 640px;
-  text-align: center;
-  z-index: 10;
-}
-
-.brand-title {
-  margin: 0 0 4px;
-  font-size: clamp(26px, 5vw, 32px);
-  font-weight: 700;
-  color: #2b2b2b;
-  letter-spacing: 1px;
-}
-
-.brand-tagline {
-  margin: 0;
-  font-size: clamp(16px, 3.5vw, 18px);
-  font-style: italic;
-  font-weight: 500;
-  color: #555555;
-}
-
+/* Portrait: wall-to-wall hero (v504 feel) — edge-to-edge, no safe-area letterbox */
 .hero-container {
-  position: relative;
-  flex: 1 1 auto;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   width: 100%;
-  max-width: min(94vw, 720px);
-  height: 65vh;
+  max-width: none;
   min-height: 0;
   display: flex;
   justify-content: center;
   align-items: center;
+  padding-bottom: 0;
   background-color: var(--home-parchment);
   --lets-play-x-nudge: 14px;
+  --brand-x-nudge: 12px;
+}
+
+/* Stacked brand under the beam in clean parchment */
+.home-brand-overlay {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 12.5%);
+  left: 0;
+  right: 0;
+  bottom: auto;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 3px;
+  pointer-events: none;
+  /* Match Puffly’s visual center between the hands */
+  transform: translateX(var(--brand-x-nudge));
+}
+
+.brand-title {
+  margin: 0;
+  font-size: clamp(17px, 4vw, 22px);
+  font-weight: 700;
+  color: #2b2b2b;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(244, 239, 230, 0.55);
+}
+
+.brand-tagline {
+  margin: 0;
+  font-size: clamp(14px, 3.2vw, 17px);
+  font-style: italic;
+  font-weight: 500;
+  color: #555555;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(244, 239, 230, 0.55);
+}
+
+.home-hero-rive {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Listeners need hits for Belly; HTML CTA button stays above for click */
+  pointer-events: none;
+  opacity: 0;
+  background-color: var(--home-parchment);
+}
+
+.home-hero-rive canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  background-color: transparent;
+  pointer-events: none;
+}
+
+body.home-rive-ready .home-hero-rive,
+body.home-rive-ready .home-hero-rive canvas {
+  pointer-events: auto;
 }
 
 .hero-image {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   display: block;
+  width: 100%;
   height: 100%;
-  width: auto;
-  max-width: 100%;
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
+  transition: opacity 0.35s ease;
+  background-color: transparent;
+}
+
+body.home-rive-ready .home-hero-rive {
+  opacity: 1;
+}
+
+body.home-rive-ready .hero-image {
+  opacity: 0;
+  pointer-events: none;
+}
+
+body.home-rive-ready #home-lets-play-btn {
+  color: transparent;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+body.home-rive-failed .home-hero-rive,
+body.home-rive-skipped .home-hero-rive {
+  display: none;
 }
 
 #home-lets-play-btn {
   position: absolute;
-  top: 58%;
+  top: 62%;
   left: 50%;
   transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%);
   appearance: none;
@@ -108,44 +181,129 @@ body {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.35s ease;
   z-index: 3;
+}
+
+body:not(.home-rive-ready) #home-lets-play-btn {
+  animation: homeLetsPlayPulse 2.4s ease-in-out infinite;
+}
+
+body:not(.home-rive-ready) #home-lets-play-btn:hover,
+body:not(.home-rive-ready) #home-lets-play-btn:focus-visible {
+  transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%) scale(1.04);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+  animation: none;
 }
 
 #home-lets-play-btn:active {
   transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%) scale(0.96);
+  animation: none;
+}
+
+@keyframes homeLetsPlayPulse {
+  0%,
+  100% {
+    transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%) scale(1);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+  }
+  50% {
+    transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%) scale(1.035);
+    box-shadow: 0 9px 16px rgba(0, 0, 0, 0.18);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #home-lets-play-btn {
+  #home-lets-play-btn,
+  body:not(.home-rive-ready) #home-lets-play-btn {
     transition: none;
+    animation: none;
   }
 
-  #home-lets-play-btn:active {
+  #home-lets-play-btn:active,
+  body:not(.home-rive-ready) #home-lets-play-btn:hover,
+  body:not(.home-rive-ready) #home-lets-play-btn:focus-visible {
     transform: translate(calc(-50% + var(--lets-play-x-nudge)), -50%);
   }
 }
 
-@media (orientation: landscape) and (max-height: 520px) {
-  #puffly-home-container {
-    padding-top: max(2vh, env(safe-area-inset-top));
-    padding-bottom: max(2vh, env(safe-area-inset-bottom));
-  }
-
-  .brand-title {
-    font-size: clamp(22px, 4vw, 28px);
-  }
-
-  .brand-tagline {
-    font-size: clamp(14px, 3vw, 16px);
+/* Landscape: v506 layout — full-bleed Contain + top brand band overlay */
+@media (orientation: landscape) {
+  :root {
+    --home-brand-band: calc(env(safe-area-inset-top, 0px) + 3.35rem);
   }
 
   .hero-container {
-    height: 58vh;
+    inset: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .home-brand-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: auto;
+    height: var(--home-brand-band);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding-top: max(0.35rem, env(safe-area-inset-top, 0px));
+    background-color: var(--home-parchment);
+    z-index: 10;
+    transform: none;
+  }
+
+  .brand-title {
+    font-size: clamp(20px, 3.6vw, 26px);
+    letter-spacing: 1px;
+    text-shadow: none;
+  }
+
+  .brand-tagline {
+    font-size: clamp(13px, 2.6vw, 16px);
+    text-shadow: none;
+  }
+
+  .home-hero-rive {
+    inset: 0;
+  }
+
+  .hero-image {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: min(100%, calc(100dvh - var(--home-brand-band)));
+    max-width: min(96vw, 900px);
+    max-height: 100%;
+    object-fit: contain;
+    object-position: center;
   }
 
   #home-lets-play-btn {
-    top: 57%;
+    top: 63%;
     font-size: clamp(15px, 3.2vw, 18px);
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  :root {
+    --home-brand-band: calc(env(safe-area-inset-top, 0px) + 2.85rem);
+  }
+
+  .brand-title {
+    font-size: clamp(18px, 3.2vw, 22px);
+  }
+
+  .brand-tagline {
+    font-size: clamp(12px, 2.4vw, 14px);
+  }
+
+  #home-lets-play-btn {
+    top: 63%;
+    min-height: 52px;
+    max-width: 150px;
   }
 }

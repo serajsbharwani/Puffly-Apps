@@ -91,6 +91,7 @@ const ruleLine1 = document.getElementById("rule-line-1");
 const ruleLine2 = document.getElementById("rule-line-2");
 const ruleLine3 = document.getElementById("rule-line-3");
 const ruleLine4 = document.getElementById("rule-line-4");
+const ruleLine5 = document.getElementById("rule-line-5");
 const playPufflyButton = document.getElementById("play-puffly-btn");
 const playFriendButton = document.getElementById("play-friend-btn");
 const friendLockText = document.getElementById("friend-lock-text");
@@ -507,7 +508,7 @@ const INVITE_PAGE_LOCK_CODE_KEY = "puffly.inviteActiveCode";
 const INVITE_ORIGIN_STORAGE_KEY = "puffly.inviteOrigin";
 const DEFAULT_PUBLIC_INVITE_ORIGIN = "https://dev.playpuffly.org";
 /** Bumped with index.html app.js?v= so iPad cache mismatches are visible in friend status. */
-const CLIENT_BUILD = 491;
+const CLIENT_BUILD = 513;
 const VOICE_DEBUG_LOG_MAX = 200;
 const GUEST_HYDRATE_PAYLOAD_KEY = "puffly.guestHydratePayload";
 const GUEST_ATTACHED_FLAG_KEY = "puffly.guestAttached";
@@ -1838,15 +1839,7 @@ function updateAppTitle() {
   if (!appTitle) {
     return;
   }
-  if (selectedGameId === "fourinarow") {
-    appTitle.textContent = "Puffly Four-in-a-Row";
-    return;
-  }
-  if (selectedGameId === "puzzle") {
-    appTitle.textContent = "Puffly Puzzle";
-    return;
-  }
-  appTitle.textContent = "Puffly Checkers";
+  appTitle.textContent = "PlayPuffly";
 }
 
 function updateGameButtons() {
@@ -3012,6 +3005,44 @@ function schedulePracticeTableRelayoutIfNeeded() {
   });
 }
 
+function syncPracticeFlipOverlayBottom() {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const root = document.documentElement;
+  if (
+    !document.body.classList.contains("practice-table-layout") ||
+    !document.body.classList.contains("practice-table-initializing") ||
+    document.body.classList.contains("friend-mode")
+  ) {
+    root.style.removeProperty("--practice-flip-overlay-bottom");
+    return;
+  }
+  const scene = document.getElementById("practice-table-scene");
+  const seat = document.getElementById("player-seat-row");
+  if (!scene || !seat) {
+    root.style.removeProperty("--practice-flip-overlay-bottom");
+    return;
+  }
+  const sceneRect = scene.getBoundingClientRect();
+  const seatRect = seat.getBoundingClientRect();
+  if (sceneRect.height <= 0 || seatRect.height <= 0) {
+    return;
+  }
+  const band = Math.max(0, sceneRect.bottom - seatRect.top + 8);
+  root.style.setProperty("--practice-flip-overlay-bottom", `${Math.ceil(band)}px`);
+}
+
+function schedulePracticeFlipOverlayBottomSync() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.requestAnimationFrame(() => {
+    syncPracticeFlipOverlayBottom();
+    window.requestAnimationFrame(syncPracticeFlipOverlayBottom);
+  });
+}
+
 function updatePracticeTableChrome() {
   if (playMode === "friend") {
     applyFriendTableLayoutIfEnabled();
@@ -3043,6 +3074,7 @@ function updatePracticeTableChrome() {
         friendMode: false,
       });
     }
+    syncPracticeFlipOverlayBottom();
     return;
   }
   const initializing = isStarterFlipPending();
@@ -3053,6 +3085,7 @@ function updatePracticeTableChrome() {
   if (chromeKey === lastPracticeTableChromeKey) {
     document.body.classList.toggle("practice-table-initializing", initializing);
     syncPracticeTableLayoutVarsFromDom();
+    schedulePracticeFlipOverlayBottomSync();
     return;
   }
   lastPracticeTableChromeKey = chromeKey;
@@ -3066,11 +3099,14 @@ function updatePracticeTableChrome() {
   if (typeof window.pufflySyncPracticeTableDom === "function") {
     window.pufflySyncPracticeTableDom({ initializing, useTableLayout: true });
   }
+  schedulePracticeFlipOverlayBottomSync();
   window.requestAnimationFrame(() => {
     syncPracticeTableLayoutVarsFromDom();
+    syncPracticeFlipOverlayBottom();
     lockBoardGeometry(true);
     window.requestAnimationFrame(() => {
       syncPracticeTableLayoutVarsFromDom();
+      syncPracticeFlipOverlayBottom();
       lockBoardGeometry(true);
     });
   });
@@ -3139,6 +3175,7 @@ function syncPracticeTableLayoutVarsFromDom() {
   if (typeof window.pufflySyncPracticeTableNavVars === "function") {
     window.pufflySyncPracticeTableNavVars();
   }
+  syncPracticeFlipOverlayBottom();
 }
 
 function practiceTableIsDesktopWide() {
@@ -5986,6 +6023,14 @@ function updateTeamMascot() {
       }
       seatIdentity.setAttribute("aria-label", "Your seat — Blue team");
     }
+  } else if (seatIdentity && inPractice) {
+    if (seatIcon) {
+      seatIcon.textContent = "🐸";
+    }
+    if (seatLabel) {
+      seatLabel.textContent = "You · Green";
+    }
+    seatIdentity.setAttribute("aria-label", "Your seat — Green team");
   }
   refreshFriendAvatarBand();
 }
@@ -6014,6 +6059,32 @@ function friendSeatTurnStatus() {
     return "👀 Your turn!";
   }
   return state?.currentPlayer === "dark" ? "🐻 Blue's turn" : "🐸 Green's turn";
+}
+
+/** Practice bottom pill status — mirrors friendSeatStatusLine without room/setup copy. */
+function practiceSeatStatusLine() {
+  if (playMode !== "puffly") {
+    return "";
+  }
+  if (state?.winner || state?.draw) {
+    return "";
+  }
+  if (isStarterFlipPending()) {
+    return "Flip to see who goes first";
+  }
+  if (state.currentPlayer === humanPlayer) {
+    return "Your turn";
+  }
+  return "Puffly's turn";
+}
+
+function isPracticeTableUiActive() {
+  return (
+    playMode === "puffly" &&
+    typeof document !== "undefined" &&
+    document.body.classList.contains("practice-table-layout") &&
+    !document.body.classList.contains("friend-mode")
+  );
 }
 
 /** Bottom pill setup + gameplay status synchronized with top Room pill. */
@@ -8795,6 +8866,15 @@ function speakFromStatus(statusMessage) {
   } else if (statusMessage === "Puzzle complete!") {
     phrase = "Puzzle complete.";
   }
+  if (!phrase) {
+    return;
+  }
+  if (playMode === "puffly" && PRACTICE_WRONG_MOVE_STATUSES.has(statusMessage) && resolveVoiceClipId(phrase)) {
+    if (!speakPracticeWrongMoveClip()) {
+      playInvalidAudio();
+    }
+    return;
+  }
   speakPhrase(phrase);
 }
 
@@ -8810,6 +8890,33 @@ function playLandingTic() {
 
 function playInvalidAudio() {
   beep(180, 0.06, "square", 0.04);
+}
+
+const PRACTICE_WRONG_MOVE_STATUSES = new Set([
+  "That piece cannot move.",
+  "That destination is not legal.",
+  "Select one of the highlighted pieces.",
+  "That move is not legal.",
+]);
+
+function speakPracticeWrongMoveClip() {
+  if (!audioEnabled || playMode !== "puffly") {
+    return false;
+  }
+  const phrase = "Wrong move.";
+  const clipId = resolveVoiceClipId(phrase);
+  if (!clipId) {
+    return false;
+  }
+  lastSpokenPhrase = "";
+  lastSpokenAt = 0;
+  void pufflySpeak(phrase, {
+    onstart: () => {
+      lastSpokenPhrase = phrase;
+      lastSpokenAt = Date.now();
+    },
+  });
+  return true;
 }
 
 function primePuzzleVoiceFromGesture() {
@@ -9346,6 +9453,14 @@ function refreshUndoButton() {
   undoButton.classList.toggle("is-active", playMode === "friend" && canUndo && !busy);
 }
 
+/** How to Play stays available in Friend mode while waiting between turns. */
+function syncRulesButtonState() {
+  if (!rulesButton) {
+    return;
+  }
+  rulesButton.disabled = playMode === "friend" ? false : busy;
+}
+
 function prefersCompactChrome() {
   return (
     typeof window !== "undefined" &&
@@ -9475,7 +9590,8 @@ function refreshFriendSeatStatus(_text) {
     return;
   }
   const tableFriend = isFriendTableUiActive();
-  if (!tableFriend) {
+  const tablePractice = isPracticeTableUiActive();
+  if (!tableFriend && !tablePractice) {
     statusEl.hidden = true;
     statusEl.textContent = "";
     if (thoughtSlot) {
@@ -9486,18 +9602,25 @@ function refreshFriendSeatStatus(_text) {
   if (thoughtSlot) {
     thoughtSlot.hidden = true;
   }
-  const line = friendSeatStatusLine();
+  const line = tableFriend ? friendSeatStatusLine() : practiceSeatStatusLine();
   statusEl.hidden = !line;
   statusEl.textContent = line;
+  if (tableFriend) {
+    statusEl.classList.toggle(
+      "is-thinking",
+      Boolean(line) &&
+        !friendPuzzleSizePendingConfirm &&
+        (/Blue's turn|Green's turn|Waiting for host|Waiting for Friend|is Flipping/i.test(line) ||
+          (remoteSession?.ready && !isStarterFlipPending() && state?.currentPlayer !== remoteSession?.color)),
+    );
+    refreshFriendPuzzleSizeConfirmChrome();
+    syncFriendSeatBarScroll();
+    return;
+  }
   statusEl.classList.toggle(
     "is-thinking",
-    Boolean(line) &&
-      !friendPuzzleSizePendingConfirm &&
-      (/Blue's turn|Green's turn|Waiting for host|Waiting for Friend|is Flipping/i.test(line) ||
-        (remoteSession?.ready && !isStarterFlipPending() && state?.currentPlayer !== remoteSession?.color)),
+    Boolean(line) && line === "Puffly's turn",
   );
-  refreshFriendPuzzleSizeConfirmChrome();
-  syncFriendSeatBarScroll();
 }
 
 /** Keep Undo visible; scroll actions row right only while Voice menu is open. */
@@ -10868,17 +10991,50 @@ function syncRoomChatFromPayload(data, forceScroll = false) {
   }
 }
 
+function checkersTapMoveRuleLine(teamColor) {
+  if (teamColor === "light") {
+    return "To move, tap your green piece first, then tap a dotted square.";
+  }
+  if (teamColor === "dark") {
+    return "To move, tap your blue piece first, then tap a dotted square.";
+  }
+  return "To move, tap your piece first, then tap a dotted square.";
+}
+
+function puzzleTrayTapRuleLine(teamColor) {
+  if (teamColor === "light") {
+    return "Tap a puzzle piece in the green tray, then tap its matching spot on the board.";
+  }
+  if (teamColor === "dark") {
+    return "Tap a puzzle piece in the blue tray, then tap its matching spot on the board.";
+  }
+  return "Tap a puzzle piece in your tray, then tap its matching spot on the board.";
+}
+
+const PUZZLE_GLOW_RULE_LINE = "Look for the pieces with the light blue glow to start your puzzle.";
+
 function updateRulesForMode() {
   if (!ruleLine1 || !ruleLine2 || !ruleLine3 || !ruleLine4) {
     return;
   }
   const isFour = selectedGameId === "fourinarow";
   const isPuzzle = selectedGameId === "puzzle";
+  const isCheckers = !isPuzzle && !isFour;
+  const friendTeam =
+    playMode === "friend" && remoteSession
+      ? resolveFriendSessionColor(remoteSession) ?? remoteSession.color
+      : null;
+  if (ruleLine5) {
+    ruleLine5.classList.toggle("hidden", !isCheckers);
+    if (isCheckers) {
+      const tapTeam = playMode === "friend" ? friendTeam : "light";
+      ruleLine5.textContent = checkersTapMoveRuleLine(tapTeam);
+    }
+  }
   if (playMode === "friend") {
     ruleLine1.classList.add("hidden");
     ruleLine2.classList.remove("hidden");
-    const team = remoteSession ? resolveFriendSessionColor(remoteSession) ?? remoteSession.color : null;
-    const myColor = team ? playerDisplayName(team).toUpperCase() : null;
+    const myColor = friendTeam ? playerDisplayName(friendTeam).toUpperCase() : null;
     ruleLine2.textContent = myColor
       ? `You are the ${myColor} team.`
       : "Your team color is assigned when you join the room.";
@@ -10898,8 +11054,9 @@ function updateRulesForMode() {
     }
   }
   if (isPuzzle) {
-    ruleLine3.textContent = "Drag a tray piece near its matching slot to snap.";
-    ruleLine4.textContent = "Outer-edge pieces glow cyan for easier starts.";
+    const trayTeam = playMode === "friend" ? friendTeam : "light";
+    ruleLine3.textContent = puzzleTrayTapRuleLine(trayTeam);
+    ruleLine4.textContent = PUZZLE_GLOW_RULE_LINE;
   } else if (isFour) {
     ruleLine3.textContent = "Tap one of the highlighted slots to drop your piece.";
     ruleLine4.textContent = "Connect 4 in any direction to win.";
@@ -12972,6 +13129,9 @@ function render(statusMessage = "Make your move.", options = {}) {
     if (playMode === "friend") {
       refreshFriendSeatStatus();
       refreshFriendVoicePill();
+    } else if (playMode === "puffly") {
+      refreshFriendSeatStatus();
+      refreshFriendVoicePill();
     }
   } catch (error) {
     console.error("[render] recover after error", error);
@@ -12982,6 +13142,9 @@ function render(statusMessage = "Make your move.", options = {}) {
       updatePracticeTableChrome();
       renderUi(statusMessage, options);
       if (playMode === "friend") {
+        refreshFriendSeatStatus();
+        refreshFriendVoicePill();
+      } else if (playMode === "puffly") {
         refreshFriendSeatStatus();
         refreshFriendVoicePill();
       }
@@ -13089,7 +13252,7 @@ function renderUi(statusMessage = "Make your move.", options = {}) {
       puzzleTrayBootstrapAttempted = false;
     }
     refreshUndoButton();
-    rulesButton.disabled = busy;
+    syncRulesButtonState();
     updateDifficultyButtons();
     updateFriendDifficultyButtons();
     updateFriendPuzzleDifficultyPanel();
@@ -13134,7 +13297,7 @@ function renderUi(statusMessage = "Make your move.", options = {}) {
     renderHistory();
     renderCapturedPiles();
     refreshUndoButton();
-    rulesButton.disabled = busy;
+    syncRulesButtonState();
     updateDifficultyButtons();
     updateAudioToggle();
     updateStarterFlipButton();
@@ -13229,7 +13392,7 @@ function renderUi(statusMessage = "Make your move.", options = {}) {
     renderHistory();
     renderCapturedPiles();
     refreshUndoButton();
-    rulesButton.disabled = busy;
+    syncRulesButtonState();
     updateDifficultyButtons();
     updateFriendDifficultyButtons();
     updateFriendPuzzleDifficultyPanel();
@@ -13282,7 +13445,7 @@ function renderUi(statusMessage = "Make your move.", options = {}) {
   renderHistory();
   renderCapturedPiles();
   refreshUndoButton();
-  rulesButton.disabled = busy;
+  syncRulesButtonState();
   updateDifficultyButtons();
   updateFriendDifficultyButtons();
   updateFriendPuzzleDifficultyPanel();
@@ -14252,7 +14415,9 @@ if (boardElement) {
   if (piece && piece.player === state.currentPlayer) {
     const legal = getLegalMovesForPiece(state, row, col);
     if (legal.length === 0) {
-      playInvalidAudio();
+      if (playMode === "friend") {
+        playInvalidAudio();
+      }
       render("That piece cannot move.");
       return;
     }
@@ -14262,7 +14427,9 @@ if (boardElement) {
   }
 
   if (!selected) {
-    playInvalidAudio();
+    if (playMode === "friend") {
+      playInvalidAudio();
+    }
     render("Select one of the highlighted pieces.");
     return;
   }
@@ -14270,7 +14437,9 @@ if (boardElement) {
   const legal = getLegalMovesForPiece(state, selected.row, selected.col);
   const move = legal.find((candidate) => candidate.to.row === row && candidate.to.col === col);
   if (!move) {
-    playInvalidAudio();
+    if (playMode === "friend") {
+      playInvalidAudio();
+    }
     render("That destination is not legal.");
     return;
   }
@@ -15842,6 +16011,7 @@ if (typeof window !== "undefined") {
   window.pufflyClearPracticeTableOrientationLayoutState = clearPracticeTableOrientationLayoutState;
   window.pufflySyncPracticeTableFrameInsets = practiceTableSyncFrameInsets;
   window.pufflySyncPracticeTableLayoutVars = syncPracticeTableLayoutVarsFromDom;
+  window.pufflySyncPracticeFlipOverlayBottom = syncPracticeFlipOverlayBottom;
   window.pufflyPrimeVoice = primePufflyVoiceFromGesture;
   window.pufflyPrimeVoiceForRoomAction = () =>
     primePufflyVoiceFromGesture({ dismissFriendStart: speechNeedsInteractionUnlock });

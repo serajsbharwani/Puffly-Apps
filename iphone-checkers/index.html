@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="PlayPuffly" />
     <link rel="apple-touch-icon" href="./assets/icons/Puffly_Icon-192.png" />
-    <title>Puffly Checkers</title>
+    <title>PlayPuffly</title>
     <script>
       (function () {
         var search = new URLSearchParams(window.location.search || "");
@@ -69,7 +69,7 @@
         }
         var dest = new URL("./guest-join.html", window.location.href);
         dest.searchParams.set("room", join);
-        var game = (search.get("game") || "checkers").trim().toLowerCase();
+        var game = (search.get("game") || "fourinarow").trim().toLowerCase();
         if (game) {
           dest.searchParams.set("game", game);
         }
@@ -80,8 +80,8 @@
         window.location.replace(dest.toString());
       })();
     </script>
-    <link rel="stylesheet" href="./styles.css?v=134" />
-    <link rel="stylesheet" href="./styles/practice-table.css?v=151" />
+    <link rel="stylesheet" href="./styles.css?v=135" />
+    <link rel="stylesheet" href="./styles/practice-table.css?v=155" />
   </head>
   <body>
     <script>
@@ -116,13 +116,13 @@
       <div id="practice-setup-chrome-home" class="practice-setup-chrome-home">
         <div id="practice-setup-rows" class="practice-setup-rows">
           <header class="app-header">
-            <h1 id="app-title">Puffly Checkers</h1>
+            <h1 id="app-title">PlayPuffly</h1>
           </header>
 
           <section class="game-panel" aria-label="Game selector">
             <div class="game-buttons" role="group" aria-label="Choose game">
-              <button class="game-btn active" type="button" data-game="checkers">Checkers</button>
-              <button class="game-btn" type="button" data-game="fourinarow">Four-in-a-Row</button>
+              <button class="game-btn" type="button" data-game="checkers">Checkers</button>
+              <button class="game-btn active" type="button" data-game="fourinarow">Four-in-a-Row</button>
               <button class="game-btn" type="button" data-game="puzzle">Puzzle</button>
             </div>
           </section>
@@ -317,7 +317,7 @@
                       aria-controls="practice-pill-game-list"
                     >
                       <span class="practice-pill-prefix">Game</span>
-                      <span class="practice-pill-value" id="practice-pill-game-value">Checkers</span>
+                      <span class="practice-pill-value" id="practice-pill-game-value">Four-in-a-Row</span>
                       <span class="practice-pill-caret" aria-hidden="true">▾</span>
                     </button>
                   </div>
@@ -498,7 +498,7 @@
                   <div id="friend-lock-overlay" class="friend-lock-overlay hidden">
                     <p id="friend-lock-text">Waiting for the players...</p>
                   </div>
-                  <div id="board" class="board" aria-label="Checkers board"></div>
+                  <div id="board" class="board" aria-label="Four-in-a-Row board"></div>
                 </div>
                 <aside class="captured-tray green" aria-label="Green captured pieces" aria-live="polite">
                   <p class="captured-tray-label">Green</p>
@@ -563,7 +563,7 @@
                 <div id="player-seat-thought" class="player-seat-thought" aria-live="polite"></div>
                 <div class="friend-seat-actions">
                   <div id="player-seat-controls" class="player-seat-controls"></div>
-                  <div id="friend-voice-pill-wrap" class="friend-voice-pill-wrap">
+                  <div id="friend-voice-pill-wrap" class="friend-voice-pill-wrap" hidden>
                     <button
                       type="button"
                       id="friend-voice-pill-btn"
@@ -819,6 +819,9 @@
                 flipOverlay.setAttribute("aria-hidden", "true");
               }
             }
+          }
+          if (typeof window.pufflySyncPracticeFlipOverlayBottom === "function") {
+            window.pufflySyncPracticeFlipOverlayBottom();
           }
         }
         window.pufflySyncPracticeTableDom = syncPracticeTableDom;
@@ -1087,7 +1090,7 @@
             var activeMode = document.querySelector("#practice-setup-tray .mode-btn.active")
               || document.querySelector("#practice-setup-rows .mode-btn.active");
             var isFriend = document.body.classList.contains("friend-mode");
-            var gameId = activeGame ? activeGame.getAttribute("data-game") || "checkers" : "checkers";
+            var gameId = activeGame ? activeGame.getAttribute("data-game") || "fourinarow" : "fourinarow";
             var activeTrait =
               isFriend && gameId === "puzzle"
                 ? document.querySelector(".friend-difficulty-btn.is-on")
@@ -1526,7 +1529,7 @@
           try {
             pufflySetFriendStatus("Creating room… contacting server");
             var gameBtn = document.querySelector(".game-btn.active");
-            var gameType = (gameBtn && gameBtn.getAttribute("data-game")) || "checkers";
+            var gameType = (gameBtn && gameBtn.getAttribute("data-game")) || "fourinarow";
             var payload = { gameType: gameType };
             if (gameType === "puzzle") {
               var mega = document.querySelector(".friend-difficulty-btn.is-on");
@@ -1934,10 +1937,11 @@
       <ul>
         <li id="rule-line-1">Blue Puffly Team is computer controlled.</li>
         <li id="rule-line-2">Green Frog Team is your side.</li>
+        <li id="rule-line-5" class="hidden">To move, tap your green piece first, then tap a dotted square.</li>
         <li id="rule-line-3">Jumps are required when available.</li>
         <li id="rule-line-4">Kinging adds a cap or crown accessory.</li>
       </ul>
     </section>
-    <script type="module" src="./src/app.js?v=491"></script>
+    <script type="module" src="./src/app.js?v=513"></script>
   </body>
 </html>

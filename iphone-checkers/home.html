@@ -15,7 +15,7 @@
       as="image"
       href="./assets/Puffly/skeleton/PlayPuffly_HomePage_Hero_New_Transparent.png"
     />
-    <link rel="stylesheet" href="./styles/home.css?v=11" />
+    <link rel="stylesheet" href="./styles/home.css?v=22" />
     <script>
       (function () {
         var search = new URLSearchParams(window.location.search || "");
@@ -36,12 +36,14 @@
   </head>
   <body>
     <main id="puffly-home-container" role="main" aria-label="PlayPuffly home">
-      <div class="brand-wrapper">
-        <h1 class="brand-title">PLAYPUFFLY</h1>
-        <p class="brand-tagline">Where Generations Play</p>
-      </div>
-
       <div class="hero-container">
+        <div class="home-brand-overlay">
+          <h1 class="brand-title">PLAYPUFFLY</h1>
+          <p class="brand-tagline">Where Generations Play</p>
+        </div>
+        <div id="home-hero-rive" class="home-hero-rive" aria-hidden="true">
+          <canvas id="home-hero-rive-canvas"></canvas>
+        </div>
         <img
           class="hero-image"
           src="./assets/Puffly/skeleton/PlayPuffly_HomePage_Hero_New_Transparent.png"
@@ -54,9 +56,11 @@
         </button>
       </div>
     </main>
+    <script src="https://cdn.jsdelivr.net/npm/@rive-app/canvas@2.38.0/rive.min.js"></script>
+    <script src="./src/homeRive.js?v=513"></script>
     <script>
       (function () {
-        var CLIENT_BUILD = 491;
+        var CLIENT_BUILD = 513;
         var btn = document.getElementById("home-lets-play-btn");
         if (!btn) {
           return;
@@ -65,6 +69,7 @@
           var dest = new URL("./index.html", window.location.href);
           dest.searchParams.set("source", "pwa");
           dest.searchParams.set("tableUi", "1");
+          dest.searchParams.set("game", "fourinarow");
           dest.searchParams.set("cb", String(CLIENT_BUILD));
           window.location.replace(dest.toString());
         });

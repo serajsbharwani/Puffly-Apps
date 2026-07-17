@@ -83,7 +83,7 @@
     </div>
     <script>
       (function () {
-        var GUEST_BUILD = 491;
+        var GUEST_BUILD = 506;
         var SESSION_KEY = "puffly.friend.session.v1";
         var SESSION_SESSION_KEY = "puffly.friend.session.session";
         var HYDRATE_KEY = "puffly.guestHydratePayload";
@@ -115,11 +115,11 @@
 
         function readGameFromUrl() {
           var search = new URLSearchParams(window.location.search || "");
-          var game = (search.get("game") || "checkers").trim().toLowerCase();
+          var game = (search.get("game") || "fourinarow").trim().toLowerCase();
           if (game === "connect4") {
             game = "fourinarow";
           }
-          return game === "fourinarow" || game === "puzzle" ? game : "checkers";
+          return game === "checkers" || game === "puzzle" ? game : "fourinarow";
         }
 
         function setStatus(text, isError) {
@@ -159,7 +159,7 @@
           var payload = {
             roomCode: String(data.roomCode || "").toUpperCase(),
             playerId: data.playerId,
-            gameType: data.gameType || "checkers",
+            gameType: data.gameType || "fourinarow",
             color: data.color || data.yourColor,
             hostPlayerId: data.hostPlayerId,
             creatorPlayerId: data.creatorPlayerId,

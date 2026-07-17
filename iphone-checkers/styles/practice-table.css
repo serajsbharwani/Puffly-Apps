@@ -173,6 +173,7 @@ body.practice-table-layout {
   --practice-stage-edge-bottom: max(0.55rem, env(safe-area-inset-bottom, 0px));
   --practice-stage-edge-x: max(0.35rem, env(safe-area-inset-left, 0px));
   --practice-pill-height: 48px;
+  --practice-seat-gap: 20px;
   --practice-board-group-max: min(68vw, 640px);
   --practice-dealer-height: 238px;
   --practice-host-overlap: 40px;
@@ -652,7 +653,16 @@ body.practice-table-layout.practice-table-initializing #practice-flip-overlay {
   display: grid;
   place-items: center;
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: var(
+    --practice-flip-overlay-bottom,
+    calc(
+      var(--practice-pill-height, 48px) + 24px + var(--practice-seat-gap, 20px) +
+        var(--practice-stage-edge-bottom, max(0.55rem, env(safe-area-inset-bottom, 0px))) + 16px
+    )
+  );
   z-index: 30;
   padding: 1rem;
   background: rgba(16, 10, 4, 0.42);
@@ -1177,7 +1187,7 @@ body.practice-table-layout .player-seat-identity {
   border: none;
   background: transparent !important;
   color: #1f5d28;
-  font-size: 0.875rem;
+  font-size: 1.125rem;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -2052,14 +2062,55 @@ body.practice-table-layout.friend-mode #puffly-panel .starter-flip {
   pointer-events: auto;
 }
 
-/* Practice: wrapper nodes are layout-transparent */
+/* Practice: wrapper nodes are layout-transparent; single-row pill (base layout) */
 body.practice-table-layout:not(.friend-mode) .friend-seat-bar-main,
 body.practice-table-layout:not(.friend-mode) .friend-seat-actions {
   display: contents;
 }
 
+body.practice-table-layout:not(.friend-mode) .player-seat-identity,
 body.practice-table-layout:not(.friend-mode) .friend-seat-status {
+  flex-shrink: 0;
+}
+
+body.practice-table-layout:not(.friend-mode) .friend-voice-pill-wrap {
   display: none !important;
+}
+
+body.practice-table-layout:not(.friend-mode) .friend-seat-status {
+  display: inline-block;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #2b2b2b;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+body.practice-table-layout:not(.friend-mode) .friend-seat-status[hidden] {
+  display: none !important;
+}
+
+body.practice-table-layout:not(.friend-mode) .friend-seat-status.is-thinking {
+  color: #4a4a4a;
+}
+
+body.practice-table-layout:not(.friend-mode) .player-seat-thought {
+  display: none !important;
+}
+
+body.practice-table-layout:not(.friend-mode) .friend-seat-status:not([hidden]) ~ #player-seat-controls::before {
+  content: "";
+  display: block;
+  flex-shrink: 0;
+  width: 1px;
+  height: 24px;
+  background-color: rgba(0, 0, 0, 0.1);
+  margin-right: 0.85rem;
 }
 
 /* Friend bottom pill — flex-wrap two-row (Checkers/Four-in-a-Row); single-row override for Puzzle */
