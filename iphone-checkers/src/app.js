@@ -31,15 +31,29 @@ import {
   playerColorFromFriendTurnPhrase,
   resolveVoiceClipId,
   voiceClipPhraseFromMascotThought,
-} from "./voicePhrases.js?v=305";
+} from "./voicePhrases.js?v=306";
 import { DEFAULT_GAME_ID, GAME_REGISTRY, getGameConfig, isKnownGame, normalizeGameId } from "./games/registry.js";
+import {
+  exportFourInARowLayoutRef,
+  initLayoutRefExport,
+  syncLayoutRefExportButton,
+} from "./layoutRefExport.js?v=516";
+import {
+  fireFourInARowColumnTrigger,
+  fireFourInARowHumbleTrigger,
+  fireFourInARowPuffTrigger,
+  fireFourInARowThinkingTrigger,
+  syncPracticeFourRive,
+} from "./practiceRive.js?v=550";
 import {
   FOUR_COLS,
   FOUR_ROWS,
   FOUR_STARTING_PIECES,
   applyFourInARowDrop,
   chooseFourInARowComputerColumn,
+  classifyFourInARowComputerMove,
   createFourInARowInitialState,
+  didBlockImmediateWin,
   getDroppableColumns,
   getLandingRow,
 } from "./games/fourinarow.js";
@@ -149,12 +163,20 @@ let audioEnabled = true;
 let moveHistory = [];
 let undoSnapshots = [];
 let winnerAnnounced = null;
+/** Practice Four-in-a-Row: hold celebration until endgame Rive reaction finishes. */
+let fourPracticeEndgameHoldCelebration = false;
 let audioContext = null;
 let lastSpokenAt = 0;
 let lastSpokenPhrase = "";
 let lastTurnSpoken = "";
 const AI_MOVE_ANIMATION_MS = 1300;
 const HUMAN_MOVE_ANIMATION_MS = 450;
+/** Wait for Puffly_Thinking (~3s → IDLE) after human blocks a win threat. */
+const FOUR_THINKING_REACTION_MS = 3000;
+/** Wait for Chest_Puff / Humble_Gesture (~2s) before celebration overlay. */
+const FOUR_ENDGAME_REACTION_MS = 2000;
+/** After a winning column reach+drop, let SM return to IDLE before Trigger_Puff. */
+const FOUR_ENDGAME_PUFF_SETTLE_MS = 600;
 const FRIEND_MOVE_DELAY_MS = 420;
 /** Animate inferred opponent moves in Friend mode (Checkers, Four-in-a-Row, Puzzle). */
 const FRIEND_ANIMATE_OPPONENT_MOVES = true;
@@ -508,7 +530,7 @@ const INVITE_PAGE_LOCK_CODE_KEY = "puffly.inviteActiveCode";
 const INVITE_ORIGIN_STORAGE_KEY = "puffly.inviteOrigin";
 const DEFAULT_PUBLIC_INVITE_ORIGIN = "https://dev.playpuffly.org";
 /** Bumped with index.html app.js?v= so iPad cache mismatches are visible in friend status. */
-const CLIENT_BUILD = 513;
+const CLIENT_BUILD = 550;
 const VOICE_DEBUG_LOG_MAX = 200;
 const GUEST_HYDRATE_PAYLOAD_KEY = "puffly.guestHydratePayload";
 const GUEST_ATTACHED_FLAG_KEY = "puffly.guestAttached";
@@ -3046,6 +3068,8 @@ function schedulePracticeFlipOverlayBottomSync() {
 function updatePracticeTableChrome() {
   if (playMode === "friend") {
     applyFriendTableLayoutIfEnabled();
+    refreshLayoutRefExportButton();
+    refreshPracticeFourRive();
     return;
   }
   const useTable =
@@ -3075,6 +3099,8 @@ function updatePracticeTableChrome() {
       });
     }
     syncPracticeFlipOverlayBottom();
+    refreshLayoutRefExportButton();
+    refreshPracticeFourRive();
     return;
   }
   const initializing = isStarterFlipPending();
@@ -3086,6 +3112,8 @@ function updatePracticeTableChrome() {
     document.body.classList.toggle("practice-table-initializing", initializing);
     syncPracticeTableLayoutVarsFromDom();
     schedulePracticeFlipOverlayBottomSync();
+    refreshLayoutRefExportButton();
+    refreshPracticeFourRive();
     return;
   }
   lastPracticeTableChromeKey = chromeKey;
@@ -3104,10 +3132,14 @@ function updatePracticeTableChrome() {
     syncPracticeTableLayoutVarsFromDom();
     syncPracticeFlipOverlayBottom();
     lockBoardGeometry(true);
+    refreshLayoutRefExportButton();
+    refreshPracticeFourRive();
     window.requestAnimationFrame(() => {
       syncPracticeTableLayoutVarsFromDom();
       syncPracticeFlipOverlayBottom();
       lockBoardGeometry(true);
+      refreshLayoutRefExportButton();
+      refreshPracticeFourRive();
     });
   });
 }
@@ -6165,6 +6197,41 @@ function beep(frequency, duration, type = "sine", gainValue = 0.05) {
   const now = ctx.currentTime;
   oscillator.start(now);
   oscillator.stop(now + duration);
+}
+
+/** Short SFX that must not stop voice clips (unlike playVoiceClipWebAudio). */
+async function playSfxClip(clipId, { gainValue = 0.9 } = {}) {
+  if (!audioEnabled) {
+    return false;
+  }
+  try {
+    const buffer = await ensureVoiceClipBuffer(clipId);
+    const ctx = ensureAudioContext({ skipSpeechUnlock: true });
+    if (!ctx || !buffer) {
+      return false;
+    }
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+    if (ctx.state !== "running") {
+      return false;
+    }
+    const gain = ctx.createGain();
+    gain.gain.value = gainValue;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(0);
+    return true;
+  } catch (err) {
+    console.warn("[puffly] sfx failed", CLIENT_BUILD, clipId, err);
+    return false;
+  }
+}
+
+function playFourDropSound() {
+  void playSfxClip("four_drop");
 }
 
 function primeSpeechEngine() {
@@ -9825,6 +9892,29 @@ function showCelebration() {
   });
 }
 
+/** Practice Four: Rive endgame beat on a clear board, then celebration overlay. */
+async function playPracticeFourEndgameReaction(winner, options = {}) {
+  if (playMode !== "puffly" || selectedGameId !== "fourinarow" || !winner) {
+    fourPracticeEndgameHoldCelebration = false;
+    showCelebration();
+    return;
+  }
+  fourPracticeEndgameHoldCelebration = true;
+  if (winner === computerPlayer) {
+    // Column reach must finish → IDLE before Trigger_Puff is accepted.
+    const settleMs = Number(options.puffSettleMs);
+    if (Number.isFinite(settleMs) && settleMs > 0) {
+      await sleep(settleMs);
+    }
+    fireFourInARowPuffTrigger();
+  } else if (winner === humanPlayer) {
+    fireFourInARowHumbleTrigger();
+  }
+  await sleep(FOUR_ENDGAME_REACTION_MS);
+  fourPracticeEndgameHoldCelebration = false;
+  showCelebration();
+}
+
 function syncPuzzleCompletionChrome() {
   if (typeof document === "undefined") {
     return;
@@ -9936,6 +10026,7 @@ function refreshPuzzleCelebrationFlags() {
 }
 
 function hideCelebration() {
+  fourPracticeEndgameHoldCelebration = false;
   clearWinFx();
   celebrationOverlay.classList.add("hidden");
   syncPuzzleCompletionChrome();
@@ -13133,6 +13224,8 @@ function render(statusMessage = "Make your move.", options = {}) {
       refreshFriendSeatStatus();
       refreshFriendVoicePill();
     }
+    refreshLayoutRefExportButton();
+    refreshPracticeFourRive();
   } catch (error) {
     console.error("[render] recover after error", error);
     state = createStateForGame(selectedGameId);
@@ -13148,6 +13241,8 @@ function render(statusMessage = "Make your move.", options = {}) {
         refreshFriendSeatStatus();
         refreshFriendVoicePill();
       }
+      refreshLayoutRefExportButton();
+      refreshPracticeFourRive();
     } catch (retryError) {
       console.error("[render] fatal", retryError);
       if (pufflyThought) {
@@ -13313,6 +13408,9 @@ function renderUi(statusMessage = "Make your move.", options = {}) {
         setPufflyState(playMode === "friend" ? "idle" : "celebrate", playMode === "friend" ? `${playerDisplayName(state.winner).toUpperCase()} wins!` : "🎉 I win!");
       }
       lastTurnSpoken = "";
+      if (playMode === "puffly" && fourPracticeEndgameHoldCelebration) {
+        return;
+      }
       showCelebration();
       return;
     }
@@ -13499,12 +13597,39 @@ function findSquareElement(row, col) {
   return boardElement.querySelector(`.square[data-row="${row}"][data-col="${col}"]`);
 }
 
-async function animateDestinationBounce(square) {
+function layoutRefExportOptions() {
+  return {
+    boardElement,
+    findSquareElement,
+    fourCols: FOUR_COLS,
+    fourRows: FOUR_ROWS,
+    clientBuild: CLIENT_BUILD,
+    selectedGameId,
+    playMode,
+    practiceTableActive: practiceTableIsActive(),
+  };
+}
+
+function refreshLayoutRefExportButton() {
+  syncLayoutRefExportButton(layoutRefExportOptions());
+}
+
+function refreshPracticeFourRive() {
+  void syncPracticeFourRive({
+    playMode,
+    selectedGameId,
+    practiceTableActive: practiceTableIsActive(),
+  });
+}
+
+async function animateDestinationBounce(square, options = {}) {
   if (!square) {
     return;
   }
   square.classList.add("destination-bounce");
-  playLandingTic();
+  if (!options.skipLandingTic) {
+    playLandingTic();
+  }
   await sleep(220);
   square.classList.remove("destination-bounce");
 }
@@ -13630,6 +13755,9 @@ async function animateFourDrop(player, row, col, durationMs = HUMAN_MOVE_ANIMATI
   if (!toSquare || !fromSquare) {
     return;
   }
+  // Align SFX with the last HUMAN_MOVE_ANIMATION_MS of travel (Green: 0 delay; Blue: ~850ms).
+  const soundDelayMs = Math.max(0, durationMs - HUMAN_MOVE_ANIMATION_MS);
+  const soundTimer = window.setTimeout(() => playFourDropSound(), soundDelayMs);
   const size = fourInARowGhostSizeForSquare(fromSquare);
   const start = fourInARowGhostOriginForSquare(fromSquare, size);
   const end = fourInARowGhostOriginForSquare(toSquare, size);
@@ -13646,8 +13774,9 @@ async function animateFourDrop(player, row, col, durationMs = HUMAN_MOVE_ANIMATI
   await new Promise((resolve) => window.requestAnimationFrame(resolve));
   ghost.style.transform = `translate(${end.left - start.left}px, ${end.top - start.top}px)`;
   await sleep(durationMs);
+  window.clearTimeout(soundTimer);
   ghost.remove();
-  await animateDestinationBounce(toSquare);
+  await animateDestinationBounce(toSquare, { skipLandingTic: true });
 }
 
 async function animateUndoFourLift(player, row, col, durationMs = HUMAN_MOVE_ANIMATION_MS) {
@@ -14053,6 +14182,11 @@ async function commitFourDrop(col) {
     await sleep(FRIEND_MOVE_DELAY_MS);
   }
   const mover = state.currentPlayer;
+  const humanBlockedPuffly =
+    playMode === "puffly" &&
+    selectedGameId === "fourinarow" &&
+    mover === humanPlayer &&
+    didBlockImmediateWin(state, col, computerPlayer);
   await animateFourDrop(mover, landingRow, col);
   const result = applyFourInARowDrop(state, col);
   if (!result.ok) {
@@ -14078,9 +14212,23 @@ async function commitFourDrop(col) {
     return;
   }
   state = result.nextState;
+  const practiceFourWinner =
+    playMode === "puffly" && selectedGameId === "fourinarow" ? result.nextState.winner : null;
+  if (practiceFourWinner) {
+    fourPracticeEndgameHoldCelebration = true;
+  }
   render(status);
+  if (practiceFourWinner) {
+    await playPracticeFourEndgameReaction(practiceFourWinner);
+    busy = false;
+    return;
+  }
   busy = false;
   if (playMode === "puffly") {
+    if (humanBlockedPuffly) {
+      fireFourInARowThinkingTrigger();
+      await sleep(FOUR_THINKING_REACTION_MS);
+    }
     await runComputerTurn();
   }
 }
@@ -14118,14 +14266,31 @@ async function runComputerTurn() {
     render("Puffly is thinking...", { suppressStatusVoice: true });
     setPufflyState("thinking", "🧠 My turn.");
     await sleep(moveHistory.length === 0 ? 1200 : 900);
+    const stateBefore = state;
     const column = chooseFourInARowComputerColumn(state, computerPlayer, difficulty);
+    const classification = classifyFourInARowComputerMove(stateBefore, column, computerPlayer);
     const result = applyFourInARowDrop(state, column);
     if (result.ok) {
+      // Fire Rive column reach, then HTML disc drop (layout-ref aligned C0–C6).
+      fireFourInARowColumnTrigger(result.col);
       await animateFourDrop(computerPlayer, result.row, result.col, AI_MOVE_ANIMATION_MS);
       recordFourDrop(computerPlayer, result.col);
       playMoveAudio(computerPlayer, { isCapture: false });
       state = result.nextState;
+      const pufflyWon = result.nextState.winner === computerPlayer;
+      // Mid-game puff for block/trap; winning drops use endgame puff instead (avoid double-fire).
+      if (classification.shouldPuff && !pufflyWon) {
+        fireFourInARowPuffTrigger();
+      }
+      if (result.nextState.winner) {
+        fourPracticeEndgameHoldCelebration = true;
+      }
       render(fourInARowStatus(result));
+      if (result.nextState.winner) {
+        await playPracticeFourEndgameReaction(result.nextState.winner, {
+          puffSettleMs: pufflyWon ? FOUR_ENDGAME_PUFF_SETTLE_MS : 0,
+        });
+      }
     }
     busy = false;
     render(lastStatusMessage);
@@ -15749,6 +15914,9 @@ function bootstrapApp() {
   bootstrapInviteLinkOriginFromUrl();
   forceClearInviteStateForPracticeTestPwa();
   initPwaInstallHint();
+  initLayoutRefExport(() => layoutRefExportOptions());
+  refreshLayoutRefExportButton();
+  refreshPracticeFourRive();
   const plainPracticeLanding = isPlainPracticeLanding();
   if (plainPracticeLanding) {
     syncInviteLandingOnBootstrap();
@@ -16022,6 +16190,7 @@ if (typeof window !== "undefined") {
   window.pufflyPlayConnectedFromTap = playConnectedFromTap;
   window.pufflySpeechBuild = SPEECH_BUILD;
   window.pufflyClientBuild = CLIENT_BUILD;
+  window.pufflyExportLayoutRef = () => exportFourInARowLayoutRef(layoutRefExportOptions());
   window.pufflyDebugMiniLandscapeCenter = () => {
     const cap = document.querySelector("#game-board-matrix .board-and-captures");
     const board = boardElement;

@@ -247,6 +247,76 @@ function chooseWinningOrBlocking(state, player) {
   return null;
 }
 
+/** Columns where `player` would win immediately if it were their turn to drop. */
+export function getImmediateWinningColumns(state, player) {
+  const columns = getDroppableColumns(state.grid);
+  const turnState = { ...state, currentPlayer: player };
+  const wins = [];
+  for (const col of columns) {
+    const result = applyFourInARowDrop(turnState, col);
+    if (result.ok && result.nextState.winner === player) {
+      wins.push(col);
+    }
+  }
+  return wins;
+}
+
+/** True when `col` is an immediate winning threat for `threatenedPlayer`. */
+export function didBlockImmediateWin(stateBefore, col, threatenedPlayer) {
+  return getImmediateWinningColumns(stateBefore, threatenedPlayer).includes(col);
+}
+
+/**
+ * True when after `player`'s drop, every legal opponent reply still leaves
+ * `player` with an immediate win (classic fork / unavoidable next-move win).
+ */
+export function isFourInARowUnavoidableWinTrap(stateAfter, player) {
+  if (!stateAfter || stateAfter.winner || stateAfter.draw) {
+    return false;
+  }
+  const opponent = player === "dark" ? "light" : "dark";
+  const immediateThreats = getImmediateWinningColumns(stateAfter, player);
+  if (immediateThreats.length >= 2) {
+    return true;
+  }
+  const opponentColumns = getDroppableColumns(stateAfter.grid);
+  if (opponentColumns.length === 0) {
+    return false;
+  }
+  const opponentTurn = { ...stateAfter, currentPlayer: opponent };
+  return opponentColumns.every((ocol) => {
+    const oppPlay = applyFourInARowDrop(opponentTurn, ocol);
+    if (!oppPlay.ok) {
+      return true;
+    }
+    if (oppPlay.nextState.winner === opponent) {
+      return false;
+    }
+    return getImmediateWinningColumns(oppPlay.nextState, player).length >= 1;
+  });
+}
+
+/**
+ * Classify Puffly's chosen drop for reaction triggers.
+ * Block = played in a column where the opponent would have won next.
+ * Trap = after the drop, Puffly wins no matter which legal column the opponent plays next
+ *        (≥2 immediate threats, or every opponent reply still leaves a Puffly win).
+ */
+export function classifyFourInARowComputerMove(stateBefore, col, player) {
+  const opponent = player === "dark" ? "light" : "dark";
+  const isBlock = getImmediateWinningColumns(stateBefore, opponent).includes(col);
+  const result = applyFourInARowDrop(stateBefore, col);
+  if (!result.ok) {
+    return { isBlock: false, isTrap: false, shouldPuff: false };
+  }
+  // Immediate win is not a "trap" reaction — leave Chest_Puff for blocks / forks.
+  if (result.nextState.winner === player) {
+    return { isBlock, isTrap: false, shouldPuff: isBlock };
+  }
+  const isTrap = isFourInARowUnavoidableWinTrap(result.nextState, player);
+  return { isBlock, isTrap, shouldPuff: isBlock || isTrap };
+}
+
 export function chooseFourInARowComputerColumn(state, player, difficulty = "medium") {
   const columns = getDroppableColumns(state.grid);
   if (columns.length === 0) {

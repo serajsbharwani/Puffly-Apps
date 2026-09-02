@@ -10,7 +10,7 @@
  * 6. Bump SPEECH_BUILD and app.js import ?v= here together (stale voicePhrases.js breaks the app).
  */
 
-export const SPEECH_BUILD = 305;
+export const SPEECH_BUILD = 306;
 
 export const PRACTICE_FLIP_VOICE_PHRASE = "Flip to see who goes first.";
 
@@ -69,6 +69,7 @@ export const VOICE_CLIP_IDS = [
   "flip_choose_start",
   "friend_lobby",
   "friend_lobby_intro",
+  "four_drop",
 ];
 
 /** phrase text -> clip id (tests enforce bijection for listed phrases). */

@@ -2548,3 +2548,160 @@ body.practice-table-layout.friend-mode .board-and-captures {
     padding: 0;
   }
 }
+
+/* Temporary Four-in-a-Row Rive layout reference exporter (?layoutRef=1) */
+.practice-export-layout-ref-btn {
+  display: none;
+}
+
+body.layout-ref-export-enabled .practice-export-layout-ref-btn:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  right: max(0.75rem, env(safe-area-inset-right, 0px));
+  bottom: max(5.75rem, calc(env(safe-area-inset-bottom, 0px) + 4.75rem));
+  z-index: 90;
+  min-height: 40px;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid rgba(43, 43, 43, 0.28);
+  border-radius: 999px;
+  background: rgba(244, 239, 230, 0.96);
+  color: #2b2b2b;
+  font: 600 0.8125rem/1.1 "Trebuchet MS", "Segoe UI", sans-serif;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.layout-ref-export-enabled .practice-export-layout-ref-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+body.practice-table-layout .layout-ref-guide-overlay,
+body.practice-table-layout .layout-ref-guide-legend {
+  pointer-events: none !important;
+}
+
+/* Practice Four-in-a-Row Rive dealer (v546: trap puff detection; pre-v547 canvas) */
+body.practice-table-layout.fourinarow-game {
+  --practice-four-rive-scale: 4.02;
+  --practice-four-rive-nudge-y: 562px;
+  --practice-four-board-drop: 60px;
+}
+
+/* Landscape: lift Puffly so torso sits flush with board top */
+@media (orientation: landscape) {
+  body.practice-table-layout.fourinarow-game {
+    --practice-four-rive-nudge-y: 418px;
+  }
+}
+
+/* Portrait: push board + trays down to make room for larger Puffly */
+@media (orientation: portrait) {
+  body.practice-table-layout.fourinarow-game #game-board-matrix {
+    margin-top: calc(
+      -1 * var(--practice-board-tuck, 30px) + var(--practice-four-board-drop, 60px)
+    ) !important;
+  }
+
+  /* Hug board so tray gaps stay tight when height-limited board shrinks */
+  body.practice-table-layout.fourinarow-game #game-board-matrix .board-and-captures {
+    width: fit-content;
+    max-width: var(--practice-board-group-max, min(68vw, 640px));
+    grid-template-columns: 56px auto 56px;
+    gap: 0.35rem;
+  }
+
+  body.practice-table-layout.fourinarow-game #game-board-matrix .board-wrap {
+    width: max-content;
+    min-width: 0;
+  }
+
+  body.practice-table-layout.fourinarow-game #game-board-matrix .captured-tray {
+    width: 56px;
+    flex-shrink: 0;
+  }
+}
+
+body.practice-table-layout #rive-character-host .practice-four-rive-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  pointer-events: none;
+  opacity: 0;
+  background: transparent !important;
+}
+
+body.practice-table-layout.fourinarow-game.practice-four-rive-ready #practice-play-cluster,
+body.practice-table-layout.fourinarow-game.practice-four-rive-ready #puffly-dealer-unit,
+body.practice-table-layout.fourinarow-game.practice-four-rive-ready #rive-character-host {
+  overflow: visible !important;
+}
+
+/* Allow oversized Puffly to paint into stage headroom without clipping */
+@media (orientation: portrait) {
+  body.practice-table-layout.fourinarow-game.practice-four-rive-ready #practice-table-scene {
+    overflow: visible !important;
+  }
+}
+
+/* Puffly paints above board so forearm reaches are visible; pointer-events none keeps column taps on board */
+body.practice-table-layout.fourinarow-game.practice-four-rive-ready #puffly-dealer-unit {
+  z-index: 25;
+}
+
+body.practice-table-layout.fourinarow-game.practice-four-rive-ready #rive-character-host {
+  z-index: 25;
+  pointer-events: none !important;
+}
+
+body.practice-table-layout.fourinarow-game.practice-four-rive-ready #game-board-matrix {
+  z-index: 20;
+  position: relative;
+}
+
+body.practice-table-layout.fourinarow-game #practice-stage-top {
+  z-index: 40;
+}
+
+body.practice-table-layout.fourinarow-game #player-seat-row {
+  z-index: 30;
+}
+
+body.practice-table-layout.practice-four-rive-ready #rive-character-host .practice-four-rive-canvas {
+  opacity: 1;
+}
+
+body.practice-table-layout.fourinarow-game.practice-four-rive-ready #rive-character-host .practice-four-rive-canvas {
+  inset: auto;
+  left: 50%;
+  bottom: 0;
+  top: auto;
+  right: auto;
+  width: 100%;
+  height: 100%;
+  transform: translateX(-50%) translateY(var(--practice-four-rive-nudge-y, 562px))
+    scale(var(--practice-four-rive-scale, 4.02));
+  transform-origin: center bottom;
+  background: transparent !important;
+  pointer-events: none !important;
+}
+
+body.practice-table-layout.practice-four-rive-ready #puffly-torso-layer,
+body.practice-table-layout.practice-four-rive-ready #rive-character-host .puffly-skeleton-stack {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body.practice-table-layout.practice-four-rive-failed #rive-character-host .practice-four-rive-canvas,
+body.practice-table-layout.practice-four-rive-skipped #rive-character-host .practice-four-rive-canvas {
+  display: none !important;
+}

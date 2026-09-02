@@ -1,0 +1,90 @@
+{
+  "asset_name": "Puffly Four-in-a-Row Portrait",
+  "file_path": "assets/Puffly/riv/practice/puffly_four_in_a_row.riv",
+  "version": "1.0.10",
+  "description": "Practice-mode Puffly dealer for Four-in-a-Row. Column drops (C0–C6) plus Trigger_Puff, Trigger_Thinking, and Trigger_Humble. v1.0.10 / client build 550 — settle to IDLE before endgame Trigger_Puff on Puffly win.",
+  "setup": {
+    "artboard": "Puffly_Four_in_a_Row Portrait",
+    "state_machine": "State Machine 1"
+  },
+  "scope": {
+    "play_mode": "puffly",
+    "game_id": "fourinarow",
+    "orientation_priority": "portrait"
+  },
+  "host": {
+    "dom_id": "rive-character-host",
+    "dealer_unit_id": "puffly-dealer-unit",
+    "cluster_id": "practice-play-cluster"
+  },
+  "inputs": {
+    "Trigger_C0": {
+      "type": "trigger",
+      "column": 0,
+      "notes": "Fire when Puffly drops in column 0 (leftmost)."
+    },
+    "Trigger_C1": {
+      "type": "trigger",
+      "column": 1,
+      "notes": "Fire when Puffly drops in column 1."
+    },
+    "Trigger_C2": {
+      "type": "trigger",
+      "column": 2,
+      "notes": "Fire when Puffly drops in column 2."
+    },
+    "Trigger_C3": {
+      "type": "trigger",
+      "column": 3,
+      "notes": "Fire when Puffly drops in column 3 (center)."
+    },
+    "Trigger_C4": {
+      "type": "trigger",
+      "column": 4,
+      "notes": "Fire when Puffly drops in column 4."
+    },
+    "Trigger_C5": {
+      "type": "trigger",
+      "column": 5,
+      "notes": "Fire when Puffly drops in column 5."
+    },
+    "Trigger_C6": {
+      "type": "trigger",
+      "column": 6,
+      "notes": "Fire when Puffly drops in column 6 (rightmost)."
+    },
+    "Trigger_Puff": {
+      "type": "trigger",
+      "timeline": "Chest_Puff",
+      "duration_ms": 2000,
+      "notes": "One-shot Chest_Puff (~2s → IDLE). Mid-game: block or unavoidable-win trap. Endgame: fire when Puffly wins, before the celebration overlay (~2s hold)."
+    },
+    "Trigger_Thinking": {
+      "type": "trigger",
+      "timeline": "Puffly_Thinking",
+      "duration_ms": 3000,
+      "notes": "One-shot Puffly_Thinking (~3s → IDLE). Fire when the human drops in a column that was Puffly's immediate winning threat. Wait ~3s before Puffly's next move."
+    },
+    "Trigger_Humble": {
+      "type": "trigger",
+      "timeline": "Humble_Gesture",
+      "duration_ms": 2000,
+      "notes": "One-shot Humble_Gesture (~2s → IDLE). Fire when Puffly loses (human wins), after the final drop and before the celebration overlay."
+    }
+  },
+  "wiring": {
+    "computer_turn": "On Puffly AI column choice, fire Trigger_C{col} then run animateFourDrop / applyFourInARowDrop. If the move is a block or unavoidable-win trap (and not a win), also fire Trigger_Puff. If Puffly wins, wait for column reach → IDLE (~600ms settle), fire Trigger_Puff, wait ~2s, then show celebration.",
+    "human_turn": "Do not fire column triggers for human drops. If the human blocks Puffly's immediate win threat, fire Trigger_Thinking and wait ~3s before the computer turn. If the human wins, fire Trigger_Humble, wait ~2s, then show celebration.",
+    "endgame": "Hold celebration overlay until the 2s Humble/Puff endgame reaction finishes so Puffly stays fully visible.",
+    "reduced_motion": "If prefers-reduced-motion, skip Rive and keep skeleton PNGs."
+  },
+  "fallback": {
+    "skeleton_host": "#rive-character-host .puffly-skeleton-stack",
+    "assets": [
+      "assets/Puffly/skeleton/Puffly_Head.png",
+      "assets/Puffly/skeleton/Puffly_Arm.png",
+      "assets/Puffly/skeleton/Puffly_Torso.png"
+    ],
+    "notes": "Keep existing skeleton PNGs visible if Rive fails to load or is skipped."
+  }
+}

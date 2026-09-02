@@ -1,7 +1,7 @@
 # Puffly App Map
 
 Concise reference for global state, shell architecture, UI/voice constraints, and how new games plug in.  
-**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v386** — Puffly skeleton distortion fix; unified torso/head offset).
+**Client build:** see `CLIENT_BUILD` in `iphone-checkers/src/app.js` and `?cb=` on URLs (**v550** — Practice Four-in-a-Row Rive dealer + reactions + drop SFX).
 
 Related docs (in `iphone-checkers/`): `TEST_BUILD.md`, `VOICE.md`, `FRIEND_VOICE_BACKLOG.md`, `PLAN.md`.
 
@@ -36,24 +36,31 @@ checkers/                         # repo root (this file)
     guest-join.html               # Minimal guest attach page → hydrate index with session
     install.html                  # PWA install helper (unified PlayPuffly test build)
     manifest.json                 # PWA manifest (start_url → home.html?source=pwa&tableUi=1)
-    TEST_BUILD.md                 # Regression checklist (Home + Practice + Friend, v386+)
+    TEST_BUILD.md                 # Regression checklist (Home + Practice + Friend)
     styles.css                    # Layout, friend/practice chrome, overlays, tray team colors
     styles/practice-table.css     # Practice table layout (body.practice-table-layout)
+    styles/home.css               # Home hero Rive layout
     src/
       app.js                      # Shell: state, UI, multiplayer, voice bus, input routing
       engine.js                   # Checkers rules + AI
       voicePhrases.js             # Phrase ↔ WAV clip registry
+      homeRive.js                 # Home hero Rive loader
+      practiceRive.js             # Practice Four-in-a-Row dealer Rive (v516+)
+      layoutRefExport.js          # Optional ?layoutRef=1 column-guide PNG export
       games/
         registry.js               # Game ids + titles
         puzzle.js
-        fourinarow.js
+        fourinarow.js             # Rules + AI + block/trap classifiers for Rive reactions
     assets/
-      voice/                      # WAV clips (must be real audio, not stubs)
-      Puffly/skeleton/            # PNG skeleton layers (practice table / future Rive)
+      voice/                      # WAV clips (incl. four_drop.wav SFX)
+      Puffly/
+        riv/home/                 # Home hero .riv + manifest
+        riv/practice/             # puffly_four_in_a_row.riv + FourInARow_Manifest.json
+        skeleton/                 # PNG skeleton fallback layers
       icons/                      # PWA icons
 ```
 
-**Run:** `python3 multiplayer_server.py 8002` → `http://localhost:8002/iphone-checkers/`
+**Run:** `python3 multiplayer_server.py 8002` → `http://localhost:8002/iphone-checkers/?cb=550&tableUi=1&game=fourinarow`
 
 ---
 
@@ -68,6 +75,7 @@ checkers/                         # repo root (this file)
 | `difficulty` | Practice AI + puzzle grid size (`easy` / `medium` / `hard`) |
 | `busy` | Blocks input during animations / network |
 | `audioEnabled` | Master toggle for WAV / UI sounds |
+| `fourPracticeEndgameHoldCelebration` | Holds win overlay until endgame Rive reaction (~2s) finishes |
 
 **Shared flip metadata** (all games in friend + practice):
 
@@ -103,7 +111,7 @@ checkers/                         # repo root (this file)
 
 **Bootstrap paths**
 
-- **PWA / Mac+iPad test:** `install.html` or `home.html?source=pwa&tableUi=1&cb=384` → Add to Home Screen → **PlayPuffly** → **LET'S PLAY** → game shell (see `TEST_BUILD.md`)
+- **PWA / Mac+iPad test:** `install.html` or `home.html?source=pwa&tableUi=1&cb=550` → Add to Home Screen → **PlayPuffly** → **LET'S PLAY** → game shell (see `TEST_BUILD.md`)
 - **Mac host:** Friend tab → **OPEN GAME ROOM** → welcome voice → **INVITE FRIEND** (Messages link)
 - **iPad guest:** invite URL in Messages → Safari → `guest-join.html` → `index.html?friendAttached=1` → `hydrateRoomSession()`
 - Invite links with `?join=` on index redirect to `guest-join.html`
@@ -130,6 +138,19 @@ Illegal taps play invalid audio + short status via `render()`.
 ### Four-in-a-Row — one-tap column
 
 Tap column → `commitFourDrop()` (same friend local-notify + submit pattern).
+
+**Practice Rive dealer (v516–v550):** `practiceRive.js` loads `assets/Puffly/riv/practice/puffly_four_in_a_row.riv` into `#rive-character-host` when `playMode === "puffly"` + `fourinarow` + practice table. Contract: `FourInARow_Manifest.json`.
+
+| Trigger | When |
+|---------|------|
+| `Trigger_C0`–`Trigger_C6` | Puffly AI column drop (before HTML disc animation) |
+| `Trigger_Puff` (`Chest_Puff` ~2s) | Mid-game block or unavoidable-win trap; also Puffly **win** endgame (after ~600ms settle so column reach returns to IDLE) |
+| `Trigger_Thinking` (`Puffly_Thinking` ~3s) | Human blocks Puffly’s immediate win threat; wait 3s before AI turn |
+| `Trigger_Humble` (`Humble_Gesture` ~2s) | Human wins; hold celebration overlay until reaction finishes |
+
+**Drop SFX:** `assets/voice/four_drop.wav` via non-interrupting `playSfxClip` (aligned to last 450ms of travel for slow AI drops).  
+**Layout:** portrait scale/nudge + board-drop headroom; landscape separate `--practice-four-rive-nudge-y`; trays hug board (`fit-content`).  
+**Reduced motion:** skip Rive; keep skeleton PNGs.
 
 ### Puzzle — two-tap place
 
@@ -197,9 +218,9 @@ Two parallel systems — **do not merge**:
 
 **Host welcome (v379):** `announceFriendJoinWelcome()` on room create calls `playFriendWelcomeVoiceNow(..., { fromGesture: true })` so “Welcome to the game room / You are Blue…” plays on **OPEN GAME ROOM**, not deferred until INVITE.
 
-**Phrases/clips:** `iphone-checkers/src/voicePhrases.js` + `iphone-checkers/assets/voice/{id}.wav`. Run `npm test` from `iphone-checkers/` after changes.
+**Phrases/clips:** `iphone-checkers/src/voicePhrases.js` + `iphone-checkers/assets/voice/{id}.wav`. Run `npm test` from `iphone-checkers/` after changes. SFX (e.g. `four_drop`) may be listed in `VOICE_CLIP_IDS` and played via `playSfxClip` without stopping voice clips.
 
-**Voice backlog:** `iphone-checkers/FRIEND_VOICE_BACKLOG.md` (core loop v357; v369–v381 UI/voice polish in `TEST_BUILD.md`).
+**Voice backlog:** `iphone-checkers/FRIEND_VOICE_BACKLOG.md` (core loop v357; later UI/voice polish in `TEST_BUILD.md`).
 
 ---
 
@@ -260,6 +281,7 @@ Keep **no DOM or `fetch`** in game modules.
 5. **Guest attach** uses `guest-join.html`; do not auto-join heavy voice preload on cold boot.
 6. **WAV assets** must be real files (> ~8KB); stub files break all playback.
 7. Bump **`CLIENT_BUILD`**, `index.html` `app.js?v=`, and `guest-join.html` `GUEST_BUILD` together on deploy.
+8. **Practice Four Rive:** do not tear down/restart load on every `render()`; fire column triggers only for Puffly AI drops; endgame celebration waits for Humble/Puff (~2s).
 
 ---
 
@@ -277,4 +299,4 @@ Keep **no DOM or `fetch`** in game modules.
 
 ---
 
-*Last updated: v386 — Puffly skeleton fix; see TEST_BUILD.md for regression matrix.*
+*Last updated: v550 — Practice Four-in-a-Row Rive dealer (column + reaction triggers), drop SFX, endgame Humble/Puff before celebration.*
